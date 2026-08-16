@@ -2,7 +2,7 @@
 
 ## Status
 
-PASS for final implementation commit `f8364af5159c1503c5fcdf33a27ebe0b3ce7fb00`.
+PASS for final technical implementation commit `f4848cfe9dc738cc2b0d9787b1e33ffb6ff57efe`.
 
 ## Required proof
 
@@ -26,6 +26,18 @@ make ci
   immediate-parent implementation candidate `853beeb`.
 - `make ci`: PASS on final implementation commit `f8364af`; this reran all four suites above.
 - Reproduced image digest: `sha256:6d32d1047025bce8bc6b4f3e0aa926c458ebef55ac486434c8d874aa38462bb0`.
+
+After the hosted runner exposed and Codex corrected Linux bind-mount ownership, a new clone was
+created directly from the public remote at `f4848cf`. It began with no `.local/` directory, ran
+`make bootstrap-tools` followed by `make ci`, scanned nine commits without a leak, and remained
+clean after validation.
+
+| Post-portability fresh-clone artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `bootstrap-image.log` | 3,416 | `e1abce697d25f5d41b46e41c1201ebf4c4eda8a97b1b8a237f320234dc5b8aec` |
+| `bootstrap-cache.log` | 1,912 | `e3caad9451be2483cc3180c9ceb071429fff244fb68a33646a4b732e62b1fa27` |
+| `ci.log` | 9,950 | `66424cf258a1690fd8acdfff6ffcbf6b1797fce9d352135ff544d3533bcdef3a` |
+| `tool-image.json` | 563 | `3aea022eaab64781d790c4c41d283f5022ce5c84861e878a37b0a3dd250feec6` |
 
 The first candidate clean-clone test rejected the repository because a broad `generated/` ignore
 pattern omitted the generated-inventory sentinel. The pattern was narrowed, the sentinel was added

@@ -4,8 +4,8 @@
 
 This evidence covers the repository and quality system only. It proves deterministic tool
 bootstrap, positive validation, adversarial rejection gates, pre-commit behavior, secret scanning,
-and local parity with the GitHub Actions job. It does not claim any Verda, Kubernetes, GitOps,
-registry, application, DNS, or recovery capability.
+local parity with the GitHub Actions job, hosted execution, and enforced repository governance. It
+does not claim any Verda, Kubernetes, GitOps, registry, application, DNS, or recovery capability.
 
 ## Canonical reproduction
 
@@ -27,8 +27,11 @@ the only networked step and downloaded only public tool, provider, policy, and s
 - `validation-summary.md`: positive-gate results and explicit not-applicable checks.
 - `negative-quality-gates.md`: malformed-input rejection proof.
 - `secret-scanning.md`: working-tree and complete-history Gitleaks results.
-- `ci-parity.md`: local workflow parity and hosted-run boundary.
-- `clean-clone.md`: isolated checkout proof.
+- `ci-parity.md`: local/hosted workflow parity and correction history.
+- `clean-clone.md`: isolated local and fresh remote checkout proof.
+- `hosted-ci.md`: successful GitHub Actions run, artifact inventory, and sanitization proof.
+- `repository-governance.md`: verified visibility, ownership, branch protection, merge, and secret
+  scanning controls.
 
 ## Sanitization
 
