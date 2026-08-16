@@ -3,7 +3,7 @@
 
 provider "registry.terraform.io/verda-cloud/verda" {
   version     = "1.1.2"
-  constraints = "~> 1.0"
+  constraints = "1.1.2"
   hashes = [
     "h1:S7frEgSaPhrTZsiBrsf8kAZCq72wKBccytrzxNgR8+U=",
     "zh:211d7adb72537a27958fa878b2d1d48fb68eb21ea676c05549450a0f080d0841",

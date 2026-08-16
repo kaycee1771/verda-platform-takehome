@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$AllowProviderDownload,
-    [string]$OutputPath = 'docs/evidence/phase-0/provider-schema.local.json'
+    [string]$OutputPath = 'evidence/phase-0/provider-schema.local.json'
 )
 
 $ErrorActionPreference = 'Stop'

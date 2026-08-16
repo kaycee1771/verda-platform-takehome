@@ -23,40 +23,55 @@ function Add-CheckResult {
     }
 }
 
+function Read-WorkspaceFile {
+    param([Parameter(Mandatory)][string]$RelativePath)
+
+    return Get-Content -LiteralPath (Join-Path $workspaceRoot $RelativePath) -Raw
+}
+
 $requiredFiles = @(
     'README.md',
-    '.gitattributes',
+    'IMPLEMENTATION_STATUS.md',
     'SECURITY.md',
+    '.env.example',
+    '.gitignore',
+    'versions.lock.yaml',
     'config/phase0.json',
-    'docs/requirements-matrix.md',
+    'docs/acceptance-matrix.md',
     'docs/architecture.md',
+    'docs/operations-model.md',
+    'docs/known-limitations.md',
     'docs/assumptions.md',
     'docs/risk-register.md',
-    'docs/cost-model.md',
+    'docs/cost.md',
+    'docs/reports/verda-discovery.md',
     'docs/phase-0-exit-review.md',
     'docs/references.md',
     'docs/ai-usage.md',
-    'docs/access.md',
-    'docs/one-page-summary.md',
-    'docs/evidence/phase-0/validation-summary.md',
-    'docs/evidence/phase-0/provider-capability-summary.md',
-    'docs/evidence/phase-0/read-only-discovery-summary.md',
     'docs/adr/README.md',
+    'docs/adr/template.md',
+    'evidence/manifests/phase-0-acceptance-matrix.md',
+    'evidence/phase-0/README.md',
+    'evidence/phase-0/provider-schema-summary.md',
+    'evidence/phase-0/verda-account-discovery.md',
+    'evidence/phase-0/validation-summary.md',
     'scripts/phase0/discover-tools.ps1',
     'scripts/phase0/discover-verda.ps1',
     'scripts/phase0/export-provider-schema.ps1',
-    'infra/terraform/provider-discovery/versions.tf'
+    'infra/terraform/provider-discovery/versions.tf',
+    'infra/terraform/provider-discovery/.terraform.lock.hcl'
 )
 
 foreach ($relativePath in $requiredFiles) {
-    $exists = Test-Path -LiteralPath (Join-Path $workspaceRoot $relativePath) -PathType Leaf
-    Add-CheckResult -Condition $exists -Success "Required file exists: $relativePath" -Failure "Missing required file: $relativePath"
+    Add-CheckResult `
+        -Condition (Test-Path -LiteralPath (Join-Path $workspaceRoot $relativePath) -PathType Leaf) `
+        -Success "Required Phase 0 artifact exists: $relativePath" `
+        -Failure "Missing required Phase 0 artifact: $relativePath"
 }
 
-$configPath = Join-Path $workspaceRoot 'config/phase0.json'
 $config = $null
 try {
-    $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+    $config = Read-WorkspaceFile -RelativePath 'config/phase0.json' | ConvertFrom-Json
     $passes.Add('config/phase0.json is valid JSON')
 }
 catch {
@@ -64,76 +79,111 @@ catch {
 }
 
 if ($config) {
-    Add-CheckResult -Condition ($config.project.decision -eq 'conditional-go') -Success 'Phase 0 decision is explicitly conditional-go' -Failure 'Phase 0 decision must remain conditional-go until account gates close'
-    Add-CheckResult -Condition (-not $config.project.cloudMutationAuthorized) -Success 'Cloud mutation is disabled in Phase 0' -Failure 'Phase 0 must not authorize cloud mutation'
-    Add-CheckResult -Condition ($config.topology.nodeCount -eq 3) -Success 'Three-node topology is recorded' -Failure 'Expected a three-node topology'
+    Add-CheckResult -Condition ($config.project.phase -eq 0) -Success 'Active implementation phase is 0' -Failure 'Configuration must remain on Phase 0'
+    Add-CheckResult -Condition ($config.project.decision -in @('blocked', 'complete')) -Success 'Phase 0 decision uses a recognized state' -Failure 'Phase 0 decision must be blocked or complete'
+    Add-CheckResult -Condition (-not $config.project.cloudMutationAuthorized) -Success 'Cloud mutation is disabled for Phase 0' -Failure 'Phase 0 must never authorize cloud mutation'
+    Add-CheckResult -Condition ($config.topology.deliveryStrategy -eq 'stage-a-then-stage-b') -Success 'Two-stage delivery strategy is recorded' -Failure 'Expected Stage A then Stage B delivery strategy'
+    Add-CheckResult -Condition ($config.topology.nodesPerCluster -eq 3) -Success 'Three schedulable servers per cluster are recorded' -Failure 'Expected three servers per cluster'
 
-    $groups = @('deliverables', 'core', 'bonus', 'evaluation')
-    $allRequirementIds = [System.Collections.Generic.List[string]]::new()
-    foreach ($group in $groups) {
-        foreach ($id in $config.requirements.$group) {
-            $allRequirementIds.Add([string]$id)
-        }
-    }
-    Add-CheckResult -Condition ($allRequirementIds.Count -eq 21) -Success 'All 21 requirement and evaluation IDs are registered' -Failure "Expected 21 requirement/evaluation IDs, found $($allRequirementIds.Count)"
-    Add-CheckResult -Condition ((@($allRequirementIds | Sort-Object -Unique)).Count -eq $allRequirementIds.Count) -Success 'Requirement IDs are unique' -Failure 'Duplicate requirement IDs found'
-
-    $matrix = Get-Content -LiteralPath (Join-Path $workspaceRoot 'docs/requirements-matrix.md') -Raw
-    foreach ($id in $allRequirementIds) {
-        Add-CheckResult -Condition $matrix.Contains($id) -Success "Requirement is traceable: $id" -Failure "Requirement missing from matrix: $id"
-    }
-
-    foreach ($adr in $config.adrs) {
+    $registeredAdrs = @($config.adrs)
+    Add-CheckResult -Condition ($registeredAdrs.Count -ge 11) -Success 'Minimum initial ADR set is registered' -Failure "Expected at least 11 initial ADRs, found $($registeredAdrs.Count)"
+    foreach ($adr in $registeredAdrs) {
         $adrPath = Join-Path $workspaceRoot ([string]$adr)
         $exists = Test-Path -LiteralPath $adrPath -PathType Leaf
-        Add-CheckResult -Condition $exists -Success "ADR exists: $adr" -Failure "Registered ADR is missing: $adr"
+        Add-CheckResult -Condition $exists -Success "Registered ADR exists: $adr" -Failure "Registered ADR is missing: $adr"
         if ($exists) {
             $adrText = Get-Content -LiteralPath $adrPath -Raw
-            $recognizedStatus = $adrText -match '(?m)^- \*\*Status:\*\* (Accepted|Proposed|Superseded|Rejected)$'
-            Add-CheckResult -Condition $recognizedStatus -Success "ADR has recognized status: $adr" -Failure "ADR has missing or invalid status: $adr"
+            Add-CheckResult -Condition ($adrText -match '(?m)^- \*\*Status:\*\* (Accepted|Proposed|Superseded|Rejected)$') -Success "ADR has a recognized status: $adr" -Failure "ADR has missing or invalid status: $adr"
+            foreach ($section in @('Context', 'Decision', 'Alternatives considered', 'Consequences', 'Validation evidence', 'Production evolution')) {
+                Add-CheckResult -Condition ($adrText -match "(?m)^## $([regex]::Escape($section))$") -Success "ADR contains ${section}: $adr" -Failure "ADR missing '$section': $adr"
+            }
         }
     }
 
-    $openGates = @($config.openGates | Where-Object { $_.status -eq 'blocked' })
-    Add-CheckResult -Condition ($openGates.Count -gt 0) -Success 'Blocking account gates remain visible' -Failure 'Phase 0 must not silently clear unverified account gates'
-
-    $exitBlocked = @($config.phase0ExitCriteria | Where-Object { $_.status -eq 'blocked' })
-    Add-CheckResult -Condition ($exitBlocked.Count -gt 0) -Success 'Exit review retains unverified controls' -Failure 'At least one Phase 0 exit control should remain blocked until account discovery'
+    $blockedGates = @($config.openGates | Where-Object { $_.status -eq 'blocked' })
+    if ($config.project.decision -eq 'blocked') {
+        Add-CheckResult -Condition ($blockedGates.Count -gt 0) -Success 'Blocked Phase 0 has explicit blocking gates' -Failure 'Blocked Phase 0 must identify at least one blocking gate'
+    }
 }
 
-$assumptionText = Get-Content -LiteralPath (Join-Path $workspaceRoot 'docs/assumptions.md') -Raw
-$assumptionIds = [regex]::Matches($assumptionText, '\| (A-\d{3}) \|') | ForEach-Object { $_.Groups[1].Value }
-Add-CheckResult -Condition ($assumptionIds.Count -ge 10) -Success 'Assumption register has sufficient coverage' -Failure 'Assumption register must contain at least 10 tracked assumptions'
-Add-CheckResult -Condition ((@($assumptionIds | Sort-Object -Unique)).Count -eq $assumptionIds.Count) -Success 'Assumption IDs are unique' -Failure 'Duplicate assumption IDs found'
+$matrixText = Read-WorkspaceFile -RelativePath 'docs/acceptance-matrix.md'
+$requirementIds = [regex]::Matches($matrixText, '\| (R\d{2}) \|') | ForEach-Object { $_.Groups[1].Value }
+$uniqueRequirementIds = @($requirementIds | Sort-Object -Unique)
+$expectedRequirementIds = 1..22 | ForEach-Object { 'R{0:d2}' -f $_ }
+Add-CheckResult -Condition ($uniqueRequirementIds.Count -eq 22) -Success 'Acceptance matrix contains 22 unique requirement IDs' -Failure "Expected 22 unique R01-R22 IDs, found $($uniqueRequirementIds.Count)"
+foreach ($id in $expectedRequirementIds) {
+    Add-CheckResult -Condition ($id -in $uniqueRequirementIds) -Success "Acceptance requirement is traceable: $id" -Failure "Acceptance requirement is missing: $id"
+}
 
-$riskText = Get-Content -LiteralPath (Join-Path $workspaceRoot 'docs/risk-register.md') -Raw
-$riskIds = [regex]::Matches($riskText, '\| (R-\d{3}) \|') | ForEach-Object { $_.Groups[1].Value }
-Add-CheckResult -Condition ($riskIds.Count -ge 10) -Success 'Risk register has sufficient coverage' -Failure 'Risk register must contain at least 10 tracked risks'
-Add-CheckResult -Condition ((@($riskIds | Sort-Object -Unique)).Count -eq $riskIds.Count) -Success 'Risk IDs are unique' -Failure 'Duplicate risk IDs found'
+$statusText = Read-WorkspaceFile -RelativePath 'IMPLEMENTATION_STATUS.md'
+Add-CheckResult -Condition ($statusText -match 'Active phase: Phase 0') -Success 'Status ledger identifies Phase 0' -Failure 'Status ledger does not identify Phase 0'
+Add-CheckResult -Condition ($statusText -match '(?m)^\| 1 .*\| NOT STARTED \|') -Success 'Status ledger confirms Phase 1 has not started' -Failure 'Phase 1 must remain NOT STARTED'
+Add-CheckResult -Condition ($statusText -match 'Cloud mutation authorized: No') -Success 'Status ledger prohibits cloud mutation' -Failure 'Status ledger must prohibit cloud mutation'
+
+$architectureText = Read-WorkspaceFile -RelativePath 'docs/architecture.md'
+foreach ($architectureMarker in @('Stage A', 'Stage B', 'verda-mgmt', 'verda-workload', 'fixed registration/API endpoint')) {
+    Add-CheckResult -Condition $architectureText.Contains($architectureMarker) -Success "Architecture records: $architectureMarker" -Failure "Architecture is missing: $architectureMarker"
+}
+
+$discoveryReport = Read-WorkspaceFile -RelativePath 'docs/reports/verda-discovery.md'
+foreach ($capabilityMarker in @('zero data sources', 'private network', 'load balancer', 'object-storage', 'UNVERIFIED', 'BLOCKED')) {
+    Add-CheckResult -Condition ($discoveryReport -match [regex]::Escape($capabilityMarker)) -Success "Discovery report treats capability explicitly: $capabilityMarker" -Failure "Discovery report missing capability state: $capabilityMarker"
+}
+
+$versionLockText = Read-WorkspaceFile -RelativePath 'versions.lock.yaml'
+Add-CheckResult -Condition ($versionLockText -match '(?m)^\s+version: "1\.1\.2"$') -Success 'Verda provider 1.1.2 is pinned in versions.lock.yaml' -Failure 'Verda provider must be pinned to 1.1.2'
+Add-CheckResult -Condition ($versionLockText -notmatch '(?i)version:\s*["'']?(latest|main)["'']?') -Success 'No floating latest/main version is present in versions.lock.yaml' -Failure 'Floating latest/main version found in versions.lock.yaml'
+
+$providerConfigText = Read-WorkspaceFile -RelativePath 'infra/terraform/provider-discovery/versions.tf'
+Add-CheckResult -Condition ($providerConfigText -match 'version\s*=\s*"= 1\.1\.2"') -Success 'Discovery provider constraint is exact' -Failure 'Discovery provider must use exact constraint = 1.1.2'
+$providerLockText = Read-WorkspaceFile -RelativePath 'infra/terraform/provider-discovery/.terraform.lock.hcl'
+Add-CheckResult -Condition ($providerLockText -match 'version\s*=\s*"1\.1\.2"') -Success 'Dependency lock selects provider 1.1.2' -Failure 'Dependency lock must select provider 1.1.2'
+
+$localSchemaPath = Join-Path $workspaceRoot 'evidence/phase-0/provider-schema.local.json'
+if (Test-Path -LiteralPath $localSchemaPath -PathType Leaf) {
+    try {
+        $schema = Get-Content -LiteralPath $localSchemaPath -Raw | ConvertFrom-Json
+        $provider = $schema.provider_schemas.'registry.terraform.io/verda-cloud/verda'
+        $resources = @($provider.resource_schemas.PSObject.Properties.Name | Sort-Object)
+        $dataSources = @()
+        if ($provider.PSObject.Properties.Name -contains 'data_source_schemas') {
+            $dataSources = @($provider.data_source_schemas.PSObject.Properties.Name | Sort-Object)
+        }
+        $expectedResources = @('verda_container', 'verda_container_registry_credentials', 'verda_instance', 'verda_serverless_job', 'verda_ssh_key', 'verda_startup_script', 'verda_volume', 'verda_volume_attachment') | Sort-Object
+        Add-CheckResult -Condition (($resources -join ',') -eq ($expectedResources -join ',')) -Success 'Local provider schema has the reviewed eight-resource surface' -Failure "Provider resource surface changed: $($resources -join ', ')"
+        Add-CheckResult -Condition ($dataSources.Count -eq 0) -Success 'Local provider schema exposes zero data sources' -Failure "Provider data-source surface changed: $($dataSources -join ', ')"
+    }
+    catch {
+        $failures.Add("Local provider schema cannot be parsed: $($_.Exception.Message)")
+    }
+}
+else {
+    $passes.Add('Local provider schema is absent; committed sanitized summary remains available')
+}
 
 $sourceFiles = Get-ChildItem -LiteralPath $workspaceRoot -Recurse -File | Where-Object {
     $_.FullName -notmatch '[\\/]\.git[\\/]' -and
-    $_.FullName -notmatch '[\\/]tmp[\\/]'
+    $_.FullName -notmatch '[\\/]\.terraform[\\/]' -and
+    $_.FullName -notmatch '[\\/]\.local[\\/]' -and
+    $_.Name -notlike '*.local.json' -and
+    $_.Name -ne 'VERDA_PLATFORM_TAKEHOME_MASTER_BLUEPRINT.md'
 }
 
 $powerShellFiles = @($sourceFiles | Where-Object { $_.Extension -eq '.ps1' })
 foreach ($file in $powerShellFiles) {
     $tokens = $null
     $parseErrors = $null
-    [void][System.Management.Automation.Language.Parser]::ParseFile(
-        $file.FullName,
-        [ref]$tokens,
-        [ref]$parseErrors
-    )
-    Add-CheckResult -Condition ($parseErrors.Count -eq 0) -Success "PowerShell syntax is valid: $($file.FullName.Substring($workspaceRoot.Length + 1))" -Failure "PowerShell syntax error in $($file.FullName): $($parseErrors -join '; ')"
+    [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors)
+    $relative = $file.FullName.Substring($workspaceRoot.Length + 1)
+    Add-CheckResult -Condition ($parseErrors.Count -eq 0) -Success "PowerShell syntax is valid: $relative" -Failure "PowerShell syntax error in $relative`: $($parseErrors -join '; ')"
 }
 
-$discoveryScriptText = Get-Content -LiteralPath (Join-Path $workspaceRoot 'scripts/phase0/discover-verda.ps1') -Raw
+$discoveryScriptText = Read-WorkspaceFile -RelativePath 'scripts/phase0/discover-verda.ps1'
 $mutatingVerdaPatterns = @(
-    '(?i)\bvm\s+(create|start|shutdown|hibernate|delete|rm|action)\b',
-    '(?i)\bvolume(s)?\s+(create|delete|rm|attach|detach)\b',
-    '(?i)\bobject-storage\s+(rm|rb|mv|mb)\b',
-    '(?i)\bssh-keys?\s+(create|delete|rm)\b'
+    '(?i)arguments\s*=.*\bvm\b.*\b(create|start|shutdown|hibernate|delete|rm|action)\b',
+    '(?i)arguments\s*=.*\bvolume\b.*\b(create|delete|rm|attach|detach|action)\b',
+    '(?i)arguments\s*=.*\bobject-storage\b.*\b(rm|rb|mv|mb|cp|sync)\b',
+    '(?i)arguments\s*=.*\bssh-key\b.*\b(create|delete|rm)\b'
 )
 $mutatingDiscoveryCommandFound = $false
 foreach ($pattern in $mutatingVerdaPatterns) {
@@ -143,7 +193,7 @@ foreach ($pattern in $mutatingVerdaPatterns) {
     }
 }
 if (-not $mutatingDiscoveryCommandFound) {
-    $passes.Add('Verda discovery script contains no recognized mutating command')
+    $passes.Add('Verda discovery script contains only recognized read-only query families')
 }
 
 $forbiddenFilePatterns = @(
@@ -152,27 +202,37 @@ $forbiddenFilePatterns = @(
     '(?i)\.(pem|p12|pfx)$',
     '(?i)(^|[\\/])id_(rsa|ed25519)[^\\/]*$'
 )
+$forbiddenFileFound = $false
 foreach ($file in $sourceFiles) {
     foreach ($pattern in $forbiddenFilePatterns) {
         if ($file.FullName -match $pattern) {
             $failures.Add("Forbidden sensitive filename found: $($file.FullName)")
+            $forbiddenFileFound = $true
         }
     }
 }
-if (-not ($failures | Where-Object { $_ -like 'Forbidden sensitive filename*' })) {
+if (-not $forbiddenFileFound) {
     $passes.Add('No forbidden sensitive filenames found')
 }
 
-$privateKeyFinding = $false
-foreach ($file in $sourceFiles | Where-Object { $_.Extension -in @('.md', '.json', '.tf', '.yaml', '.yml', '.ps1') }) {
+$secretMarkerPatterns = @(
+    '-----BEGIN [A-Z ]*PRIVATE KEY-----',
+    '(?i)VERDA_CLIENT_SECRET\s*=\s*[^\s#]+',
+    '(?i)client_secret\s*[=:]\s*["''][^"'']+["'']'
+)
+$secretMarkerFound = $false
+foreach ($file in $sourceFiles | Where-Object { $_.Extension -in @('.md', '.json', '.tf', '.hcl', '.yaml', '.yml', '.ps1', '.example') }) {
     $content = Get-Content -LiteralPath $file.FullName -Raw
-    if ($content -match '-----BEGIN [A-Z ]*PRIVATE KEY-----') {
-        $failures.Add("Private key material marker found: $($file.FullName)")
-        $privateKeyFinding = $true
+    foreach ($pattern in $secretMarkerPatterns) {
+        if ($content -match $pattern) {
+            $failures.Add("Potential secret material found: $($file.FullName)")
+            $secretMarkerFound = $true
+            break
+        }
     }
 }
-if (-not $privateKeyFinding) {
-    $passes.Add('No private key material markers found')
+if (-not $secretMarkerFound) {
+    $passes.Add('No private-key or populated Verda client-secret markers found')
 }
 
 foreach ($pass in $passes) {
@@ -182,7 +242,8 @@ foreach ($failure in $failures) {
     Write-Output "[FAIL] $failure"
 }
 
-Write-Output "Phase 0 validation: $($passes.Count) passed, $($failures.Count) failed"
+Write-Output "Phase 0 repository validation: $($passes.Count) passed, $($failures.Count) failed"
+Write-Output 'Note: repository validation success does not override the live Phase 0 exit gate in IMPLEMENTATION_STATUS.md.'
 
 if ($failures.Count -gt 0) {
     exit 1

@@ -28,8 +28,14 @@ override.tf.json
 *_override.tf.json
 
 # Generated local discovery evidence
+.local/
 docs/evidence/**/*.local.json
 docs/evidence/**/provider-schema*.json
+evidence/**/*.local.json
+evidence/**/provider-schema*.json
+
+# Local planning input; provenance and checksum are recorded in docs/ai-usage.md
+VERDA_PLATFORM_TAKEHOME_MASTER_BLUEPRINT.md
 
 # Tooling and editor files
 .idea/

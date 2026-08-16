@@ -1,111 +1,123 @@
 # Architecture Contract
 
-## Decision summary
+## Delivery thesis
 
-The implemented platform is a cost-bounded, three-node RKE2 cluster that demonstrates production disciplines without claiming to be the final production topology. Dev, staging, and production share the cluster but receive policy and tenancy boundaries. Rancher is co-located for the take-home only.
+The implementation follows a two-stage strategy. Stage A proves every mandatory assignment link on the smallest credible HA control plane. Stage B is the staff-level target and starts only after Stage A is green, reproducible, secure, evidenced, and affordable.
 
-## Implemented topology
+This replaces the pre-blueprint baseline that treated one co-located cluster as the final take-home target. The change is explicit in ADR-0002; it is not a silent architectural drift.
+
+## Stage A — guaranteed pass path
 
 ```mermaid
 flowchart TB
-    Assessor["Assessor over HTTPS or SSH tunnel"]
-    Git["Git repository: desired state and audit trail"]
-    CI["CI: validate, test, build, SBOM, scan"]
-    Harbor["Harbor registry and Trivy"]
-    ObjectStore["Verda S3-compatible object storage"]
+    Developer["Developer"] --> Git["Git repository"]
+    Developer --> CI["CI: test and build once"]
+    CI --> Harbor["Harbor: scan, SBOM, sign, store"]
+    CI -->|"digest update PR"| Git
+    Git --> Argo["Argo CD"]
 
     subgraph Verda["Verda Cloud"]
-        subgraph RKE2["RKE2 HA cluster"]
-            N1["Node 1: control-plane, etcd, worker"]
-            N2["Node 2: control-plane, etcd, worker"]
-            N3["Node 3: control-plane, etcd, worker"]
-            Management["Rancher and Argo CD"]
-            Platform["cert-manager, Longhorn, Kyverno, Velero"]
-            Observability["Prometheus, Grafana, Loki, Alloy"]
-            Environments["Dev, staging, prod namespaces"]
+        subgraph Management["verda-mgmt: three schedulable RKE2 server nodes"]
+            Rancher["Rancher"]
+            Argo
+            Harbor
+            Observability["Prometheus, Alertmanager, Grafana, Loki, Alloy"]
+            Platform["cert-manager, Longhorn, Sealed Secrets, Kyverno, Velero"]
+            Dev["demo-dev"]
+            Staging["demo-staging"]
+            Prod["demo-prod"]
         end
+        ObjectStorage["Verda S3-compatible object storage"]
     end
 
-    Git --> CI
-    CI --> Harbor
-    CI -->|"PR updates immutable digest"| Git
-    Git --> Management
-    Harbor --> Environments
-    Management --> Platform
-    Management --> Observability
-    Management --> Environments
-    Platform --> ObjectStore
-    Observability --> ObjectStore
-    Assessor --> Management
-    Assessor --> Observability
-    Assessor --> Environments
+    Argo --> Dev
+    Argo --> Staging
+    Argo --> Prod
+    Harbor --> Dev
+    Harbor --> Staging
+    Harbor --> Prod
+    Platform --> ObjectStorage
+    Observability --> ObjectStorage
 ```
 
-## Component ownership boundaries
+Stage A is a temporary co-location decision, not the claimed final production pattern. It is complete only when every mandatory acceptance row is green end to end.
 
-| Layer | Owner and source of truth | Recovery authority |
+## Stage B — staff-level gold target
+
+```mermaid
+flowchart TB
+    Developer["Developer"] --> Git["Git repository"]
+    Developer --> CI["CI: test, build once, scan, SBOM, sign"]
+    CI --> Harbor["Harbor"]
+    CI -->|"immutable digest PR"| Git
+    Git --> Argo["Argo CD"]
+
+    subgraph Verda["Verda Cloud"]
+        subgraph Management["verda-mgmt: three RKE2 server nodes"]
+            Rancher["Rancher"]
+            Argo
+            Harbor
+            Central["Central Grafana and Loki"]
+            MgmtRecovery["Management recovery controllers"]
+        end
+
+        subgraph Workload["verda-workload: three RKE2 server nodes"]
+            Dev["demo-dev"]
+            Staging["demo-staging"]
+            Prod["demo-prod"]
+            WorkProm["Local Prometheus and Alertmanager"]
+            Alloy["Grafana Alloy"]
+            Cilium["Cilium and Hubble"]
+            WorkStorage["Longhorn and Velero"]
+        end
+
+        ObjectStorage["Verda S3-compatible object storage"]
+    end
+
+    Rancher --> Management
+    Rancher --> Workload
+    Argo --> Management
+    Argo --> Workload
+    WorkProm --> Central
+    Alloy --> Central
+    MgmtRecovery --> ObjectStorage
+    WorkStorage --> ObjectStorage
+```
+
+### Stage B decision gate
+
+Stage B may start only when Stage A is fully green; a clean rebuild needs no undocumented console work; CI-to-dev GitOps works; one alert and one log investigation have been tested; Git history is secret-clean; and remaining credit/time covers the second cluster with contingency.
+
+## Failure domains and claims
+
+| Layer | Permitted claim | Explicit boundary |
 |---|---|---|
-| Verda compute and volumes | Terraform | Terraform state plus Verda API |
-| Host OS and RKE2 configuration | Ansible and bootstrap assets | Re-provision host; restore etcd only when required |
-| Platform services | Argo CD from Git | Reconcile from Git plus component data restore |
-| Application desired state | Git environment overlays | Revert promotion commit |
-| Container artifacts | Harbor | Registry/database restore or rebuild from source |
-| Cluster state | Kubernetes API and etcd | RKE2 snapshots |
-| Persistent application state | Longhorn volumes | Longhorn and Velero restore |
-| Logs and backups | Verda object storage | Object-storage retention and recovery credentials |
+| Kubernetes control plane | Three embedded-etcd servers tolerate one server loss while quorum remains healthy | Requires a working fixed registration/API endpoint |
+| Workload scheduling | Replicated workloads can reschedule when requests, PDBs, spread, and spare capacity permit | Three servers alone do not make applications HA |
+| Storage | Longhorn can replicate data across nodes | Replication is not an application-consistent or off-cluster backup |
+| External endpoint | Unverified | No managed LB, floating IP, private VIP, or health-aware DNS has been proven in the current account |
+| Stage A management | Individual replicas can survive a node loss | A whole-cluster failure removes both management and workloads |
+| Stage B management | Management and workload Kubernetes APIs/etcd are independent | Both clusters may still share a Verda region/account |
+| Regional recovery | Not claimed | Two clusters in one region are not regional DR |
 
-## Environment isolation
+## Traffic and trust boundaries
 
-The take-home uses namespaces because three independent HA clusters would consume time and credits without proportionate evaluation value. Each environment will have:
+| Flow | Source | Destination | Required control |
+|---|---|---|---|
+| Evaluator UI | Internet | Rancher, Argo CD, Harbor, Grafana | TLS, authentication, scoped reviewer account |
+| Application traffic | Internet | Traefik and environment service | TLS and only approved routes |
+| Node administration | Approved CIDRs or tunnel | SSH and optional Kubernetes API | Key auth, allowlist, no password/root login |
+| Cluster internode | RKE2 nodes | etcd, API, kubelet, CNI, Longhorn | Verda private network if proven; otherwise WireGuard and peer allowlist |
+| Artifact push | CI | Harbor | TLS and project-scoped push robot identity |
+| Artifact pull | Workload cluster | Harbor | TLS, pull-only identity, digest references |
+| GitOps | Argo CD | Git and cluster APIs | Read-only Git credential and scoped cluster credential |
+| Logs/metrics | Workload cluster | Management observability | Internal encrypted/TLS route; no public Loki |
+| Backups | RKE2/Velero/Loki/Longhorn | Verda object storage | Separate least-privilege credentials where supported |
 
-- A dedicated namespace and service account.
-- ResourceQuota and LimitRange.
-- Restricted Pod Security Admission.
-- Default-deny ingress and egress NetworkPolicies.
-- Explicit DNS, ingress, monitoring, and application dependencies.
-- Its own Argo CD project boundaries and hostname.
-- A distinct Git overlay pointing to an immutable image digest.
+## Ownership boundary
 
-This is not equivalent to cluster-level isolation. The production target uses separate clusters and credentials, especially for production.
+The detailed day-zero/day-one contract is in `docs/operations-model.md`. In summary: Terraform owns Verda infrastructure, Ansible owns hosts and RKE2, bootstrap installs only Argo CD plus the root Application, Argo CD owns in-cluster desired state, CI owns artifact production, and Git owns the auditable desired state and promotion history.
 
-## Network trust zones
+## Current Phase 0 posture
 
-| Zone | Intended ingress | Notes |
-|---|---|---|
-| Public application edge | TCP 80/443 | HTTP redirects to HTTPS; only approved ingress hosts |
-| Administrative edge | SSH and Kubernetes API from allowlisted sources or tunnels | No unrestricted administrative endpoint |
-| Node peer network | RKE2, etcd, kubelet, and CNI ports from cluster peers only | Prefer private addresses; otherwise validate encrypted overlay and MTU |
-| Cluster service network | Kubernetes NetworkPolicy-controlled | Platform namespaces receive explicit exceptions only |
-| Object storage | Outbound TLS | Separate, least-privilege credentials for backup and logging paths |
-
-The exact port matrix remains a Phase 3 artifact because it depends on the selected RKE2/Cilium versions and observed Verda network behavior.
-
-## Availability claims
-
-| Capability | Intended claim | Constraint |
-|---|---|---|
-| Kubernetes API data | Tolerates one server failure | Requires healthy etcd quorum and stable registration/client endpoint |
-| Workload scheduling | Tolerates one worker failure for replicated workloads | Stateful recovery depends on validated Longhorn behavior |
-| Rancher and Argo CD pods | Multiple replicas | Co-located with the workload cluster |
-| Public ingress | Best effort until external endpoint behavior is verified | Multiple replicas do not create a highly available public IP by themselves |
-| Dev/staging/prod isolation | Policy and namespace isolation | Not a separate control-plane boundary |
-| Backups | Off-cluster copy | Not complete until a restore drill passes |
-
-## Production target
-
-The target production architecture separates:
-
-- A dedicated HA Rancher management cluster.
-- Independent dev, staging, and production workload clusters.
-- A highly available external L4 load balancer and managed DNS.
-- External identity and secret-management systems.
-- Registry and observability capacity sized independently from application workloads.
-- Backup credentials and recovery infrastructure in a separate administrative boundary.
-
-## Non-goals for the take-home
-
-- Claiming multi-region or datacenter fault tolerance.
-- Installing every optional platform tool.
-- Creating a custom operator when standard controllers suffice.
-- Treating dashboards as proof without tested queries and alerts.
-- Treating encrypted Git secrets as equivalent to an external production secret manager.
+No cloud resource exists. Provider 1.1.2 exposes compute, volume, SSH-key, startup-script, container, registry-credential, and serverless-job resources, but no data sources and no network, firewall, load-balancer, floating-IP, DNS, or object-storage resources. That provider absence is not proof that the Verda account lacks those services; authenticated API/CLI/console discovery is still required.

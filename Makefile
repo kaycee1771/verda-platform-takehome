@@ -12,7 +12,7 @@ phase0-preflight:
 	$(PWSH) -NoProfile -File scripts/phase0/discover-verda.ps1
 
 phase0-discover-account:
-	$(PWSH) -NoProfile -File scripts/phase0/discover-verda.ps1 -QueryAccount -ConfirmReadOnly -OutputPath docs/evidence/phase-0/verda-discovery.local.json
+	$(PWSH) -NoProfile -File scripts/phase0/discover-verda.ps1 -QueryAccount -ConfirmReadOnly -OutputPath evidence/phase-0/verda-discovery.local.json
 
 phase0-provider-schema:
-	$(PWSH) -NoProfile -File scripts/phase0/export-provider-schema.ps1 -AllowProviderDownload -OutputPath docs/evidence/phase-0/provider-schema.local.json
+	$(PWSH) -NoProfile -File scripts/phase0/export-provider-schema.ps1 -AllowProviderDownload -OutputPath evidence/phase-0/provider-schema.local.json

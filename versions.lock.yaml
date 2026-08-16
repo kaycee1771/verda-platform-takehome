@@ -1,0 +1,53 @@
+---
+schema_version: 1
+as_of: "2026-08-16"
+compatibility_review_status: "phase-0-partial-account-discovery-blocked"
+
+terraform:
+  implementation: "terraform"
+  version: "1.15.8"
+  source: "https://developer.hashicorp.com/terraform/install"
+
+verda_cli:
+  version: "1.8.1"
+  source: "https://docs.verda.com/cli/"
+
+providers:
+  verda:
+    source: "verda-cloud/verda"
+    version: "1.1.2"
+    constraint: "= 1.1.2"
+    registry: "https://registry.terraform.io/providers/verda-cloud/verda/1.1.2"
+    schema_evidence: "evidence/phase-0/provider-schema-summary.md"
+
+# These components are not used in Phase 0. They remain deliberately unselected
+# until Phase 1 performs one mutually compatible, version-specific lock review.
+rke2:
+  version: null
+  kubernetes_minor: null
+  selection_status: "pending-phase-1-compatibility-review"
+  compatibility_sources:
+    - "https://docs.rke2.io/release-notes"
+    - "https://ranchermanager.docs.rancher.com/versions"
+
+helm_charts:
+  argocd: null
+  cert_manager: null
+  rancher: null
+  longhorn: null
+  harbor: null
+  kube_prometheus_stack: null
+  loki: null
+  alloy: null
+  sealed_secrets: null
+  kyverno: null
+  velero: null
+  kueue: null
+
+images:
+  verda_os_image_id: null
+  demo_base_reference: null
+
+ci_actions:
+  checkout: null
+  setup_buildx: null

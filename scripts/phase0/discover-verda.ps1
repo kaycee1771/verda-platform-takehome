@@ -107,14 +107,13 @@ if ($QueryAccount) {
         [PSCustomObject]@{ name = 'auth-status'; arguments = [string[]]@('--agent', 'auth', 'show') },
         [PSCustomObject]@{ name = 'locations'; arguments = [string[]]@('--agent', 'locations') },
         [PSCustomObject]@{ name = 'cpu-instance-types'; arguments = [string[]]@('--agent', 'instance-types', '--cpu') },
+        [PSCustomObject]@{ name = 'gpu-instance-types'; arguments = [string[]]@('--agent', 'instance-types', '--gpu') },
         [PSCustomObject]@{ name = 'images'; arguments = [string[]]@('--agent', 'images') },
-        [PSCustomObject]@{ name = 'availability-fin-01'; arguments = [string[]]@('--agent', 'availability', '--location', 'FIN-01') },
-        [PSCustomObject]@{ name = 'availability-fin-02'; arguments = [string[]]@('--agent', 'availability', '--location', 'FIN-02') },
-        [PSCustomObject]@{ name = 'availability-fin-03'; arguments = [string[]]@('--agent', 'availability', '--location', 'FIN-03') },
+        [PSCustomObject]@{ name = 'availability-all-locations'; arguments = [string[]]@('--agent', 'availability') },
         [PSCustomObject]@{ name = 'volumes'; arguments = [string[]]@('--agent', 'volume', 'list') },
         [PSCustomObject]@{ name = 'account-status'; arguments = [string[]]@('--agent', 'status') },
         [PSCustomObject]@{ name = 'running-cost'; arguments = [string[]]@('--agent', 'cost', 'running') },
-        [PSCustomObject]@{ name = 'account-balance'; arguments = [string[]]@('--agent', 'cost', 'balance') },
+        [PSCustomObject]@{ name = 'account-balance-estimate'; arguments = [string[]]@('--agent', 'cost', 'balance') },
         [PSCustomObject]@{ name = 'object-storage-status'; arguments = [string[]]@('--agent', 'object-storage', 'show') },
         [PSCustomObject]@{ name = 'registry-status'; arguments = [string[]]@('--agent', 'registry', 'show') }
     )

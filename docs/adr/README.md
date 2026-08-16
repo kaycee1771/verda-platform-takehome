@@ -1,12 +1,12 @@
 # Architecture Decision Records
 
-ADRs record decisions whose consequences outlive a single implementation command.
+ADRs preserve why a choice was made and what evidence may reverse it. The pre-blueprint baseline is retained in Git history at commit `7de5145`; ADR-0002 records the material correction from a one-cluster final target to Stage A plus conditional Stage B.
 
 ## Status vocabulary
 
-- **Proposed:** preferred direction, but a named Phase 0 gate must close first.
-- **Accepted:** approved for the take-home implementation.
-- **Superseded:** replaced by a later ADR; retained for history.
+- **Proposed:** preferred direction blocked by named discovery or evidence.
+- **Accepted:** approved implementation contract; live implementation may still be pending.
+- **Superseded:** replaced by a later ADR and retained for history.
 - **Rejected:** evaluated but not selected.
 
 ## Index
@@ -14,11 +14,16 @@ ADRs record decisions whose consequences outlive a single implementation command
 | ADR | Decision | Status |
 |---|---|---|
 | [0000](0000-use-architecture-decision-records.md) | Use ADRs for material decisions | Accepted |
-| [0001](0001-use-rke2-for-the-takehome-cluster.md) | Use RKE2 for the cluster | Accepted |
-| [0002](0002-model-environments-as-isolated-namespaces.md) | Model environments as isolated namespaces | Accepted |
-| [0003](0003-co-locate-rancher-for-the-takehome.md) | Co-locate Rancher for the take-home | Accepted |
-| [0004](0004-use-longhorn-for-replicated-storage.md) | Use Longhorn for replicated storage | Proposed |
-| [0005](0005-use-sealed-secrets-for-gitops-secrets.md) | Use Sealed Secrets for GitOps secrets | Accepted |
-| [0006](0006-bootstrap-argo-cd-then-manage-declaratively.md) | Bootstrap Argo CD, then manage declaratively | Accepted |
-| [0007](0007-treat-public-endpoint-ha-as-an-explicit-gap.md) | Treat public endpoint HA as an explicit gap | Proposed |
-| [0008](0008-use-verda-object-storage-as-the-backup-target.md) | Use Verda object storage as backup target | Proposed |
+| [0001](0001-rke2.md) | RKE2 distribution | Accepted |
+| [0002](0002-two-stage-topology.md) | Stage A then separate Stage B workload cluster | Accepted |
+| [0003](0003-cluster-role-layout.md) | Three schedulable server nodes per cluster | Accepted |
+| [0004](0004-cilium.md) | RKE2-bundled Cilium and Hubble | Accepted |
+| [0005](0005-network-endpoints.md) | Discover-first secure node and endpoint path | Proposed |
+| [0006](0006-storage.md) | Longhorn plus Verda object storage | Proposed |
+| [0007](0007-gitops.md) | Minimal Argo bootstrap and Git-owned desired state | Accepted |
+| [0008](0008-registry-supply-chain.md) | Harbor and build-once digest promotion | Accepted |
+| [0009](0009-secret-management.md) | Sealed Secrets for take-home runtime secrets | Accepted |
+| [0010](0010-observability.md) | Per-cluster Prometheus, central Grafana/Loki, Alloy | Accepted |
+| [0011](0011-backup-recovery.md) | Layered backup and restore proof | Proposed |
+
+Use [template.md](template.md) for later decisions.
