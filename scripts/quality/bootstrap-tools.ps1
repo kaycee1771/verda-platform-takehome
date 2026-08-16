@@ -62,7 +62,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $buildLog = Join-Path $logRoot 'bootstrap-image.log'
-& docker build --pull --tag $image --file (Join-Path $repoRoot 'tooling\quality\Dockerfile') $repoRoot 2>&1 |
+& docker build --pull --provenance=false --tag $image `
+    --file (Join-Path $repoRoot 'tooling\quality\Dockerfile') $repoRoot 2>&1 |
     Tee-Object -FilePath $buildLog
 if ($LASTEXITCODE -ne 0) {
     throw "Quality image build failed. See $buildLog"
@@ -95,6 +96,8 @@ $metadata = [ordered]@{
     size_bytes = $inspect[0].Size
     validation_network = 'none'
     cloud_credentials_forwarded = $false
+    build_provenance_attestation = $false
+    provenance_model = 'repository source locks and checksums'
 }
 $metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $reportRoot 'tool-image.json') -Encoding utf8NoBOM
 

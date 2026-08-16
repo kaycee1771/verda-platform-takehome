@@ -46,6 +46,7 @@ are exact-pinned in `versions.lock.yaml`, `aqua.yaml`, and `schemas/schema-sourc
 - [Prometheus rule unit testing](https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/)
 - [GitHub Actions secure use](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions)
 - [GitHub workflow permissions](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#permissions)
+- [Docker build provenance option](https://docs.docker.com/reference/cli/docker/buildx/build/#provenance)
 - [Argo CD v3.5.1 Application CRD](https://github.com/argoproj/argo-cd/blob/v3.5.1/manifests/crds/application-crd.yaml)
 - [Kueue v0.19.1 Workload CRD](https://github.com/kubernetes-sigs/kueue/blob/v0.19.1/config/components/crd/bases/kueue.x-k8s.io_workloads.yaml)
 - [Longhorn v1.12.1 generated CRDs](https://github.com/longhorn/longhorn-manager/blob/v1.12.1/k8s/crds.yaml)

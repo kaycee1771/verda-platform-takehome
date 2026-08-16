@@ -6,7 +6,7 @@
 
 | Gate | Result |
 |---|---|
-| Repository structure contract | PASS: 114 ownership directories, 177 required files at run time |
+| Repository structure contract | PASS: 115 ownership directories and 185 required files |
 | Exact quality-tool versions | PASS: 18 of 18 |
 | Terraform format, validate, and TFLint | PASS |
 | Trivy canonical IaC scan | PASS: zero high/critical misconfigurations in three detected targets |
@@ -28,5 +28,5 @@
 - Go format, vet, and tests are not applicable until Phase 6 application source exists. The module
   boundary is reserved but no future functionality is claimed.
 
-The ignored final `validate.log` is 8,461 bytes with SHA-256
-`acfd4d458336c38e70814b4ff3dc4727a523b4daa1ceb4f047cff36be05af7ce`.
+The isolated-clone `validate.log` is 8,432 bytes with SHA-256
+`391f3405ecfc9a07c759b2c217691683c1f69980a7801d40b98a63129624c54d`.

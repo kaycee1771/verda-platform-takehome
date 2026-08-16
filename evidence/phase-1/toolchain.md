@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Image | `verda-platform-quality:phase1-2026-08-16` |
-| Local content digest | `sha256:b37edda6b1fd2e5c2eb4d01564a86e7102af13433d8955cfbbfe0b821f3779a4` |
+| Local content digest | `sha256:6d32d1047025bce8bc6b4f3e0aa926c458ebef55ac486434c8d874aa38462bb0` |
 | Size | 527,756,798 bytes |
 | Runtime user | UID/GID `65532:65532`, non-login passwd entry |
 | Validation network | Disabled |
@@ -44,5 +44,15 @@ as implemented.
 | `tooling/quality/Dockerfile` | `610dc23b1b0c67b34d325e869215e9a081d9d96e0c9585b3d2f7d509169bfe4a` |
 | Terraform provider lock | `4137cd8e6d51442cbf884a9c3b6318c7453ee0da63113396c47df31c9debb213` |
 
-The ignored tool-image metadata report is 457 bytes with SHA-256
-`eb215b219ed1b5b86c0e8b4648f3e9cf539b9daee38acd02b6181e20a6fb223c`.
+Bootstrap disables the default timestamped BuildKit attestation for this local validator image, so
+identical content yields the stable digest above. Application build provenance remains mandatory in
+Phase 6. The ignored tool-image report is 563 bytes with SHA-256
+`84826630324227258a754a85c173e36d10eb932e584c58559f3fd5635c20a1a9`.
+
+## Bootstrap implementation hashes
+
+| Source | SHA-256 |
+|---|---|
+| `scripts/quality/bootstrap-tools.ps1` | `ba6008a15a891a7ec7a5bd561d10bb647cf8d443bc37ff2d31264060a9c18d65` |
+| `scripts/quality/bootstrap-cache.sh` | `52dcf30437f4ed2b75699014dbe814ff1ed335dab5e694f790800c2f73deeb46` |
+| `scripts/quality/bootstrap_schemas.py` | `c0abcef924783ed380f4c68bc7ec75a2e2b0b73e97f920fde2ff7433060bfea6` |

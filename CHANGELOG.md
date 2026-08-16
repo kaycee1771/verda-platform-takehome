@@ -18,6 +18,8 @@ are under active development.
   every Phase 1 custom API family.
 - Made cache provenance, future-phase command guards, Aqua registry resolution, and local/CI
   validator configuration fail closed.
+- Narrowed generated-file ignores after clean-clone testing and made the local validator image
+  digest stable by excluding timestamped BuildKit attestations while retaining source-lock proof.
 
 ### Security
 

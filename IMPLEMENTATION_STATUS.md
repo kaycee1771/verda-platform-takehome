@@ -6,7 +6,7 @@
 - Phase status: PARTIAL — all local gates pass; hosted GitHub Actions run is unavailable without a remote
 - Stage A status: NOT STARTED — Phase 2 has not been authorized
 - Stage B status: NOT STARTED — prohibited until Stage A is green and the Stage B decision gate passes
-- Last successful end-to-end verification: Phase 1 full local CI-equivalent suite; clean-clone proof pending final candidate commit
+- Last successful end-to-end verification: Phase 1 clean-clone bootstrap, standalone gates, and full local CI-equivalent suite at `853beeb`
 - Current blockers: Phase 1 hosted CI evidence and branch enforcement require a GitHub remote and real owner; Cloud API credentials block Phase 2, live peer-path tests block Phase 3, and object-storage entitlement blocks the Phase 5 off-cluster storage path
 - Cloud mutation authorized: No
 - Next permitted action: Complete Phase 1 clean-clone and hosted CI evidence only; Phase 2 remains prohibited
@@ -45,7 +45,7 @@
 | Generated private key is detected | PASS | `.local/reports/negative/generated-private-key.log` and Phase 1 summary | Fixture stays ignored and is deleted after the test |
 | No unexplained repository directory exists | PASS | `tests/static/repository-contract.yaml` | Update ownership contract with each structural change |
 | Full local CI parity passes | PASS | `.local/logs/ci.log` and `evidence/phase-1/` | Retain networkless, credential-free execution |
-| Clean clone bootstraps and validates | PENDING | `evidence/phase-1/` | Run from final candidate commit |
+| Clean clone bootstraps and validates | PASS | `evidence/phase-1/clean-clone.md` | Repeat after any material quality-system change |
 | Hosted GitHub Actions validation passes | BLOCKED | No GitHub remote is configured | Publish after approval, set real CODEOWNERS, require the workflow, retain run URL |
 
 ## Deferred gates

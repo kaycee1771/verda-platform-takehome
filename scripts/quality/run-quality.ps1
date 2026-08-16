@@ -43,6 +43,9 @@ $lockedInputs = [ordered]@{
     schema_lock_sha256 = (Join-Path $repoRoot 'schemas\schema-sources.lock.yaml')
     quality_dockerfile_sha256 = (Join-Path $repoRoot 'tooling\quality\Dockerfile')
     requirements_quality_sha256 = (Join-Path $repoRoot 'requirements-quality.txt')
+    bootstrap_tools_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap-tools.ps1')
+    bootstrap_cache_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap-cache.sh')
+    bootstrap_schemas_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap_schemas.py')
 }
 foreach ($entry in $lockedInputs.GetEnumerator()) {
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $entry.Value).Hash.ToLowerInvariant()

@@ -58,6 +58,10 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
   generated-inventory sentinel from Git even though the local structure check passed. The rule was
   narrowed to the repository root, the sentinel became an explicit contract file, and the clean-
   clone sequence was restarted from a new commit.
+- **Reproducibility correction:** Identical BuildKit layers produced different local image-index
+  digests because default provenance includes timestamps. For this local validator only, automatic
+  provenance attachment was disabled and source-lock/checksum provenance was recorded explicitly;
+  signed SBOM and provenance requirements for Phase 6 application artifacts remain unchanged.
 - **Schema discipline:** Codex replaced future-only schema declarations with checksummed upstream
   schemas and positive fixtures for Argo CD, Kyverno, Kueue, Longhorn, Velero, Prometheus Operator,
   and Sealed Secrets. An unknown custom API remains a mandatory rejection case.

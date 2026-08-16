@@ -12,3 +12,8 @@ all Linux capabilities dropped, a read-only container root, and no cloud credent
 `make bootstrap-tools` is the only networked quality step. It builds the digest-pinned base image,
 verifies upstream checksums, warms non-secret caches, and reports host tools without upgrading the
 workstation. `make validate`, pre-commit, negative tests, and CI parity are offline.
+
+The local validator build disables BuildKit's default timestamped provenance attachment so identical
+inputs produce one stable image digest. Repository locks, upstream checksums, the verified Aqua
+registry commit, and the tool-image report are its provenance record. Signed image provenance and
+SBOMs remain a Phase 6 requirement for application artifacts.

@@ -46,7 +46,7 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | Q06 | Developer hooks | Installed canonical hook and `pre-commit run --all-files` | PASS |
 | Q07 | Repository and history secret scanning | Gitleaks working-tree and `--all` history scans with 100% redaction | PASS |
 | Q08 | CI workflow | Actionlint plus local execution of the exact `make ci` workflow body; hosted run awaits a GitHub remote | PARTIAL |
-| Q09 | Clean-clone bootstrap and validation | Final candidate clone with fresh local caches | PENDING |
+| Q09 | Clean-clone bootstrap and validation | Fresh clone at `853beeb`; zero copied caches; all canonical targets passed | PASS |
 
-Phase 1 cannot be marked fully complete until Q08 has a hosted successful run and Q09 is recorded in
-`evidence/phase-1/`. This does not authorize Phase 2.
+Phase 1 cannot be marked fully complete until Q08 has a hosted successful run. This does not
+authorize Phase 2.

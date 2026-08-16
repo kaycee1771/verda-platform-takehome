@@ -21,3 +21,6 @@ third-party action by full SHA, restores only non-sensitive caches, runs the sam
 and uploads only `.local/reports/` for seven days.
 
 Hosted CI remains the sole Phase 1 external closure item; it does not authorize Phase 2.
+
+The isolated-clone CI rerun is 10,122 bytes with SHA-256
+`32482bf0955aeea9f7e9b4f6a496535189d9940368953927d017d5ca2a2788cc`.
