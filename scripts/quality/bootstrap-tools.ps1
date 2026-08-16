@@ -71,11 +71,23 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host '[INFO] Warming version-pinned provider, schema, and Trivy caches. No cloud API is contacted.'
 $cacheLog = Join-Path $logRoot 'bootstrap-cache.log'
+$cacheOwner = '65532:65532'
+if ($IsLinux) {
+    $hostUid = (& id -u).Trim()
+    if ($LASTEXITCODE -ne 0 -or $hostUid -notmatch '^\d+$') {
+        throw 'Unable to determine the Linux host UID for writable cache ownership.'
+    }
+    # The runner owns generated files; the non-root validator retains group write access.
+    $cacheOwner = "${hostUid}:65532"
+}
+$cacheCommand = "bash scripts/quality/bootstrap-cache.sh && " +
+    "chown -R $cacheOwner /workspace/.local && " +
+    'chmod -R u+rwX,g+rwX,o-rwx /workspace/.local'
 $cacheArgs = @(
     'run', '--rm', '--user', '0:0',
     '--volume', "${repoRoot}:/workspace", '--workdir', '/workspace',
     $image, 'bash', '-c',
-    'bash scripts/quality/bootstrap-cache.sh && chown -R 65532:65532 /workspace/.local'
+    $cacheCommand
 )
 & docker @cacheArgs 2>&1 |
     Tee-Object -FilePath $cacheLog
