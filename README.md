@@ -4,9 +4,9 @@ This repository is being built phase by phase as a reproducible, secure-by-desig
 
 ## Current status
 
-**Phase 0 — BLOCKED.** Repository-side discovery and governance are implemented, but the Phase 0 exit gate is not satisfied. No Verda resource has been created or changed.
+**Phase 0 — PASS.** Governance, provider-schema inspection, authenticated account discovery, endpoint-path selection, and the seven-day Stage A cost envelope are complete. No Verda resource has been created or changed.
 
-The blocking condition is concrete: this shell has neither `VERDA_CLIENT_ID` nor `VERDA_CLIENT_SECRET`, so current account locations, CPU shapes, OS image IDs, capacity, prices, credit balance, and account-specific networking cannot be inspected. Phase 1 must not begin until the failed conditions in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) are green.
+The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`, each with an 80 GiB root volume and a 100 GiB Longhorn data volume, using Ubuntu 24.04 Minimal. The seven-day envelope is $50.51 including a capped $5 unquoted-services allowance and 15% contingency against a verified $115.67 balance. Phase 1 remains deliberately not started; later credentials, live networking, and object-storage gates are tracked in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
 ## Delivery architecture
 
@@ -28,7 +28,7 @@ make phase0-discover-account
 make phase0-validate
 ```
 
-Before the account probe, configure credentials locally without placing them in this repository. The interactive CLI keeps the value out of command history and repository files:
+Before a future CLI account probe, configure credentials locally without placing them in this repository. Cloud API credentials do not currently exist and must be created before Phase 2. The interactive CLI keeps values out of command history and repository files:
 
 ```powershell
 verda auth login

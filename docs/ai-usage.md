@@ -26,3 +26,11 @@ Future entries must identify generated code that was materially changed after te
 ## Genuine Claude interaction placeholder
 
 Not yet performed. A later bounded review must record the Claude prompt, output, human verification, corrections, and exact artifact influenced. No Codex work will be relabeled as Claude output.
+
+## 2026-08-16 - Authenticated Phase 0 gate closure
+
+- **Human-provided state:** The user signed in to the Verda console, applied the assignment credit, chose a seven-day Stage A review window, and selected no custom domain.
+- **Assistant activity:** Codex performed read-only console inspection of billing, deployment catalog, OS configuration, block-volume pricing/locations, credential categories, and exposed networking controls. It correlated those observations with provider 1.1.2, CLI 1.8.1, current official Verda pricing/API/object-storage/billing documentation, and the blueprint gates.
+- **Material decisions:** Select lean Stage A sizing, FIN-03, Ubuntu 24.04 Minimal, on-demand CPU nodes, `sslip.io`, and ADR-0005 Path B. Treat absent Cloud API credentials and object-storage entitlement as later gates rather than fabricating capability.
+- **Verification:** No Deploy/Create/Confirm action was invoked; current usage remained $0.00/hour; cost math was independently encoded in `docs/cost.md` and repository validation.
+- **Sensitive-data handling:** No credential, token, coupon, access key, private key, or project/user identifier is recorded in committed artifacts.

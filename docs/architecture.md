@@ -95,7 +95,7 @@ Stage B may start only when Stage A is fully green; a clean rebuild needs no und
 | Kubernetes control plane | Three embedded-etcd servers tolerate one server loss while quorum remains healthy | Requires a working fixed registration/API endpoint |
 | Workload scheduling | Replicated workloads can reschedule when requests, PDBs, spread, and spare capacity permit | Three servers alone do not make applications HA |
 | Storage | Longhorn can replicate data across nodes | Replication is not an application-consistent or off-cluster backup |
-| External endpoint | Unverified | No managed LB, floating IP, private VIP, or health-aware DNS has been proven in the current account |
+| External endpoint | Path B: designated public API/registration endpoint plus direct-node break glass and multi-node ingress | No managed LB, floating IP, private VIP, or health-aware DNS is exposed; the designated endpoint is an honest SPOF for default clients and new joins |
 | Stage A management | Individual replicas can survive a node loss | A whole-cluster failure removes both management and workloads |
 | Stage B management | Management and workload Kubernetes APIs/etcd are independent | Both clusters may still share a Verda region/account |
 | Regional recovery | Not claimed | Two clusters in one region are not regional DR |
@@ -107,12 +107,12 @@ Stage B may start only when Stage A is fully green; a clean rebuild needs no und
 | Evaluator UI | Internet | Rancher, Argo CD, Harbor, Grafana | TLS, authentication, scoped reviewer account |
 | Application traffic | Internet | Traefik and environment service | TLS and only approved routes |
 | Node administration | Approved CIDRs or tunnel | SSH and optional Kubernetes API | Key auth, allowlist, no password/root login |
-| Cluster internode | RKE2 nodes | etcd, API, kubelet, CNI, Longhorn | Verda private network if proven; otherwise WireGuard and peer allowlist |
+| Cluster internode | RKE2 nodes | etcd, API, kubelet, CNI, Longhorn | WireGuard overlay, public-IP peer allowlist, host firewall, and tested MTU |
 | Artifact push | CI | Harbor | TLS and project-scoped push robot identity |
 | Artifact pull | Workload cluster | Harbor | TLS, pull-only identity, digest references |
 | GitOps | Argo CD | Git and cluster APIs | Read-only Git credential and scoped cluster credential |
 | Logs/metrics | Workload cluster | Management observability | Internal encrypted/TLS route; no public Loki |
-| Backups | RKE2/Velero/Loki/Longhorn | Verda object storage | Separate least-privilege credentials where supported |
+| Backups | RKE2/Velero/Loki/Longhorn | Off-cluster S3-compatible storage | Prefer separate Verda credentials if entitlement appears; otherwise use ADR-approved external S3 and document the exception |
 
 ## Ownership boundary
 
@@ -120,4 +120,4 @@ The detailed day-zero/day-one contract is in `docs/operations-model.md`. In summ
 
 ## Current Phase 0 posture
 
-No cloud resource exists. Provider 1.1.2 exposes compute, volume, SSH-key, startup-script, container, registry-credential, and serverless-job resources, but no data sources and no network, firewall, load-balancer, floating-IP, DNS, or object-storage resources. That provider absence is not proof that the Verda account lacks those services; authenticated API/CLI/console discovery is still required.
+No cloud resource exists. Authenticated console inspection selected `CPU.4V.16G`, `FIN-03`, Ubuntu 24.04 Minimal, and NVMe storage; it exposed no project or deployment controls for private networking, firewalls/security groups, load balancers, floating/VIPs, or DNS. Provider 1.1.2 and CLI 1.8.1 expose none of those network surfaces either, so ADR-0005 accepts Path B. The project also exposes no Object Storage Access Keys section; off-cluster S3 remains a named Phase 5 gate rather than an assumed capability.

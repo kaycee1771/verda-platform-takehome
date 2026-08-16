@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-08-16
 - **Owners:** Recovery architecture
-- **Blocking gates:** GATE-001, GATE-002, GATE-004 and live restore evidence
+- **Blocking gates:** GATE-008 and live restore evidence
 
 ## Context
 
@@ -11,7 +11,7 @@ Git, Terraform state, etcd, Kubernetes objects, persistent volumes, component da
 
 ## Decision
 
-Use Git for declarative state, protected Terraform state/backup for infrastructure lifecycle, RKE2 etcd snapshots for cluster state, Velero for Kubernetes resources/filesystem backups, Longhorn snapshot/backup for volume recovery, component-specific exports where consistency requires them, and an encrypted off-repository Sealed Secrets key backup. Use separate object-storage credentials/prefixes where supported.
+Use Git for declarative state, protected Terraform state/backup for infrastructure lifecycle, RKE2 etcd snapshots for cluster state, Velero for Kubernetes resources/filesystem backups, Longhorn snapshot/backup for volume recovery, component-specific exports where consistency requires them, and an encrypted off-repository Sealed Secrets key backup. Use separate credentials/buckets/prefixes in a genuinely off-cluster S3-compatible target. Prefer Verda object storage only if the current project entitlement appears and compatibility passes; otherwise use ADR-0006's external S3 fallback.
 
 ## Alternatives considered
 
@@ -23,6 +23,7 @@ Use Git for declarative state, protected Terraform state/backup for infrastructu
 
 - Recovery has multiple runbooks and retention/credential dependencies.
 - Recovery objectives must be stated per data class, not as one vague platform number.
+- The current project does not expose Verda Object Storage Access Keys, so recovery cannot assume that target.
 - This ADR remains Proposed until an off-cluster backup and checksum-verified restore pass.
 
 ## Validation evidence

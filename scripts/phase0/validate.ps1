@@ -54,6 +54,8 @@ $requiredFiles = @(
     'evidence/phase-0/README.md',
     'evidence/phase-0/provider-schema-summary.md',
     'evidence/phase-0/verda-account-discovery.md',
+    'evidence/phase-0/network-capability-surface.md',
+    'evidence/phase-0/stage-a-cost-envelope.md',
     'evidence/phase-0/validation-summary.md',
     'scripts/phase0/discover-tools.ps1',
     'scripts/phase0/discover-verda.ps1',
@@ -104,6 +106,25 @@ if ($config) {
     if ($config.project.decision -eq 'blocked') {
         Add-CheckResult -Condition ($blockedGates.Count -gt 0) -Success 'Blocked Phase 0 has explicit blocking gates' -Failure 'Blocked Phase 0 must identify at least one blocking gate'
     }
+    if ($config.project.decision -eq 'complete') {
+        $phase1Blockers = @($config.openGates | Where-Object { $_.blocksPhase -le 1 -and $_.status -ne 'pass' })
+        $failedExitCriteria = @($config.phase0ExitCriteria | Where-Object { $_.status -ne 'pass' })
+        Add-CheckResult -Condition ($phase1Blockers.Count -eq 0) -Success 'Completed Phase 0 has no open Phase 1 gate' -Failure 'Completed Phase 0 still has a Phase 1 blocker'
+        Add-CheckResult -Condition ($failedExitCriteria.Count -eq 0) -Success 'All Phase 0 exit criteria pass' -Failure 'Completed Phase 0 has a failed exit criterion'
+        Add-CheckResult -Condition ($config.verifiedAccount.selectedStageA.instanceType -eq 'CPU.4V.16G') -Success 'Selected Stage A instance type is pinned' -Failure 'Stage A instance type is not pinned to the verified selection'
+        Add-CheckResult -Condition ($config.verifiedAccount.selectedStageA.imageConfigurationId -eq '77edfb23-bb0d-41cc-a191-dccae45d96fd') -Success 'Selected Stage A image configuration is pinned' -Failure 'Stage A image configuration does not match discovery'
+        Add-CheckResult -Condition ($config.verifiedAccount.costEnvelope.reviewHours -eq 168) -Success 'Seven-day review window is encoded' -Failure 'Expected a 168-hour Stage A review window'
+        Add-CheckResult -Condition ($config.verifiedAccount.costEnvelope.stageAEnvelopeUsd -lt $config.verifiedAccount.balanceUsd) -Success 'Stage A envelope is below verified balance' -Failure 'Stage A envelope does not fit the verified balance'
+        $selectedStageA = $config.verifiedAccount.selectedStageA
+        $costEnvelope = $config.verifiedAccount.costEnvelope
+        $knownCompute = 3 * [double]$selectedStageA.onDemandUsdPerHour * [double]$costEnvelope.reviewHours
+        $knownStorage = 3 * ([double]$selectedStageA.rootVolumeGiBPerNode + [double]$selectedStageA.dataVolumeGiBPerNode) * [double]$selectedStageA.nvmeUsdPerGiBMonth * ([double]$costEnvelope.reviewHours / 730)
+        $calculatedEnvelope = ($knownCompute + $knownStorage + [double]$costEnvelope.serviceAllowanceUsd) * (1 + ([double]$costEnvelope.contingencyPercent / 100))
+        $roundedUpEnvelope = [math]::Ceiling($calculatedEnvelope * 100) / 100
+        $calculatedRemaining = [math]::Round([double]$config.verifiedAccount.balanceUsd - $roundedUpEnvelope, 2)
+        Add-CheckResult -Condition ([math]::Abs($roundedUpEnvelope - [double]$costEnvelope.stageAEnvelopeUsd) -lt 0.001) -Success 'Stage A envelope recomputes from pinned rates and sizing' -Failure 'Recorded Stage A envelope does not match pinned-rate calculation'
+        Add-CheckResult -Condition ([math]::Abs($calculatedRemaining - [double]$costEnvelope.remainingBalanceAfterEnvelopeUsd) -lt 0.001) -Success 'Remaining balance recomputes from verified balance and envelope' -Failure 'Recorded remaining balance does not match the envelope'
+    }
 }
 
 $matrixText = Read-WorkspaceFile -RelativePath 'docs/acceptance-matrix.md'
@@ -119,6 +140,9 @@ $statusText = Read-WorkspaceFile -RelativePath 'IMPLEMENTATION_STATUS.md'
 Add-CheckResult -Condition ($statusText -match 'Active phase: Phase 0') -Success 'Status ledger identifies Phase 0' -Failure 'Status ledger does not identify Phase 0'
 Add-CheckResult -Condition ($statusText -match '(?m)^\| 1 .*\| NOT STARTED \|') -Success 'Status ledger confirms Phase 1 has not started' -Failure 'Phase 1 must remain NOT STARTED'
 Add-CheckResult -Condition ($statusText -match 'Cloud mutation authorized: No') -Success 'Status ledger prohibits cloud mutation' -Failure 'Status ledger must prohibit cloud mutation'
+if ($config -and $config.project.decision -eq 'complete') {
+    Add-CheckResult -Condition ($statusText -match 'Phase status: PASS') -Success 'Status ledger records Phase 0 PASS' -Failure 'Completed Phase 0 must be PASS in the status ledger'
+}
 
 $architectureText = Read-WorkspaceFile -RelativePath 'docs/architecture.md'
 foreach ($architectureMarker in @('Stage A', 'Stage B', 'verda-mgmt', 'verda-workload', 'fixed registration/API endpoint')) {
@@ -126,7 +150,7 @@ foreach ($architectureMarker in @('Stage A', 'Stage B', 'verda-mgmt', 'verda-wor
 }
 
 $discoveryReport = Read-WorkspaceFile -RelativePath 'docs/reports/verda-discovery.md'
-foreach ($capabilityMarker in @('zero data sources', 'private network', 'load balancer', 'object-storage', 'UNVERIFIED', 'BLOCKED')) {
+foreach ($capabilityMarker in @('zero data sources', 'private network', 'load balancer', 'object-storage', 'UNVERIFIED', 'Path B')) {
     Add-CheckResult -Condition ($discoveryReport -match [regex]::Escape($capabilityMarker)) -Success "Discovery report treats capability explicitly: $capabilityMarker" -Failure "Discovery report missing capability state: $capabilityMarker"
 }
 
@@ -243,7 +267,7 @@ foreach ($failure in $failures) {
 }
 
 Write-Output "Phase 0 repository validation: $($passes.Count) passed, $($failures.Count) failed"
-Write-Output 'Note: repository validation success does not override the live Phase 0 exit gate in IMPLEMENTATION_STATUS.md.'
+Write-Output 'Note: repository validation enforces the recorded Phase 0 contract but does not replace referenced live evidence.'
 
 if ($failures.Count -gt 0) {
     exit 1

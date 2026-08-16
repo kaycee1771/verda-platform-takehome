@@ -3,7 +3,7 @@
   "project": {
     "name": "verda-platform-takehome",
     "phase": 0,
-    "decision": "blocked",
+    "decision": "complete",
     "decisionDate": "2026-08-16",
     "cloudMutationAuthorized": false
   },
@@ -36,6 +36,33 @@
     "schemaExported": true,
     "dataSourceCount": 0,
     "capabilitySummary": "evidence/phase-0/provider-schema-summary.md"
+  },
+  "verifiedAccount": {
+    "discoveryDate": "2026-08-16",
+    "method": "authenticated-console-plus-local-cli-and-provider-schema",
+    "balanceUsd": 115.67,
+    "currentRunRateUsdPerHour": 0.0,
+    "cloudApiCredentialsPresent": false,
+    "cloudResourcesCreatedByPhase0": 0,
+    "selectedStageA": {
+      "location": "FIN-03",
+      "instanceType": "CPU.4V.16G",
+      "cpu": 4,
+      "memoryGiB": 16,
+      "onDemandUsdPerHour": 0.0279,
+      "imageLabel": "Ubuntu 24.04 + Minimal Image",
+      "imageConfigurationId": "77edfb23-bb0d-41cc-a191-dccae45d96fd",
+      "rootVolumeGiBPerNode": 80,
+      "dataVolumeGiBPerNode": 100,
+      "nvmeUsdPerGiBMonth": 0.2
+    },
+    "costEnvelope": {
+      "reviewHours": 168,
+      "serviceAllowanceUsd": 5.0,
+      "contingencyPercent": 15,
+      "stageAEnvelopeUsd": 50.51,
+      "remainingBalanceAfterEnvelopeUsd": 65.16
+    }
   },
   "requirements": {
     "deliverables": [
@@ -71,33 +98,51 @@
   "openGates": [
     {
       "id": "GATE-001",
-      "description": "Verda API credentials are configured locally, assignment credit is applied, and read-only diagnostics pass.",
+      "description": "Verda account access, assignment credit, and current balance are verified without capturing credentials.",
       "blocksPhase": 1,
-      "status": "blocked"
+      "status": "pass"
     },
     {
       "id": "GATE-002",
       "description": "CPU SKU, image, location, volume, and price inventory is captured.",
       "blocksPhase": 1,
-      "status": "blocked"
+      "status": "pass"
     },
     {
       "id": "GATE-003",
-      "description": "Node peer connectivity, private addressing, firewall, and load-balancer behavior is verified.",
+      "description": "Current account networking automation/UI limitations are inspected and the Path B boundary is selected.",
       "blocksPhase": 1,
-      "status": "blocked"
+      "status": "pass"
     },
     {
       "id": "GATE-004",
       "description": "The recommended and lean topology costs fit the available credit and assessment window.",
       "blocksPhase": 1,
-      "status": "blocked"
+      "status": "pass"
     },
     {
       "id": "GATE-005",
       "description": "A candidate-controlled base domain is supplied or the documented sslip.io fallback is accepted.",
       "blocksPhase": 1,
       "status": "pass"
+    },
+    {
+      "id": "GATE-006",
+      "description": "Least-privilege Cloud API credentials are created and supplied outside Git for Terraform.",
+      "blocksPhase": 2,
+      "status": "blocked"
+    },
+    {
+      "id": "GATE-007",
+      "description": "WireGuard peer routing, MTU, firewall, RKE2 ports, and primary-endpoint failure behavior are live-tested.",
+      "blocksPhase": 3,
+      "status": "blocked"
+    },
+    {
+      "id": "GATE-008",
+      "description": "Verda object-storage entitlement is enabled and S3 compatibility is proven, or the accepted external S3 fallback is selected.",
+      "blocksPhase": 5,
+      "status": "blocked"
     }
   ],
   "adrs": [
@@ -133,12 +178,12 @@
     {
       "id": "P0-EXIT-004",
       "description": "The exact provider schema and current authenticated Verda account capabilities are inspected.",
-      "status": "blocked"
+      "status": "pass"
     },
     {
       "id": "P0-EXIT-005",
       "description": "OS image and instance type are known; networking limitations and a credible Stage A cost envelope are recorded.",
-      "status": "blocked"
+      "status": "pass"
     },
     {
       "id": "P0-EXIT-006",

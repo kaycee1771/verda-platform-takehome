@@ -14,6 +14,10 @@ References were re-checked on 2026-08-16. Material implementation decisions use 
 - [Verda object storage](https://docs.verda.com/cli/object-storage/)
 - [Verda storage CLI](https://docs.verda.com/cli/storage/)
 - [Verda pricing and billing](https://docs.verda.com/welcome-to-verda/pricing-and-billing/)
+- [Verda current public pricing](https://verda.com/pricing)
+- [Verda block-storage pricing](https://verda.com/block-storage)
+- [Verda Public API](https://api.verda.com/v1/docs)
+- [Verda release notes](https://docs.verda.com/welcome-to-verda/release-notes)
 - [Verda instance security](https://docs.verda.com/cpu-and-gpu-instances/securing-your-instance/)
 - [Terraform Registry: Verda provider 1.1.2](https://registry.terraform.io/providers/verda-cloud/verda/1.1.2)
 - [Verda provider source repository](https://github.com/verda-cloud/terraform-provider-verda)
@@ -33,4 +37,5 @@ References were re-checked on 2026-08-16. Material implementation decisions use 
 
 - The provider source README still contains pre-registry installation language, while Terraform Registry and current Verda documentation publish the provider. The registry and successful locked initialization govern.
 - The generic Verda Terraform instance page mentions example attributes absent from provider 1.1.2. The exported 1.1.2 schema governs.
+- Current object-storage documentation describes a project Credentials section for Object Storage Access Keys, but that section is absent from the inspected project. Entitlement is a Phase 5 gate, not an assumed feature.
 - Rancher v2.14.3 is listed as current, but no RKE2/Kubernetes pair is pinned in Phase 0 without a complete compatibility review. That review belongs before the versions are used.

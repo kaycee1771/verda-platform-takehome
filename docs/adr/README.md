@@ -18,8 +18,8 @@ ADRs preserve why a choice was made and what evidence may reverse it. The pre-bl
 | [0002](0002-two-stage-topology.md) | Stage A then separate Stage B workload cluster | Accepted |
 | [0003](0003-cluster-role-layout.md) | Three schedulable server nodes per cluster | Accepted |
 | [0004](0004-cilium.md) | RKE2-bundled Cilium and Hubble | Accepted |
-| [0005](0005-network-endpoints.md) | Discover-first secure node and endpoint path | Proposed |
-| [0006](0006-storage.md) | Longhorn plus Verda object storage | Proposed |
+| [0005](0005-network-endpoints.md) | WireGuard plus explicit public endpoint path | Accepted |
+| [0006](0006-storage.md) | Longhorn plus separate S3-compatible recovery domain | Proposed |
 | [0007](0007-gitops.md) | Minimal Argo bootstrap and Git-owned desired state | Accepted |
 | [0008](0008-registry-supply-chain.md) | Harbor and build-once digest promotion | Accepted |
 | [0009](0009-secret-management.md) | Sealed Secrets for take-home runtime secrets | Accepted |
