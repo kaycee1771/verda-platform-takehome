@@ -1,0 +1,8 @@
+---
+- name: Phase 3 gate for RKE2 installation
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Stop until RKE2 installation is authorized
+      ansible.builtin.fail:
+        msg: Phase 3 RKE2 installation is not implemented.

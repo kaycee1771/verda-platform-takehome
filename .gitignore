@@ -16,6 +16,7 @@ secrets*.yml
 # Terraform and OpenTofu local state
 .terraform/
 .terraform.d/
+.terraformrc
 .tofu/
 *.tfstate
 *.tfstate.*
@@ -29,6 +30,10 @@ override.tf.json
 
 # Generated local discovery evidence
 .local/
+rendered/
+generated/
+artifacts/
+reports/local/
 docs/evidence/**/*.local.json
 docs/evidence/**/provider-schema*.json
 evidence/**/*.local.json
@@ -50,3 +55,23 @@ tmp/
 dist/
 build/
 coverage/
+*.retry
+*.log
+*.sarif
+*.junit.xml
+
+# Ansible local state and generated inventory
+infra/ansible/inventories/generated/*
+!infra/ansible/inventories/generated/.gitkeep
+**/.ansible/
+
+# Kubernetes clients and generated credentials
+*.kubeconfig
+.kube/
+admin.conf
+sealed-secret*.yaml
+rendered-secret*.yaml
+
+# Evidence is curated; working captures stay local
+evidence/work/
+evidence/**/raw/

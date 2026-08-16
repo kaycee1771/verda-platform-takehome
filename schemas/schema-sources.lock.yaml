@@ -1,0 +1,75 @@
+---
+schema_version: 1
+kubernetes:
+  version: "1.35.0"
+  repository: "https://github.com/yannh/kubernetes-json-schema"
+  commit: "c8f4e61c63bc529749125ac566bccc6986e08d45"
+  files:
+    - {name: configmap-v1.json, sha256: e0eaddebd677c08aa092b2da2264d86ac4fc34eed112b9fac2945b3f00c1e9b1}
+    - {name: namespace-v1.json, sha256: 324fae677b98d1a6d54340db0c334d053e8ffbafceb3f73326e41de2610d5843}
+    - {name: pod-v1.json, sha256: ab3eec94c85e6b166a62312ddb919fb747a53d1f5701a77befb17419361b52b0}
+    - {name: secret-v1.json, sha256: de761ccb06bd1d2c641fb57397f61b68e7ff53a384f0817ce40e5ded8cee86f3}
+    - {name: deployment-apps-v1.json, sha256: 46dc7cc4bec2c9a62400491e2b8057635afbfa6838999c518f7bea5c621a989b}
+
+crds:
+  materialized:
+    - name: argocd-application
+      group: argoproj.io
+      version: v1alpha1
+      kind: Application
+      source: >-
+        https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.1/manifests/crds/application-crd.yaml
+      source_sha256: 5dde0e229249b6b707beb98674c1deae3949d5c319a6c45b9f5a80c99618e40c
+      output: application-argoproj-v1alpha1.json
+    - name: kyverno-clusterpolicy
+      group: kyverno.io
+      version: v1
+      kind: ClusterPolicy
+      source: >-
+        https://raw.githubusercontent.com/kyverno/kyverno/v1.18.2/config/crds/kyverno/kyverno.io_clusterpolicies.yaml
+      source_sha256: dedea55e3880be180ba67e79183163fe7b97144e53054f812645fd6aae285cb1
+      output: clusterpolicy-kyverno-v1.json
+    - name: kueue-workload
+      group: kueue.x-k8s.io
+      version: v1beta2
+      kind: Workload
+      source: >-
+        https://raw.githubusercontent.com/kubernetes-sigs/kueue/v0.19.1/config/components/crd/bases/kueue.x-k8s.io_workloads.yaml
+      source_sha256: 1970ff6fcc5dc1a29e3f290ed736032c5d4509c94efe2c642d64a244ad1b8aa5
+      output: workload-kueue-v1beta2.json
+    - name: longhorn-volume
+      group: longhorn.io
+      version: v1beta2
+      kind: Volume
+      source: >-
+        https://raw.githubusercontent.com/longhorn/longhorn-manager/v1.12.1/k8s/crds.yaml
+      source_sha256: 57ca77ef3208977ccb2812d23f963ddc588509a459e85c37cfef9c83bbeb989c
+      normalization: longhorn-helm-labels-v1
+      output: volume-longhorn-v1beta2.json
+    - name: velero-backup
+      group: velero.io
+      version: v1
+      kind: Backup
+      source: >-
+        https://raw.githubusercontent.com/velero-io/velero/v1.18.1/config/crd/v1/bases/velero.io_backups.yaml
+      source_sha256: 38107fa5fad6bff25794489d12c8a898eed4d9d89ed49d00ea90369bc4e206b1
+      output: backup-velero-v1.json
+    - name: prometheus-operator-prometheusrule
+      group: monitoring.coreos.com
+      version: v1
+      kind: PrometheusRule
+      source: >-
+        https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.93.0/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml
+      source_sha256: 78be98554b9c8506ab2b4f4feb91c5f3a56e536a0a510f3a8e876a459970d56d
+      output: prometheusrule-monitoring-v1.json
+    - name: sealed-secrets-sealedsecret
+      group: bitnami.com
+      version: v1alpha1
+      kind: SealedSecret
+      source: >-
+        https://raw.githubusercontent.com/bitnami-labs/sealed-secrets/v0.38.1/helm/sealed-secrets/crds/bitnami.com_sealedsecrets.yaml
+      source_sha256: fb33ba448b89c2c3252480664078b7f4bdf0949426e5280d07ca049c0dbdbfb7
+      output: sealedsecret-bitnami-v1alpha1.json
+  policy: >-
+    Reject a custom-resource manifest unless a matching local schema exists;
+    every new kind/version requires a pinned source, checksum, and validation fixture.

@@ -10,6 +10,18 @@
 | Object-storage path style, TLS, lifecycle, request/egress pricing, and application compatibility are unverified | FUTURE BLOCKER — Phase 5 | Backup/logging configuration could fail or exceed allowance | Run non-destructive compatibility and pricing checks before use |
 | Public-IP allocation and deletion behavior is documented/schema-visible but not live-tested | FUTURE BLOCKER — Phase 2 exit | Reachability and teardown claims are not yet evidence-backed | Capture sanitized apply/inventory/connectivity/destroy evidence |
 | No candidate-controlled domain is supplied | NON-BLOCKING FALLBACK | Names depend on instance-address-derived DNS | Use documented `sslip.io` fallback and include exact residual behavior |
+| No GitHub remote is configured in this checkout | PHASE 1 EXTERNAL FOLLOW-UP | Workflow syntax and local CI parity are proven, but no hosted run or branch-protection state can be captured yet | Push to the final repository, replace the CODEOWNERS placeholder, require `Validate repository`, and retain the first successful run |
+
+## Phase 1 quality-system boundaries
+
+- Git, GNU Make, PowerShell 7, and a Docker Linux daemon are bootstrap prerequisites; the repository
+  reports them and never installs or upgrades workstation packages silently.
+- Bootstrap requires public network access to checksummed, version-pinned upstream sources. Positive
+  validation, negative tests, pre-commit, CI parity, and secret scanning run with networking disabled.
+- The repository has no configured GitHub owner or remote, so `CODEOWNERS` deliberately contains an
+  explicit placeholder instead of guessing an account. Replace it before publishing the repository.
+- Placeholder files and future-phase workflows fail closed and do not represent implemented platform
+  services, application code, cloud state, or live operational evidence.
 
 ## Provider limitations confirmed from schema 1.1.2
 

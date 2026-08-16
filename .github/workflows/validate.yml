@@ -1,0 +1,61 @@
+---
+name: Validate repository
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Credential-free quality gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify host prerequisites
+        shell: bash
+        run: command -v git make pwsh docker
+
+      - name: Restore non-sensitive validator caches
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
+        with:
+          path: |
+            .local/terraform-plugin-cache
+            .local/trivy
+          key: >-
+            phase1-quality-${{ runner.os }}-${{
+            hashFiles('versions.lock.yaml', 'aqua.yaml', 'schemas/schema-sources.lock.yaml') }}
+          enableCrossOsArchive: false
+
+      - name: Bootstrap pinned tools and offline caches
+        shell: pwsh
+        run: make bootstrap-tools
+
+      - name: Run CI-equivalent positive and rejection suites
+        shell: pwsh
+        run: make ci
+
+      - name: Upload non-sensitive validation reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: phase-1-quality-reports-${{ github.run_id }}
+          path: .local/reports/
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false

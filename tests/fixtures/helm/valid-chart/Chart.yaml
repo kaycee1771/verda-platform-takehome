@@ -1,0 +1,7 @@
+---
+apiVersion: v2
+name: phase1-quality-fixture
+description: Minimal chart used only to prove Helm and Kubeconform quality gates.
+type: application
+version: 0.1.0
+appVersion: "fixture-1"

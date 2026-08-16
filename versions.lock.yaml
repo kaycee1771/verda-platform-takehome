@@ -1,7 +1,13 @@
 ---
-schema_version: 1
+schema_version: 2
 as_of: "2026-08-16"
-compatibility_review_status: "phase-0-partial-account-discovery-blocked"
+compatibility_review_status: "phase-1-verified"
+
+platform:
+  project: "verda-platform-takehome"
+  kubernetes_version: "1.35.7"
+  kubernetes_minor: "1.35"
+  kubernetes_schema_version: "1.35.0"
 
 terraform:
   implementation: "terraform"
@@ -11,6 +17,7 @@ terraform:
 verda_cli:
   version: "1.8.1"
   source: "https://docs.verda.com/cli/"
+  delivery: "host-prerequisite-for-cloud-phases"
 
 providers:
   verda:
@@ -19,35 +26,101 @@ providers:
     constraint: "= 1.1.2"
     registry: "https://registry.terraform.io/providers/verda-cloud/verda/1.1.2"
     schema_evidence: "evidence/phase-0/provider-schema-summary.md"
+  rancher2:
+    source: "rancher/rancher2"
+    version: null
+    selection_status: "deferred-until-provider-is-used"
 
-# These components are not used in Phase 0. They remain deliberately unselected
-# until Phase 1 performs one mutually compatible, version-specific lock review.
 rke2:
-  version: null
-  kubernetes_minor: null
-  selection_status: "pending-phase-1-compatibility-review"
-  compatibility_sources:
-    - "https://docs.rke2.io/release-notes"
-    - "https://ranchermanager.docs.rancher.com/versions"
+  version: "v1.35.7+rke2r1"
+  kubernetes_minor: "1.35"
+  release_ref: "382a8b31a8fd78e376ab6f02c4bb0ec5592aada2"
+  rancher_version: "2.14.3"
+  rancher_compatibility_source: >-
+    https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/rancher-v2-14-3/
+  selection_status: "verified-compatible-not-installed"
+
+helm:
+  version: "3.21.4"
+  rationale: >-
+    Latest stable Helm 3 line; Rancher 2.12+ requires Helm >=3.18.
+    Helm 4 is excluded from this compatibility path.
 
 helm_charts:
-  argocd: null
-  cert_manager: null
-  rancher: null
-  longhorn: null
-  harbor: null
-  kube_prometheus_stack: null
-  loki: null
-  alloy: null
-  sealed_secrets: null
-  kyverno: null
-  velero: null
-  kueue: null
+  argocd: {version: "10.3.3", app_version: "v3.5.1", source: "https://argoproj.github.io/argo-helm/index.yaml"}
+  cert_manager: {version: "v1.21.1", app_version: "v1.21.1", source: "https://charts.jetstack.io/index.yaml"}
+  rancher:
+    version: "2.14.3"
+    app_version: "v2.14.3"
+    source: "https://releases.rancher.com/server-charts/stable/index.yaml"
+  longhorn: {version: "1.12.1", app_version: "v1.12.1", source: "https://charts.longhorn.io/index.yaml"}
+  harbor:
+    version: "1.19.2"
+    app_version: "2.15.2"
+    source: "https://github.com/goharbor/harbor-helm/releases/tag/v1.19.2"
+  kube_prometheus_stack:
+    version: "88.3.0"
+    app_version: "v0.93.0"
+    source: "https://prometheus-community.github.io/helm-charts/index.yaml"
+  loki: {version: "7.3.0", app_version: "3.6.12", source: "https://grafana.github.io/helm-charts/index.yaml"}
+  alloy: {version: "1.11.1", app_version: "v1.18.1", source: "https://grafana.github.io/helm-charts/index.yaml"}
+  sealed_secrets:
+    version: "2.19.0"
+    app_version: "0.38.1"
+    source_ref: "v0.38.1"
+    source: "https://github.com/bitnami-labs/sealed-secrets/releases/tag/v0.38.1"
+  kyverno:
+    version: "3.8.2"
+    app_version: "v1.18.2"
+    source: "https://raw.githubusercontent.com/kyverno/kyverno/v1.18.2/charts/kyverno/Chart.yaml"
+  velero: {version: "12.1.0", app_version: "1.18.1", source: "https://vmware-tanzu.github.io/helm-charts/index.yaml"}
+  kueue:
+    version: "0.19.1"
+    app_version: "v0.19.1"
+    source: "https://raw.githubusercontent.com/kubernetes-sigs/kueue/v0.19.1/charts/kueue/Chart.yaml"
+
+quality_tools:
+  aqua: {version: "2.62.3", command: "aqua", version_args: ["--version"]}
+  terraform: {version: "1.15.8", command: "terraform", version_args: ["version"]}
+  tflint: {version: "0.64.0", command: "tflint", version_args: ["--version"]}
+  trivy: {version: "0.74.0", command: "trivy", version_args: ["--version"]}
+  ansible_core: {version: "2.21.3", command: "ansible", version_args: ["--version"]}
+  ansible_lint: {version: "26.8.0", command: "ansible-lint", version_args: ["--version"]}
+  yamllint: {version: "1.38.0", command: "yamllint", version_args: ["--version"]}
+  shellcheck: {version: "0.11.0", command: "shellcheck", version_args: ["--version"]}
+  helm: {version: "3.21.4", command: "helm", version_args: ["version", "--short"]}
+  kubectl: {version: "1.35.7", command: "kubectl", version_args: ["version", "--client"]}
+  kubeconform: {version: "0.8.0", command: "kubeconform", version_args: ["-v"]}
+  kyverno: {version: "1.18.2", command: "kyverno", version_args: ["version"]}
+  promtool: {version: "3.13.2", command: "promtool", version_args: ["--version"]}
+  gitleaks: {version: "8.30.1", command: "gitleaks", version_args: ["version"]}
+  pre_commit: {version: "4.6.2", command: "pre-commit", version_args: ["--version"]}
+  pymarkdown: {version: "0.9.39", command: "pymarkdown", version_args: ["version"]}
+  hadolint: {version: "2.15.1", command: "hadolint", version_args: ["--version"]}
+  actionlint: {version: "1.7.12", command: "actionlint", version_args: ["-version"]}
+
+tool_delivery:
+  quality_image: "verda-platform-quality:phase1-2026-08-16"
+  base_image: "python:3.13.11-slim-bookworm@sha256:20080e807bfc404f8450b185cf0fc95d553462673598549613735f70a5b4d5d0"
+  aqua_registry_ref: "v4.552.0"
+  aqua_registry_commit: "2dd9bbf64c7a550c0cbf45fabde630797efc001f"
+  validation_network: "none"
+
+future_phase_clis:
+  argocd: {version: null, status: "not-required-before-phase-4"}
+  rancher: {version: null, status: "not-selected-no-rancher-cli-architecture-decision"}
+  cilium: {version: null, status: "not-required-before-phase-3"}
+  velero: {version: null, status: "not-required-before-phase-5"}
+  cosign: {version: null, status: "not-required-before-phase-6"}
+  syft: {version: null, status: "not-selected"}
 
 images:
-  verda_os_image_id: null
+  verda_os_image_configuration_id: "77edfb23-bb0d-41cc-a191-dccae45d96fd"
+  verda_os_image_name: "Ubuntu 24.04 LTS Minimal"
   demo_base_reference: null
+  demo_base_status: "deferred-until-application-build-phase"
 
 ci_actions:
-  checkout: null
-  setup_buildx: null
+  checkout: {release: "v6", sha: "d23441a48e516b6c34aea4fa41551a30e30af803"}
+  cache: {release: "v5", sha: "caa296126883cff596d87d8935842f9db880ef25"}
+  upload_artifact: {release: "v4.6.2", sha: "ea165f8d65b6e75b540449e92b4886f43607fa02"}

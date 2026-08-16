@@ -1,0 +1,72 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: schema-fixture
+  namespace: quality-system
+spec:
+  destination:
+    namespace: quality-system
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: fixtures
+    repoURL: https://example.invalid/verda-platform.git
+    targetRevision: HEAD
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: Workload
+metadata:
+  name: schema-fixture
+  namespace: quality-system
+spec:
+  podSets:
+    - count: 1
+      name: main
+      template:
+        spec:
+          containers:
+            - image: registry.k8s.io/pause:3.10.1
+              name: pause
+          restartPolicy: Never
+---
+apiVersion: longhorn.io/v1beta2
+kind: Volume
+metadata:
+  name: schema-fixture
+  namespace: longhorn-system
+spec:
+  size: "1073741824"
+---
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: schema-fixture
+  namespace: velero
+spec:
+  includedNamespaces:
+    - quality-system
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: schema-fixture
+  namespace: monitoring
+spec:
+  groups:
+    - name: schema-fixture
+      rules:
+        - alert: SchemaFixtureAlwaysFalse
+          expr: vector(0)
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: schema-fixture
+  namespace: quality-system
+spec:
+  encryptedData:
+    example: not-a-real-ciphertext
+  template:
+    metadata:
+      name: schema-fixture

@@ -1,0 +1,19 @@
+---
+registries:
+  - type: standard
+    ref: v4.552.0
+packages:
+  - name: hashicorp/terraform@v1.15.8
+  - name: terraform-linters/tflint@v0.64.0
+  - name: aquasecurity/trivy@v0.74.0
+  - name: koalaman/shellcheck@v0.11.0
+  - name: helm/helm@v3.21.4
+  - name: kubernetes/kubectl@v1.35.7
+  - name: yannh/kubeconform@v0.8.0
+  - name: kyverno/kyverno@v1.18.2
+  - name: prometheus/prometheus@v3.13.2
+  - name: gitleaks/gitleaks@v8.30.1
+  - name: hadolint/hadolint@v2.15.1
+  - name: rhysd/actionlint@v1.7.12
+checksum:
+  enabled: true

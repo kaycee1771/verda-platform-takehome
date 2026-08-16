@@ -4,9 +4,16 @@ This repository is being built phase by phase as a reproducible, secure-by-desig
 
 ## Current status
 
-**Phase 0 — PASS.** Governance, provider-schema inspection, authenticated account discovery, endpoint-path selection, and the seven-day Stage A cost envelope are complete. No Verda resource has been created or changed.
+**Phase 1 — PASS locally; Phase 2 is not authorized.** The repository structure, pinned quality
+toolchain, pre-commit controls, credential-free CI workflow, schema cache, policy/rule harnesses,
+secret scanning, and positive/negative validation contracts are implemented. Phase 0 discovery and
+architecture decisions remain authoritative. No Verda resource has been created or changed.
 
-The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`, each with an 80 GiB root volume and a 100 GiB Longhorn data volume, using Ubuntu 24.04 Minimal. The seven-day envelope is $50.51 including a capped $5 unquoted-services allowance and 15% contingency against a verified $115.67 balance. Phase 1 remains deliberately not started; later credentials, live networking, and object-storage gates are tracked in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`, each with an 80 GiB
+root volume and a 100 GiB Longhorn data volume, using Ubuntu 24.04 Minimal. The seven-day envelope
+is $50.51, including a capped $5 unquoted-services allowance and 15% contingency against a verified
+$115.67 balance. Later credentials, live networking, and object-storage gates are tracked in
+[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
 ## Delivery architecture
 
@@ -17,9 +24,30 @@ The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`,
 
 See [architecture.md](docs/architecture.md), [operations-model.md](docs/operations-model.md), and the [ADR index](docs/adr/README.md).
 
-## Safe Phase 0 commands
+## Phase 1 developer workflow
 
-PowerShell 7 is required. The account command is an allowlisted, read-only probe and requires explicit acknowledgement.
+Prerequisites are Git, GNU Make, PowerShell 7, and a running Docker Linux daemon. Bootstrap is the
+only networked quality step; all validation commands run in the same pinned non-root image with the
+container network disabled and no cloud credential mounts.
+
+```powershell
+make help
+make bootstrap-tools
+make install-hooks
+make validate
+make validate-negative
+make pre-commit
+make secret-scan
+make ci
+```
+
+`make ci` is the local equivalent of the validation job in `.github/workflows/validate.yml`.
+Unimplemented infrastructure, cluster, GitOps, application, recovery, and teardown targets fail
+closed with their owning phase and never perform a partial action.
+
+## Safe Phase 0 discovery
+
+The account command is an allowlisted, read-only probe and requires explicit acknowledgement.
 
 ```powershell
 make phase0-tools
@@ -36,7 +64,7 @@ verda auth login
 
 Raw schema and account responses are written only to ignored `*.local.json` files. Committed evidence is sanitized and contains no project ID, credential, token, or secret value.
 
-## Phase 0 source of truth
+## Sources of truth
 
 - [Implementation status](IMPLEMENTATION_STATUS.md)
 - [Acceptance matrix](docs/acceptance-matrix.md)

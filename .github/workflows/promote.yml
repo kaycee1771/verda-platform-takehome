@@ -1,0 +1,18 @@
+---
+name: Promote - Phase 6 gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  phase-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Stop before unimplemented promotion phase
+        shell: bash
+        run: |
+          echo 'Digest-based promotion requires Phase 6.' >&2
+          exit 64

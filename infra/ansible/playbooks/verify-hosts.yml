@@ -1,0 +1,8 @@
+---
+- name: Phase 3 gate for host verification
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Stop until host verification is implemented
+      ansible.builtin.fail:
+        msg: Phase 3 host verification is not implemented.

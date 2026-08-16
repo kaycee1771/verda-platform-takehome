@@ -34,3 +34,31 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
 - **Material decisions:** Select lean Stage A sizing, FIN-03, Ubuntu 24.04 Minimal, on-demand CPU nodes, `sslip.io`, and ADR-0005 Path B. Treat absent Cloud API credentials and object-storage entitlement as later gates rather than fabricating capability.
 - **Verification:** No Deploy/Create/Confirm action was invoked; current usage remained $0.00/hour; cost math was independently encoded in `docs/cost.md` and repository validation.
 - **Sensitive-data handling:** No credential, token, coupon, access key, private key, or project/user identifier is recorded in committed artifacts.
+
+## 2026-08-16 - Phase 1 repository and quality system
+
+- **Requested contribution:** Implement only the blueprint's Phase 1 repository and quality system,
+  including clean bootstrap, CI parity, validation, rejection fixtures, documentation, and evidence.
+- **Assistant activity:** Codex created the canonical ownership tree, fail-closed future-phase guards,
+  pinned quality image, local cache bootstrap, pre-commit suite, GitHub Actions workflow, schema and
+  policy fixtures, negative tests, templates, and repository contracts.
+- **Version validation:** Tool, Kubernetes, RKE2, chart, action, base-image, and CRD pins were checked
+  against official release metadata and version-specific primary documentation. No unverified future
+  CLI was represented as installed.
+- **Correction after testing:** The initial non-root image lacked a passwd entry for UID 65532, which
+  caused the generated-private-key negative test to fail before Gitleaks ran. A non-login user entry
+  was added while retaining a numeric final `USER`, and the full rejection suite was rerun.
+- **Rejected approach:** Aqua's standard registry returned 404 for a raw commit ref. The supported
+  release ref was retained, and bootstrap now proves it resolves to the locked commit before Aqua
+  installs checksum-verified packages.
+- **Correction after testing:** Pre-commit initially invoked PyMarkdown without the committed config
+  used by `make validate`. The hook now passes the same config explicitly; all hooks were rerun over
+  the full staged file set.
+- **Schema discipline:** Codex replaced future-only schema declarations with checksummed upstream
+  schemas and positive fixtures for Argo CD, Kyverno, Kueue, Longhorn, Velero, Prometheus Operator,
+  and Sealed Secrets. An unknown custom API remains a mandatory rejection case.
+- **Human authority retained:** No repository remote, branch protection, CODEOWNERS identity, cloud
+  credential, or Verda resource was inferred or created. Hosted CI publication remains a human-
+  authorized external action.
+- **Sensitive-data handling:** Validation received no cloud credentials. The private key used to test
+  Gitleaks was generated only under ignored `.local/`, redacted in reports, and removed by a trap.

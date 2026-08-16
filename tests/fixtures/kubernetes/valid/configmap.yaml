@@ -1,0 +1,8 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phase1-quality-fixture
+  namespace: phase1-quality-fixture
+data:
+  contract: schema-validation-is-strict

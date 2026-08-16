@@ -1,0 +1,11 @@
+---
+schema_version: 1
+status: framework-only-phase-1
+verdicts: [allowed, denied, not-applicable]
+required_cases:
+  - default-deny
+  - dns-egress
+  - ingress-controller-to-application
+  - monitoring-scrape
+  - environment-isolation
+  - primary-endpoint-failure

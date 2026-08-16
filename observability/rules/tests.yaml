@@ -1,0 +1,7 @@
+---
+rule_files:
+  - application-slo.yaml
+  - platform-health.yaml
+  - delivery-health.yaml
+evaluation_interval: 1m
+tests: []

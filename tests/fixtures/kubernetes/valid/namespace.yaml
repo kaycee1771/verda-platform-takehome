@@ -1,0 +1,8 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: phase1-quality-fixture
+  labels:
+    app.kubernetes.io/part-of: verda-platform-takehome
+    platform.verda-demo.io/owner: platform

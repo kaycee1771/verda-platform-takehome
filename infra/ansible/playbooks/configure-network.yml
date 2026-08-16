@@ -1,0 +1,8 @@
+---
+- name: Phase 3 gate for network configuration
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Stop until network configuration is authorized
+      ansible.builtin.fail:
+        msg: Phase 3 network configuration is not implemented.

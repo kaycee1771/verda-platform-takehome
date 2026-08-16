@@ -1,0 +1,40 @@
+---
+name: Quality or platform defect
+description: Report a reproducible defect without including credentials or sensitive evidence.
+title: "[defect] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never paste credentials, kubeconfigs, private keys, or unsanitized logs.
+  - type: input
+    id: phase
+    attributes:
+      label: Owning phase
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Sanitized reproduction
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed all secrets and sensitive identifiers.
+          required: true

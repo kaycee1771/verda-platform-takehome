@@ -1,0 +1,4 @@
+title = "Verda platform take-home secret scanning"
+
+[extend]
+useDefault = true

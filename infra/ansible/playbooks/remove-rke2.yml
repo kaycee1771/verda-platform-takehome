@@ -1,0 +1,8 @@
+---
+- name: Phase 9 gate for RKE2 removal
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Stop until teardown is explicitly authorized
+      ansible.builtin.fail:
+        msg: Phase 9 RKE2 teardown is not implemented.

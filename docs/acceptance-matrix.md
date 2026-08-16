@@ -2,7 +2,7 @@
 
 This is the live requirement-to-proof source of truth. `Contracted` means the implementation and proof path are defined; it does not mean the capability exists. A row becomes `Verified` only after the automated test and sanitized live evidence both pass.
 
-| ID | Requirement | Implementation contract | Automated verification | Required live evidence | Phase 0 state | Final exit condition |
+| ID | Requirement | Implementation contract | Automated verification | Required live evidence | Current state | Final exit condition |
 |---|---|---|---|---|---|---|
 | R01 | Verda CPU VMs with public IPs | Reusable Terraform modules with pinned IDs and protected lifecycle | Format, validate, plan, drift check | Sanitized instance inventory | Contracted; shape/image/location pinned | Reproducible apply and reachable hosts |
 | R02 | Kubernetes | Three-node RKE2 cluster per implemented stage | Node, etcd, DNS, service, Cilium tests | `evidence/cluster/` transcripts | Contracted | Three Ready servers and healthy quorum |
@@ -23,7 +23,7 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | R17 | Restore | Namespace/PVC restore with integrity fixture | Checksum and endpoint verification | Measured RTO/RPO report | Contracted | Data restored and verified |
 | R18 | Cost | Actual compute/storage/object/traffic ledger | Recalculation and inventory reconciliation | `docs/cost.md` plus cost evidence | Phase 0 envelope verified; live spend pending | Actual/projected costs documented |
 | R19 | Kueue bonus | CPU queues first; optional GPU flavor later | Queued/admitted/priority tests | Queue status and dashboard | Core-gated | Excess job queues before pod creation |
-| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Active | Inputs, corrections, and validation recorded |
+| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Phase 0 and Phase 1 activity, corrections, and rejected approaches recorded | Inputs, corrections, and validation recorded |
 | R21 | Access | TLS endpoints and least-privilege reviewer identities | Independent endpoint/login smoke test | Evaluator-permission transcript | Contracted | Evaluator reaches approved services |
 | R22 | One-page summary | Evidence-aligned executive summary | Rendered page-count/content check | Final PDF/Markdown | Contracted | Exactly one page and factually aligned |
 
@@ -33,3 +33,20 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 - No row is represented as implemented or live-tested in Phase 0.
 - Account-dependent Phase 0 facts are evidence-backed; later live-resource facts remain explicitly gated rather than inferred.
 - The immutable snapshot for this phase is `evidence/manifests/phase-0-acceptance-matrix.md`.
+
+## Phase 1 repository-quality acceptance
+
+| ID | Gate | Automated proof | State |
+|---|---|---|---|
+| Q01 | Canonical repository topology | `check_structure.py`: 115 directories and 184 required files | PASS |
+| Q02 | Exact, reproducible tool delivery | Bootstrap plus 18 exact version assertions and cache provenance hashes | PASS |
+| Q03 | Positive static quality pipeline | `make validate` across every applicable Phase 1 validator | PASS |
+| Q04 | Kubernetes and custom-resource schemas | 12 valid resources across core, Argo CD, Kyverno, Kueue, Longhorn, Velero, Prometheus, and Sealed Secrets | PASS |
+| Q05 | Invalid inputs are rejected | Terraform, Kubernetes, missing CRD schema, Prometheus, and private-key negative fixtures | PASS |
+| Q06 | Developer hooks | Installed canonical hook and `pre-commit run --all-files` | PASS |
+| Q07 | Repository and history secret scanning | Gitleaks working-tree and `--all` history scans with 100% redaction | PASS |
+| Q08 | CI workflow | Actionlint plus local execution of the exact `make ci` workflow body; hosted run awaits a GitHub remote | PARTIAL |
+| Q09 | Clean-clone bootstrap and validation | Final candidate clone with fresh local caches | PENDING |
+
+Phase 1 cannot be marked fully complete until Q08 has a hosted successful run and Q09 is recorded in
+`evidence/phase-1/`. This does not authorize Phase 2.

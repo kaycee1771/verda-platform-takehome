@@ -1,0 +1,8 @@
+# Replace this placeholder only when the repository's real GitHub owner is known.
+* @platform-owner
+
+/infra/ @platform-owner
+/platform/ @platform-owner
+/policies/ @platform-owner
+/environments/prod/ @platform-owner
+/.github/workflows/ @platform-owner

@@ -1,0 +1,22 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-run-as-nonroot
+policies:
+  - policy.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: require-run-as-nonroot-fixture
+    rule: require-run-as-nonroot
+    resources:
+      - secure-pod
+    kind: Pod
+    result: pass
+  - policy: require-run-as-nonroot-fixture
+    rule: require-run-as-nonroot
+    resources:
+      - insecure-pod
+    kind: Pod
+    result: fail

@@ -1,0 +1,10 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-quality-fixture
+  labels:
+    app.kubernetes.io/name: phase1-quality-fixture
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  message: {{ .Values.message | quote }}
