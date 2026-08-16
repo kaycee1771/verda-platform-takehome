@@ -54,6 +54,10 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
 - **Correction after testing:** Pre-commit initially invoked PyMarkdown without the committed config
   used by `make validate`. The hook now passes the same config explicitly; all hooks were rerun over
   the full staged file set.
+- **Correction after clean-clone testing:** A broad `generated/` ignore pattern hid the required
+  generated-inventory sentinel from Git even though the local structure check passed. The rule was
+  narrowed to the repository root, the sentinel became an explicit contract file, and the clean-
+  clone sequence was restarted from a new commit.
 - **Schema discipline:** Codex replaced future-only schema declarations with checksummed upstream
   schemas and positive fixtures for Argo CD, Kyverno, Kueue, Longhorn, Velero, Prometheus Operator,
   and Sealed Secrets. An unknown custom API remains a mandatory rejection case.

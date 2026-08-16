@@ -38,7 +38,7 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 
 | ID | Gate | Automated proof | State |
 |---|---|---|---|
-| Q01 | Canonical repository topology | `check_structure.py`: 115 directories and 184 required files | PASS |
+| Q01 | Canonical repository topology | `check_structure.py`: 115 directories and 185 required files | PASS |
 | Q02 | Exact, reproducible tool delivery | Bootstrap plus 18 exact version assertions and cache provenance hashes | PASS |
 | Q03 | Positive static quality pipeline | `make validate` across every applicable Phase 1 validator | PASS |
 | Q04 | Kubernetes and custom-resource schemas | 12 valid resources across core, Argo CD, Kyverno, Kueue, Longhorn, Velero, Prometheus, and Sealed Secrets | PASS |

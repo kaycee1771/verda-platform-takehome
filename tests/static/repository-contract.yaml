@@ -231,6 +231,7 @@ required_files:
   - infra/terraform/README.md
   - infra/ansible/ansible.cfg
   - infra/ansible/requirements.yml
+  - infra/ansible/inventories/generated/.gitkeep
   - infra/ansible/playbooks/prepare-hosts.yml
   - infra/ansible/playbooks/configure-network.yml
   - infra/ansible/playbooks/install-rke2.yml

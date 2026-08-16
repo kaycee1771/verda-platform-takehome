@@ -31,7 +31,7 @@ override.tf.json
 # Generated local discovery evidence
 .local/
 rendered/
-generated/
+/generated/
 artifacts/
 reports/local/
 docs/evidence/**/*.local.json
