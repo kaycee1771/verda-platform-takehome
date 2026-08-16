@@ -70,3 +70,25 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
   authorized external action.
 - **Sensitive-data handling:** Validation received no cloud credentials. The private key used to test
   Gitleaks was generated only under ignored `.local/`, redacted in reports, and removed by a trap.
+
+## 2026-08-16 - Phase 1 hosted closure and repository governance
+
+- **Human authorization:** The user supplied `kaycee1771/verda-platform-takehome`, verified the
+  `Kaycee1771` owner identity, authorized publication and repository governance, then explicitly
+  authorized public visibility after GitHub Free rejected protection on a private repository.
+- **Hosted correction:** The first GitHub Actions run exposed a Linux bind-mount ownership defect:
+  bootstrap assigned all `.local/` files to validator UID 65532 before host PowerShell wrote its
+  report. Bootstrap now makes the Linux runner UID the owner and validator GID 65532 the group, with
+  `u+rwX,g+rwX,o-rwx`; the full local suite and corrected hosted run passed.
+- **Action maintenance:** GitHub reported the old artifact action's Node 20 runtime as deprecated.
+  Codex verified official v7.0.1 release metadata and resolved the upstream tag to full commit
+  `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` before changing the workflow pin.
+- **Governance correction:** GitHub rejected empty organization-only user/team restriction objects
+  in the initial personal-repository protection payload. No partial rule was applied. Those
+  unsupported fields were removed; required CI, PRs, administrator enforcement, linear history,
+  conversation resolution, and force-push/deletion denial were then verified through the API.
+- **Security:** GitHub secret scanning and push protection are enabled. CLI authentication remained
+  in the OS keyring; no token, credential, private key, or cloud secret was added to the repository
+  or committed evidence.
+- **Boundary:** No Verda Cloud resource, credential, DNS record, Kubernetes component, or Phase 2
+  implementation was created or modified.

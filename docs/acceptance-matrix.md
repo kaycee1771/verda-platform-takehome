@@ -45,8 +45,8 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | Q05 | Invalid inputs are rejected | Terraform, Kubernetes, missing CRD schema, Prometheus, and private-key negative fixtures | PASS |
 | Q06 | Developer hooks | Installed canonical hook and `pre-commit run --all-files` | PASS |
 | Q07 | Repository and history secret scanning | Gitleaks working-tree and `--all` history scans with 100% redaction | PASS |
-| Q08 | CI workflow | Actionlint plus local execution of the exact `make ci` workflow body; hosted run awaits a GitHub remote | PARTIAL |
-| Q09 | Clean-clone bootstrap and validation | Final implementation clone at `f8364af`; zero copied caches; bootstrap and full CI parity passed | PASS |
+| Q08 | CI workflow | Actionlint, local `make ci`, and hosted run `31960237401` with retained reports | PASS |
+| Q09 | Clean-clone bootstrap and validation | Fresh remote clone at `f4848cf`; zero copied `.local`; bootstrap and full CI parity passed with a clean worktree | PASS |
+| Q10 | Repository governance | Real CODEOWNERS; protected `main`; app-bound required CI; PR, linear-history, no-force-push, no-deletion, conversation-resolution, secret-scanning, and push-protection controls verified through the GitHub API | PASS |
 
-Phase 1 cannot be marked fully complete until Q08 has a hosted successful run. This does not
-authorize Phase 2.
+Phase 1 is complete. This does not authorize Phase 2 or any Verda Cloud mutation.

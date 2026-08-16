@@ -4,10 +4,11 @@ This repository is being built phase by phase as a reproducible, secure-by-desig
 
 ## Current status
 
-**Phase 1 — PASS locally; Phase 2 is not authorized.** The repository structure, pinned quality
-toolchain, pre-commit controls, credential-free CI workflow, schema cache, policy/rule harnesses,
-secret scanning, and positive/negative validation contracts are implemented. Phase 0 discovery and
-architecture decisions remain authoritative. No Verda resource has been created or changed.
+**Phase 1 — PASS; Phase 2 is not authorized.** The repository structure, pinned quality toolchain,
+pre-commit controls, credential-free hosted CI, schema cache, policy/rule harnesses, secret scanning,
+positive/negative validation contracts, CODEOWNERS, and protected `main` workflow are implemented
+and evidenced. Phase 0 discovery and architecture decisions remain authoritative. No Verda resource
+has been created or changed.
 
 The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`, each with an 80 GiB
 root volume and a 100 GiB Longhorn data volume, using Ubuntu 24.04 Minimal. The seven-day envelope

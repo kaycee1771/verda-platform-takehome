@@ -8,19 +8,21 @@ The target executed, in order, the complete positive validator, all five negativ
 pre-commit hook over the staged/tracked repository, and a second standalone working-tree/history
 Gitleaks scan. The container had networking disabled and received no cloud credentials.
 
-The ignored final `ci.log` is 9,956 bytes with SHA-256
-`a94b5d9128dc74b88ffa2f75954e2fb89e4276dcb870e49f87fa218f0c4aa070`.
-The workflow source has SHA-256
-`1ea87aca8e3dc9e9ccd4a0cb287760f84094cb1c2bdbd4ef40e306e7d686d3bd` and passes actionlint.
+The post-portability fresh-clone `ci.log` is 9,950 bytes with SHA-256
+`66424cf258a1690fd8acdfff6ffcbf6b1797fce9d352135ff544d3533bcdef3a`.
+The workflow source at implementation commit `f4848cf` has SHA-256
+`6e55290f2d8f080afabf27992ca9cf32902e98edb1126ac65c29f3b11b7e05ec` and passes actionlint.
 
-## Hosted boundary
+## Hosted result
 
-No GitHub remote is configured, so a hosted Actions run, branch protection, and a resolvable
-CODEOWNERS identity cannot be truthfully evidenced. The workflow is least-privilege, pins every
-third-party action by full SHA, restores only non-sensitive caches, runs the same `make ci` target,
-and uploads only `.local/reports/` for seven days.
+GitHub Actions run [`31960237401`](https://github.com/kaycee1771/verda-platform-takehome/actions/runs/31960237401)
+at `f4848cfe9dc738cc2b0d9787b1e33ffb6ff57efe` passed the same bootstrap and `make ci` contract on
+`ubuntu-24.04` in 1 minute 44 seconds. It used read-only repository permissions, received no cloud
+credentials, and uploaded only the non-sensitive `.local/reports/` set for seven days.
 
-Hosted CI remains the sole Phase 1 external closure item; it does not authorize Phase 2.
+The first hosted run failed because Linux ownership assigned the ignored cache/report tree solely to
+validator UID 65532 before host PowerShell wrote metadata. The corrected ownership contract uses the
+runner UID as owner and validator GID 65532 as group with no world access. Local full CI, a fresh
+remote-clone full CI, and the corrected hosted run all passed.
 
-The final `f8364af` isolated-clone CI rerun is 10,122 bytes with SHA-256
-`325ed10b838b1099c4459b35d213a7295f11196872dea6d29e1ccb5af17d614a`.
+Hosted closure does not authorize Phase 2.
