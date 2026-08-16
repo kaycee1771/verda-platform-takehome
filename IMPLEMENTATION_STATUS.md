@@ -6,7 +6,7 @@
 - Phase status: PASS — clean-clone, local, hosted CI, secret-scanning, and repository-governance gates pass
 - Stage A status: NOT STARTED — Phase 2 has not been authorized
 - Stage B status: NOT STARTED — prohibited until Stage A is green and the Stage B decision gate passes
-- Last successful end-to-end verification: hosted credential-free CI run `31960237401` at `f4848cf`, backed by the successful local `make ci` suite
+- Last successful end-to-end verification: hosted credential-free CI run `31961790627` at `751cd2e`, backed by the successful local `make ci` suite
 - Current blockers: None for Phase 1; Cloud API credentials block Phase 2, live peer-path tests block Phase 3, and object-storage entitlement blocks the Phase 5 off-cluster storage path
 - Cloud mutation authorized: No
 - Next permitted action: Await explicit Phase 2 authorization and revalidate its credentials, provider, account, cost, and mutation gates; Phase 2 remains prohibited
@@ -46,7 +46,7 @@
 | No unexplained repository directory exists | PASS | `tests/static/repository-contract.yaml` | Update ownership contract with each structural change |
 | Full local CI parity passes | PASS | `.local/logs/ci.log` and `evidence/phase-1/` | Retain networkless, credential-free execution |
 | Clean clone bootstraps and validates | PASS | `evidence/phase-1/clean-clone.md` | Repeat after any material quality-system change |
-| Hosted GitHub Actions validation passes | PASS | `evidence/phase-1/hosted-ci.md`; run `31960237401` | Retain the credential-free workflow and seven-day reports |
+| Hosted GitHub Actions validation passes | PASS | `evidence/phase-1/hosted-ci.md`; run `31961790627` | Retain the credential-free workflow and seven-day reports |
 | Protected `main` and real ownership are enforced | PASS | `evidence/phase-1/repository-governance.md` | Keep the GitHub Actions app-bound check, PR boundary, and no-force-push policy |
 
 ## Deferred gates

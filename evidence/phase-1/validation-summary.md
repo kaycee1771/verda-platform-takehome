@@ -6,7 +6,7 @@
 
 | Gate | Result |
 |---|---|
-| Repository structure contract | PASS: 115 ownership directories and 185 required files |
+| Repository structure contract | PASS: 115 ownership directories and 186 required files |
 | Exact quality-tool versions | PASS: 18 of 18 |
 | Terraform format, validate, and TFLint | PASS |
 | Trivy canonical IaC scan | PASS: zero high/critical misconfigurations in three detected targets |
@@ -17,7 +17,7 @@
 | Kubernetes and CRD schemas | PASS: 12 resources valid, zero invalid/errors/skipped |
 | Kyverno CLI tests | PASS: secure workload accepted; insecure workload rejected as expected |
 | Prometheus syntax and unit tests | PASS |
-| Dockerfile and GitHub Actions lint | PASS |
+| Locked GitHub Action references, Dockerfile, and GitHub Actions lint | PASS |
 | Markdown structure | PASS |
 | Gitleaks working tree and history | PASS |
 

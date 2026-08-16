@@ -92,3 +92,17 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
   or committed evidence.
 - **Boundary:** No Verda Cloud resource, credential, DNS record, Kubernetes component, or Phase 2
   implementation was created or modified.
+
+## 2026-08-16 - Phase 1 review reconciliation before Phase 2
+
+- **Review findings:** The committed workflow already used `actions/upload-artifact` v7.0.1 at its
+  immutable SHA, while the separate version lock still described v4.6.2; hosted evidence also
+  referenced the preceding successful run instead of the final protected `main` run.
+- **Assistant activity:** Codex aligned the lock, added a validator that rejects floating, unknown,
+  unused, and lock-mismatched remote Action references, added a deliberate mismatch rejection test,
+  and refreshed Phase 1 evidence to commit `751cd2e1d77d88d34a8afaf40e40683cc01e8a8e` and run
+  `31961790627`.
+- **Verification:** The complete Docker-isolated `make ci` contract passed locally without cloud
+  credentials before any Phase 2 account inspection or mutation.
+- **Boundary:** This reconciliation changed repository quality controls only. No Verda Cloud
+  credential or resource was created or modified.

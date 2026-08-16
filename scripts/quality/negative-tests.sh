@@ -64,11 +64,36 @@ ssh-keygen -q -t ed25519 -N '' -C 'phase-1-generated-negative-fixture' \
 expect_rejected generated-private-key gitleaks dir --config .gitleaks.toml \
   --redact=100 --no-banner "${root}"
 
+mkdir -p "${root}/action-pins/workflows"
+printf '%s\n' \
+  '---' \
+  'schema_version: 2' \
+  'ci_actions:' \
+  '  checkout:' \
+  '    uses: "actions/checkout"' \
+  '    release: "v6"' \
+  '    sha: "0000000000000000000000000000000000000000"' \
+  >"${root}/action-pins/versions.lock.yaml"
+printf '%s\n' \
+  '---' \
+  'name: Invalid action pin fixture' \
+  'on: workflow_dispatch' \
+  'jobs:' \
+  '  validate:' \
+  '    runs-on: ubuntu-24.04' \
+  '    steps:' \
+  '      - uses: actions/checkout@1111111111111111111111111111111111111111' \
+  >"${root}/action-pins/workflows/invalid.yml"
+expect_rejected mismatched-github-action-pin python scripts/quality/check_action_pins.py \
+  --lock "${root}/action-pins/versions.lock.yaml" \
+  --workflows "${root}/action-pins/workflows"
+
 printf '%s\n' \
   'malformed_terraform=REJECTED' \
   'invalid_kubernetes_object=REJECTED' \
   'missing_custom_schema=REJECTED' \
   'invalid_alert_rule=REJECTED' \
-  'generated_private_key=REJECTED' >"${reports}/summary.txt"
+  'generated_private_key=REJECTED' \
+  'mismatched_github_action_pin=REJECTED' >"${reports}/summary.txt"
 
 echo '[PASS] Every Phase 1 negative quality gate rejected its invalid input.'

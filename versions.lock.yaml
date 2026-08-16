@@ -121,6 +121,15 @@ images:
   demo_base_status: "deferred-until-application-build-phase"
 
 ci_actions:
-  checkout: {release: "v6", sha: "d23441a48e516b6c34aea4fa41551a30e30af803"}
-  cache: {release: "v5", sha: "caa296126883cff596d87d8935842f9db880ef25"}
-  upload_artifact: {release: "v4.6.2", sha: "ea165f8d65b6e75b540449e92b4886f43607fa02"}
+  checkout:
+    uses: "actions/checkout"
+    release: "v6"
+    sha: "d23441a48e516b6c34aea4fa41551a30e30af803"
+  cache:
+    uses: "actions/cache"
+    release: "v5"
+    sha: "caa296126883cff596d87d8935842f9db880ef25"
+  upload_artifact:
+    uses: "actions/upload-artifact"
+    release: "v7.0.1"
+    sha: "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"

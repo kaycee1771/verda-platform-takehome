@@ -38,14 +38,14 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 
 | ID | Gate | Automated proof | State |
 |---|---|---|---|
-| Q01 | Canonical repository topology | `check_structure.py`: 115 directories and 185 required files | PASS |
+| Q01 | Canonical repository topology | `check_structure.py`: 115 directories and 186 required files | PASS |
 | Q02 | Exact, reproducible tool delivery | Bootstrap plus 18 exact version assertions and cache provenance hashes | PASS |
 | Q03 | Positive static quality pipeline | `make validate` across every applicable Phase 1 validator | PASS |
 | Q04 | Kubernetes and custom-resource schemas | 12 valid resources across core, Argo CD, Kyverno, Kueue, Longhorn, Velero, Prometheus, and Sealed Secrets | PASS |
 | Q05 | Invalid inputs are rejected | Terraform, Kubernetes, missing CRD schema, Prometheus, and private-key negative fixtures | PASS |
 | Q06 | Developer hooks | Installed canonical hook and `pre-commit run --all-files` | PASS |
 | Q07 | Repository and history secret scanning | Gitleaks working-tree and `--all` history scans with 100% redaction | PASS |
-| Q08 | CI workflow | Actionlint, local `make ci`, and hosted run `31960237401` with retained reports | PASS |
+| Q08 | CI workflow | Actionlint, locked-action parity, local `make ci`, and hosted run `31961790627` with retained reports | PASS |
 | Q09 | Clean-clone bootstrap and validation | Fresh remote clone at `f4848cf`; zero copied `.local`; bootstrap and full CI parity passed with a clean worktree | PASS |
 | Q10 | Repository governance | Real CODEOWNERS; protected `main`; app-bound required CI; PR, linear-history, no-force-push, no-deletion, conversation-resolution, secret-scanning, and push-protection controls verified through the GitHub API | PASS |
 
