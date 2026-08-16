@@ -6,7 +6,7 @@
 |---|---|
 | Image | `verda-platform-quality:phase1-2026-08-16` |
 | Local content digest | `sha256:6d32d1047025bce8bc6b4f3e0aa926c458ebef55ac486434c8d874aa38462bb0` |
-| Size | 527,756,798 bytes |
+| Size | 527,755,942 bytes |
 | Runtime user | UID/GID `65532:65532`, non-login passwd entry |
 | Validation network | Disabled |
 | Cloud credentials forwarded | No |
@@ -46,8 +46,8 @@ as implemented.
 
 Bootstrap disables the default timestamped BuildKit attestation for this local validator image, so
 identical content yields the stable digest above. Application build provenance remains mandatory in
-Phase 6. The ignored tool-image report is 563 bytes with SHA-256
-`84826630324227258a754a85c173e36d10eb932e584c58559f3fd5635c20a1a9`.
+Phase 6. The final isolated-clone tool-image report is 563 bytes with SHA-256
+`1a502c6cdd21637072fb7f2d9fad946270cd7b1fe624c0963890ec845e154e7e`.
 
 ## Bootstrap implementation hashes
 

@@ -6,7 +6,7 @@
 - Phase status: PARTIAL — all local gates pass; hosted GitHub Actions run is unavailable without a remote
 - Stage A status: NOT STARTED — Phase 2 has not been authorized
 - Stage B status: NOT STARTED — prohibited until Stage A is green and the Stage B decision gate passes
-- Last successful end-to-end verification: Phase 1 clean-clone bootstrap, standalone gates, and full local CI-equivalent suite at `853beeb`
+- Last successful end-to-end verification: Phase 1 zero-cache clone bootstrap and full local CI-equivalent suite at `f8364af`
 - Current blockers: Phase 1 hosted CI evidence and branch enforcement require a GitHub remote and real owner; Cloud API credentials block Phase 2, live peer-path tests block Phase 3, and object-storage entitlement blocks the Phase 5 off-cluster storage path
 - Cloud mutation authorized: No
 - Next permitted action: Complete Phase 1 clean-clone and hosted CI evidence only; Phase 2 remains prohibited

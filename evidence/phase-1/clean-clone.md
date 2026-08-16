@@ -2,7 +2,7 @@
 
 ## Status
 
-PASS for implementation candidate `853beeba81aa85c9453b37f7a18223f1c46fba2f`.
+PASS for final implementation commit `f8364af5159c1503c5fcdf33a27ebe0b3ce7fb00`.
 
 ## Required proof
 
@@ -22,11 +22,10 @@ make ci
 - Source `.local/` copied into clone: No.
 - Clone working tree before and after validation: Clean.
 - `make bootstrap-tools`: PASS; all checksummed schemas and provider cache created from zero.
-- `make validate`: PASS.
-- `make validate-negative`: PASS; five invalid inputs rejected.
-- `make pre-commit`: PASS; all hooks over all tracked files.
-- `make secret-scan`: PASS; working tree and complete history clean.
-- `make ci`: PASS.
+- `make validate`, `make validate-negative`, `make pre-commit`, and `make secret-scan`: PASS on
+  immediate-parent implementation candidate `853beeb`.
+- `make ci`: PASS on final implementation commit `f8364af`; this reran all four suites above.
+- Reproduced image digest: `sha256:6d32d1047025bce8bc6b4f3e0aa926c458ebef55ac486434c8d874aa38462bb0`.
 
 The first candidate clean-clone test rejected the repository because a broad `generated/` ignore
 pattern omitted the generated-inventory sentinel. The pattern was narrowed, the sentinel was added
@@ -41,3 +40,12 @@ to the machine contract, a new commit and clone were created, and the entire seq
 | `pre-commit.log` | 749 | `d77f875df541be36359b3862071895f3feae2a704adccbb4eaef50b8de37aab5` |
 | `secret-scan.log` | 407 | `8c5416ddd427dce41c2173396abcfbedece9b0e7b91ba309e422c2856c2aef78` |
 | `ci.log` | 10,122 | `32482bf0955aeea9f7e9b4f6a496535189d9940368953927d017d5ca2a2788cc` |
+
+The final `f8364af` clone produced these additional records:
+
+| Local artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `bootstrap-image.log` | 3,151 | `77d0970a903a12f9d7974945aba4a46d148ae04feffdddc597ae3127f3c50865` |
+| `bootstrap-cache.log` | 1,912 | `e3caad9451be2483cc3180c9ceb071429fff244fb68a33646a4b732e62b1fa27` |
+| `ci.log` | 10,122 | `325ed10b838b1099c4459b35d213a7295f11196872dea6d29e1ccb5af17d614a` |
+| `tool-image.json` | 563 | `1a502c6cdd21637072fb7f2d9fad946270cd7b1fe624c0963890ec845e154e7e` |
