@@ -1,8 +1,8 @@
-# Replace this placeholder only when the repository's real GitHub owner is known.
-* @platform-owner
+# Repository owner verified before first publication.
+* @Kaycee1771
 
-/infra/ @platform-owner
-/platform/ @platform-owner
-/policies/ @platform-owner
-/environments/prod/ @platform-owner
-/.github/workflows/ @platform-owner
+/infra/ @Kaycee1771
+/platform/ @Kaycee1771
+/policies/ @Kaycee1771
+/environments/prod/ @Kaycee1771
+/.github/workflows/ @Kaycee1771
