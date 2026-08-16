@@ -296,6 +296,7 @@ required_files:
   - scripts/quality/bootstrap-cache.sh
   - scripts/quality/bootstrap-tools.ps1
   - scripts/quality/check_structure.py
+  - scripts/quality/check_action_pins.py
   - scripts/quality/check_versions.py
   - scripts/quality/ci.sh
   - scripts/quality/detect_private_key.py

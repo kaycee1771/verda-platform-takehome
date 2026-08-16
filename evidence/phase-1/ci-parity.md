@@ -4,7 +4,7 @@
 
 `make ci`: **PASS**
 
-The target executed, in order, the complete positive validator, all five negative gates, every
+The target executed, in order, the complete positive validator, all six negative gates, every
 pre-commit hook over the staged/tracked repository, and a second standalone working-tree/history
 Gitleaks scan. The container had networking disabled and received no cloud credentials.
 
@@ -15,9 +15,9 @@ The workflow source at implementation commit `f4848cf` has SHA-256
 
 ## Hosted result
 
-GitHub Actions run [`31960237401`](https://github.com/kaycee1771/verda-platform-takehome/actions/runs/31960237401)
-at `f4848cfe9dc738cc2b0d9787b1e33ffb6ff57efe` passed the same bootstrap and `make ci` contract on
-`ubuntu-24.04` in 1 minute 44 seconds. It used read-only repository permissions, received no cloud
+GitHub Actions run [`31961790627`](https://github.com/kaycee1771/verda-platform-takehome/actions/runs/31961790627)
+at `751cd2e1d77d88d34a8afaf40e40683cc01e8a8e` passed the same bootstrap and `make ci` contract on
+`ubuntu-24.04` in 1 minute 33 seconds. It used read-only repository permissions, received no cloud
 credentials, and uploaded only the non-sensitive `.local/reports/` set for seven days.
 
 The first hosted run failed because Linux ownership assigned the ignored cache/report tree solely to

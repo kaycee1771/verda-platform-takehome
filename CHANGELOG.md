@@ -25,6 +25,9 @@ are under active development.
   digest stable by excluding timestamped BuildKit attestations while retaining source-lock proof.
 - Made generated-cache ownership portable across Windows and Linux bind mounts without granting
   world access, and upgraded the immutable `upload-artifact` pin to Node 24-native v7.0.1.
+- Reconciled the `upload-artifact` version lock with the workflow SHA, added fail-closed validation
+  for every remote GitHub Action reference, and refreshed Phase 1 evidence to the final protected
+  `main` commit and hosted run.
 
 ### Security
 

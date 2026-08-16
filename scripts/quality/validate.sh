@@ -170,6 +170,7 @@ else
   not_applicable 'Dockerfile lint' 'no Dockerfile exists'
 fi
 
+run_gate 'Locked GitHub Action references' python scripts/quality/check_action_pins.py
 run_gate 'GitHub Actions syntax and semantics' actionlint
 run_gate 'Markdown structure' markdown_validate
 run_gate 'Gitleaks working tree and history' bash scripts/quality/secret-scan.sh
