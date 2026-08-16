@@ -1,0 +1,143 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": {
+    "name": "verda-platform-takehome",
+    "phase": 0,
+    "decision": "conditional-go",
+    "decisionDate": "2026-08-16",
+    "cloudMutationAuthorized": false
+  },
+  "topology": {
+    "implementedClusterCount": 1,
+    "nodeCount": 3,
+    "kubernetesDistribution": "RKE2",
+    "nodeRoles": [
+      "control-plane",
+      "etcd",
+      "worker"
+    ],
+    "environmentIsolation": "namespaces",
+    "environments": [
+      "dev",
+      "staging",
+      "prod"
+    ],
+    "managementPlacement": "co-located-for-takehome",
+    "productionTarget": "dedicated-rancher-management-cluster-and-separate-workload-clusters"
+  },
+  "verifiedProvider": {
+    "iacEngine": "terraform",
+    "iacEngineVersion": "1.15.8",
+    "source": "registry.terraform.io/verda-cloud/verda",
+    "version": "1.1.2",
+    "schemaExported": true,
+    "dataSourceCount": 0,
+    "capabilitySummary": "docs/evidence/phase-0/provider-capability-summary.md"
+  },
+  "requirements": {
+    "deliverables": [
+      "DEL-001",
+      "DEL-002",
+      "DEL-003"
+    ],
+    "core": [
+      "CORE-001",
+      "CORE-002",
+      "CORE-003",
+      "CORE-004",
+      "CORE-005",
+      "CORE-006",
+      "CORE-007"
+    ],
+    "bonus": [
+      "BONUS-001",
+      "BONUS-002",
+      "BONUS-003",
+      "BONUS-004",
+      "BONUS-005",
+      "BONUS-006"
+    ],
+    "evaluation": [
+      "EVAL-001",
+      "EVAL-002",
+      "EVAL-003",
+      "EVAL-004",
+      "EVAL-005"
+    ]
+  },
+  "openGates": [
+    {
+      "id": "GATE-001",
+      "description": "Verda API credentials are configured locally and pass read-only diagnostics.",
+      "blocksPhase": 2,
+      "status": "blocked"
+    },
+    {
+      "id": "GATE-002",
+      "description": "CPU SKU, image, location, volume, and price inventory is captured.",
+      "blocksPhase": 2,
+      "status": "blocked"
+    },
+    {
+      "id": "GATE-003",
+      "description": "Node peer connectivity, private addressing, firewall, and load-balancer behavior is verified.",
+      "blocksPhase": 2,
+      "status": "blocked"
+    },
+    {
+      "id": "GATE-004",
+      "description": "The recommended and lean topology costs fit the available credit and assessment window.",
+      "blocksPhase": 2,
+      "status": "blocked"
+    },
+    {
+      "id": "GATE-005",
+      "description": "Git remote and assessor access delivery method are selected.",
+      "blocksPhase": 5,
+      "status": "blocked"
+    }
+  ],
+  "adrs": [
+    "docs/adr/0000-use-architecture-decision-records.md",
+    "docs/adr/0001-use-rke2-for-the-takehome-cluster.md",
+    "docs/adr/0002-model-environments-as-isolated-namespaces.md",
+    "docs/adr/0003-co-locate-rancher-for-the-takehome.md",
+    "docs/adr/0004-use-longhorn-for-replicated-storage.md",
+    "docs/adr/0005-use-sealed-secrets-for-gitops-secrets.md",
+    "docs/adr/0006-bootstrap-argo-cd-then-manage-declaratively.md",
+    "docs/adr/0007-treat-public-endpoint-ha-as-an-explicit-gap.md",
+    "docs/adr/0008-use-verda-object-storage-as-the-backup-target.md"
+  ],
+  "phase0ExitCriteria": [
+    {
+      "id": "P0-EXIT-001",
+      "description": "Every assignment requirement maps to implementation and proof.",
+      "status": "pass"
+    },
+    {
+      "id": "P0-EXIT-002",
+      "description": "Implemented and production-target architectures are documented separately.",
+      "status": "pass"
+    },
+    {
+      "id": "P0-EXIT-003",
+      "description": "Material decisions, assumptions, risks, and non-goals are documented.",
+      "status": "pass"
+    },
+    {
+      "id": "P0-EXIT-004",
+      "description": "Read-only account and provider discovery workflows are implemented.",
+      "status": "pass"
+    },
+    {
+      "id": "P0-EXIT-005",
+      "description": "Actual Verda capacity, network behavior, and cost are recorded.",
+      "status": "blocked"
+    },
+    {
+      "id": "P0-EXIT-006",
+      "description": "No secret or cloud resource is introduced by Phase 0.",
+      "status": "pass"
+    }
+  ]
+}

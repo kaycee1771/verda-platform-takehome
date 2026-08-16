@@ -1,0 +1,46 @@
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+kubeconfig*
+credentials*
+secrets*.yaml
+secrets*.yml
+
+# Terraform and OpenTofu local state
+.terraform/
+.terraform.d/
+.tofu/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Generated local discovery evidence
+docs/evidence/**/*.local.json
+docs/evidence/**/provider-schema*.json
+
+# Tooling and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Build and scratch output
+tmp/
+dist/
+build/
+coverage/
