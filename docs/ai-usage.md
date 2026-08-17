@@ -147,3 +147,71 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
 - **Final boundary:** Three unique endpoints, exact attachments, hostname-bound SSH, inventory,
   lifecycle, cost, state, backup, and no-drift gates pass. No host configuration, WireGuard,
   firewall, RKE2, Kubernetes, Rancher, Argo CD, Harbor, DNS, or Stage B action occurred.
+
+## 2026-08-17 - Phase 2 review reconciliation before Phase 3
+
+- **Human authorization:** The user authorized Phase 3 host hardening and secure node networking,
+  while explicitly prohibiting Terraform apply, resource replacement/creation, RKE2, Kubernetes,
+  GitOps, platform services, Stage A verification, and Stage B.
+- **Review findings:** Top-level onboarding documents still described the Phase 1 boundary; the
+  initial Terraform plan assertion treated an empty `existing_volumes` list as one attachment; the
+  Make router assigned later commands to obsolete phases; and the Phase 2 evidence did not cite the
+  final protected-main run.
+- **Assistant activity:** Codex corrected the attachment invariant and added positive/negative unit
+  cases, introduced a single machine-readable target map covering all 18 blueprint phases, enabled
+  only Phase 3 host configuration and hardened-host verification, refreshed current architecture
+  status, and recorded final hosted run `32012648406` at commit
+  `4d05890fa22edd126ff25df195bf93e2e3cf33eb`.
+- **Boundary:** These changes are repository reconciliation only. No host or Verda resource was
+  mutated; the complete credential-free suite must pass before live Phase 3 preflight begins.
+
+## 2026-08-17 - Phase 3 host hardening and secure networking
+
+- **Human authorization:** The user authorized Phase 3 host mutation only, supplied the time-bound
+  Cloud API credential in a local screenshot, and explicitly asked Codex to resolve the current
+  administrative source CIDR. Cloud resource mutation and every Phase 4+ component remained
+  prohibited.
+- **Credential boundary:** A local ignored launcher used OCR to derive credential fields in memory,
+  tested only redacted candidate ordering through read-only status, resolved the current public
+  address through a public echo service, canonicalized it to one `/32`, and set all values only in
+  the child process environment. Automation did not print or persist the values. Because the source
+  image visibly contains a secret, the credential must be revoked/rotated and the image deleted
+  after the bounded authenticated work.
+- **Assistant activity:** Codex implemented the canonical Ansible roles/playbooks, strict generated
+  runtime, access bootstrap, node-local WireGuard key workflow, dedicated nftables table, stable-disk
+  validation and guarded formatting, host prerequisites, diagnostics, two-pass idempotency, serial
+  reboot proof, external scans, sustained traffic test, sanitized structured reports, static
+  contracts, ADR 0013, and Phase 3 evidence.
+- **Live fail-closed corrections:** Initial runs exposed device mount detection that did not use
+  mountpoint semantics, a provider virtio-serial suffix detail, a removed timesyncd unit, nftables'
+  exact `warn` keyword, a reboot command whose SSH channel could hang, and cloud-init ownership of
+  locale/hosts files. Each issue stopped or invalidated the run; code was corrected to the observed
+  Ubuntu behavior and the complete acceptance sequence was rerun rather than weakening assertions.
+- **Quality-system correction:** A final bootstrap rebuild hit repeated GitHub HTTP 429 responses
+  while refreshing schemas. Codex retained fail-closed checks, added bounded retry and checksummed
+  source caching, locked every materialized CRD output hash, added unit tests, and proved the repeat
+  bootstrap plus complete offline CI instead of treating an old cache as unverified.
+- **Verification:** All three hosts pass strict named-key access with root/password denial; all six
+  directed no-fragment WireGuard paths and sustained ring traffic pass; public future-service ports
+  are denied; UUID mounts persist; two complete convergence passes and the post-reboot pass report
+  zero changes; all three nodes returned under new kernel boot identities; RKE2 remains absent.
+- **Rejected approaches:** Trust-on-first-use SSH, controller-held WireGuard private keys, assumed
+  device ordering, partial-media sampling, broad nftables ownership, automatic reboots, opening
+  future service ports, and continuing after a failed proof were rejected.
+- **Boundary:** No Verda Cloud resource, Terraform state resource, RKE2 binary, Kubernetes object,
+  DNS record, Stage B resource, or post-Phase-3 platform component was created or modified.
+
+## 2026-08-17 - Phase 3 publication CI portability repair
+
+- **Observed failure:** The first hosted pull-request run exhausted bounded retries while GitHub's
+  raw-content endpoint returned HTTP 429 on a cold shared-runner cache. Report upload then failed
+  secondarily because bootstrap had stopped before producing reports.
+- **Human approval:** Codex reported the exact failure and proposed a focused authenticated-
+  bootstrap correction. The user explicitly approved implementation and continuation.
+- **Assistant activity:** Codex verified GitHub's official job-token, least-privilege, and Contents
+  API raw-media contracts; limited the existing read-only job token to the bootstrap step and
+  ephemeral cache container; allowlisted token use to API requests derived from locked GitHub raw
+  URLs; and added regression coverage for routing, non-forwarding, local fallback, and log secrecy.
+- **Verification:** The repaired pinned bootstrap passed, followed by the complete network-disabled
+  37-test `make ci` chain, all negative fixtures, all pre-commit hooks, and clean working-tree and
+  complete-history Gitleaks scans. No Verda resource or host was contacted or modified.

@@ -1,0 +1,2 @@
+[Service]
+ExecStartPost=/usr/bin/wg set %i private-key /etc/wireguard/{{ phase3_wireguard_interface }}.key

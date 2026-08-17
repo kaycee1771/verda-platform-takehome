@@ -1,0 +1,216 @@
+---
+- name: Assert the dedicated administrator public key is mounted
+  ansible.builtin.stat:
+    path: /run/secrets/phase3_ssh_key.pub
+  delegate_to: localhost
+  become: false
+  register: access_bootstrap_admin_public_key_file
+
+- name: Reject an absent administrator public key
+  ansible.builtin.assert:
+    that:
+      - access_bootstrap_admin_public_key_file.stat.exists
+      - access_bootstrap_admin_public_key_file.stat.isreg
+    fail_msg: The dedicated administrator public key is absent from the runtime boundary.
+
+- name: Create the named locked administrator account
+  ansible.builtin.user:
+    name: "{{ phase3_platform_admin }}"
+    comment: Verda platform administrator
+    shell: /bin/bash
+    groups: sudo
+    append: true
+    create_home: true
+    password_lock: true
+
+- name: Create administrator SSH directory
+  ansible.builtin.file:
+    path: "/home/{{ phase3_platform_admin }}/.ssh"
+    state: directory
+    owner: "{{ phase3_platform_admin }}"
+    group: "{{ phase3_platform_admin }}"
+    mode: "0700"
+
+- name: Install only the dedicated administrator public key
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', '/run/secrets/phase3_ssh_key.pub') | trim }}\n"
+    dest: "/home/{{ phase3_platform_admin }}/.ssh/authorized_keys"
+    owner: "{{ phase3_platform_admin }}"
+    group: "{{ phase3_platform_admin }}"
+    mode: "0600"
+
+- name: Grant key-only non-interactive sudo
+  ansible.builtin.copy:
+    content: "{{ phase3_platform_admin }} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    dest: "/etc/sudoers.d/90-{{ phase3_platform_admin }}"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Prove a second administrator session before disabling root
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -i
+      - /tmp/phase3-ssh-key
+      - -o
+      - BatchMode=yes
+      - -o
+      - IdentitiesOnly=yes
+      - -o
+      - StrictHostKeyChecking=yes
+      - -o
+      - UserKnownHostsFile=/run/config/known_hosts
+      - -o
+      - ConnectTimeout=10
+      - "{{ phase3_platform_admin }}@{{ ansible_host }}"
+      - sudo -n true
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Install the timed SSH recovery helper
+  ansible.builtin.template:
+    src: phase3-ssh-rollback.sh.j2
+    dest: /usr/local/sbin/phase3-ssh-rollback
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Prepare the current SSH drop-in for timed recovery
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/phase3-ssh-rollback
+      - prepare
+  changed_when: false
+
+- name: Clear an obsolete SSH rollback timer
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - stop
+      - phase3-ssh-rollback.timer
+      - phase3-ssh-rollback.service
+  failed_when: false
+  changed_when: false
+
+- name: Arm a five-minute automatic SSH rollback
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --collect
+      - --unit=phase3-ssh-rollback
+      - --on-active=5m
+      - /usr/local/sbin/phase3-ssh-rollback
+      - restore
+  changed_when: true
+
+- name: Render the fail-closed SSH hardening drop-in
+  ansible.builtin.template:
+    src: 90-verda-platform.conf.j2
+    dest: /etc/ssh/sshd_config.d/90-verda-platform.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/sbin/sshd -t -f %s
+
+- name: Validate the complete SSH daemon configuration before reload
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -t
+      - -f
+      - /etc/ssh/sshd_config
+  changed_when: false
+
+- name: Reload SSH with the verified configuration
+  ansible.builtin.service:
+    name: ssh
+    state: reloaded
+
+- name: Prove hardened administrator access in a fresh session
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -i
+      - /tmp/phase3-ssh-key
+      - -o
+      - BatchMode=yes
+      - -o
+      - IdentitiesOnly=yes
+      - -o
+      - StrictHostKeyChecking=yes
+      - -o
+      - UserKnownHostsFile=/run/config/known_hosts
+      - -o
+      - ConnectTimeout=10
+      - "{{ phase3_platform_admin }}@{{ ansible_host }}"
+      - sudo -n true
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Prove direct root SSH is denied
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -i
+      - /tmp/phase3-ssh-key
+      - -o
+      - BatchMode=yes
+      - -o
+      - IdentitiesOnly=yes
+      - -o
+      - StrictHostKeyChecking=yes
+      - -o
+      - UserKnownHostsFile=/run/config/known_hosts
+      - -o
+      - ConnectTimeout=5
+      - "root@{{ ansible_host }}"
+      - "true"
+  delegate_to: localhost
+  become: false
+  register: access_bootstrap_root_denial
+  failed_when: access_bootstrap_root_denial.rc == 0
+  changed_when: false
+
+- name: Prove password-only SSH is denied without prompting
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -o
+      - BatchMode=yes
+      - -o
+      - PubkeyAuthentication=no
+      - -o
+      - PreferredAuthentications=password,keyboard-interactive
+      - -o
+      - StrictHostKeyChecking=yes
+      - -o
+      - UserKnownHostsFile=/run/config/known_hosts
+      - -o
+      - ConnectTimeout=5
+      - "{{ phase3_platform_admin }}@{{ ansible_host }}"
+      - "true"
+  delegate_to: localhost
+  become: false
+  register: access_bootstrap_password_denial
+  failed_when: access_bootstrap_password_denial.rc == 0
+  changed_when: false
+
+- name: Cancel the SSH rollback after every access assertion passes
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - stop
+      - phase3-ssh-rollback.timer
+  changed_when: true
+
+- name: Remove temporary SSH recovery material
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /run/phase3-ssh-rollback.present
+    - /run/phase3-ssh-rollback.conf

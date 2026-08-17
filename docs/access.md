@@ -1,6 +1,8 @@
 # Assessor Access Instructions
 
-**Status:** Phase 0 template. Do not add live passwords, private keys, administrator kubeconfigs, or recovery material to this file.
+**Status:** Phase 3 host boundary verified; application and platform access remain future work. Do
+not add live endpoints, source CIDRs, passwords, private keys, administrator kubeconfigs, or recovery
+material to this file.
 
 ## Access principles
 
@@ -22,12 +24,23 @@
 | Harbor | OPEN | 443 | Read-only assessor | Out of band | OPEN |
 | Grafana | OPEN | 443 | Viewer | Out of band | OPEN |
 | Kubernetes API | OPEN | 6443 or SSH tunnel | Read-only kubeconfig | Out of band | OPEN |
-| SSH | OPEN | 22 | Named administration user or no assessor access | Public key allowlist | OPEN |
+| SSH | Redacted direct endpoint | 22 | `platform-admin`; operator only in Phase 3 | Public key plus source `/32` allowlist | 2026-08-24 |
+
+All service rows except SSH are design contracts, not live endpoints. TCP 80, 443, 6443, 9345,
+2379–2381, 10250, 9090, and sampled NodePorts are currently filtered or closed externally. RKE2 and
+all listed platform services remain absent.
 
 ## Verification flow
 
-This section will contain copy-paste-safe commands for DNS, TLS, login, application version, Argo health, Harbor artifact, Prometheus query, Loki query, and backup status.
+The Phase 3 host check is automated by `make verify-hosts CLUSTER=management` and uses external
+runtime material. It proves pinned host identity, named key login, root/password denial, firewall,
+WireGuard, storage, time, and RKE2 absence without printing endpoint or secret values. Later phases
+will add copy-paste-safe DNS, TLS, scoped login, artifact, health, metrics, logs, and backup checks.
 
 ## Revocation
 
-The final runbook must identify who revokes assessor users, SSH keys, robot credentials, DNS records, and running infrastructure after the review window.
+After the assessment, remove the administrator public key/account as part of teardown, revoke the
+Cloud API credential, delete its operator-provided source image, remove external state/keys only
+after required evidence retention, and destroy infrastructure through the guarded teardown phase.
+Later phases must add reviewer, robot, DNS, and service-account revocation steps when those resources
+exist.

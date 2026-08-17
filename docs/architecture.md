@@ -128,8 +128,23 @@ deferred because object-storage entitlement and locking are unproven.
 
 Phase 2 is green after an explicitly authorized, assertion-bounded replacement of server-02 compute
 and its instance-owned OS disk. Its protected data volume retained the original identity and
-creation timestamp. Three unique public endpoints, exact attachments, dedicated-key SSH with remote
-hostname assertions, compute-only rollback, live cost, and final zero drift all pass. No host
-configuration, networking, RKE2, or Phase 3 action has started. Provider 1.1.2 and CLI 1.8.1 still
-expose no private network, firewall/security group, load balancer, floating/VIP, or DNS resources,
-so ADR 0005 Path B remains the intended later network path.
+creation timestamp. Three unique public endpoints, exact attachments, live cost, and zero drift
+remain green.
+
+Phase 3 now implements the host trust boundary from ADR 0013. All three nodes use the named
+`platform-admin` account with pinned-host-key, key-only sudo access; root and password SSH fail. A
+dedicated nftables table allows SSH only from the current approved `/32`, permits WireGuard UDP only
+between exact peer endpoints, accepts overlay traffic only from exact overlay peers, and leaves all
+future public application and Kubernetes ports closed. Five-minute rollback timers and fresh-session
+proofs protect SSH and firewall transitions.
+
+The host WireGuard mesh uses stable addresses in `10.250.0.0/24`, an MTU of 1420 over the measured
+1500-byte public underlay, and a reserved future Cilium VXLAN MTU of 1370. Every one of the six
+directed no-fragment paths, recent peer handshakes, and a sustained three-node traffic ring passed.
+Each protected data volume is ext4-formatted only after full empty-media proof, mounted by UUID at
+`/var/lib/longhorn`, and verified after all three nodes rebooted serially. Full post-reboot
+convergence is zero-change. Provider 1.1.2 and CLI 1.8.1 still expose no managed private network or
+HA endpoint, so Path B remains an explicit limitation rather than a cloud-private-network claim.
+
+RKE2, Kubernetes, Cilium, Longhorn itself, ingress, DNS, and all platform services remain absent.
+The 1370 MTU and internal port reservations are Phase 4/5 inputs, not implemented-service claims.

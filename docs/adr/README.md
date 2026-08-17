@@ -26,5 +26,6 @@ ADRs preserve why a choice was made and what evidence may reverse it. The pre-bl
 | [0010](0010-observability.md) | Per-cluster Prometheus, central Grafana/Loki, Alloy | Accepted |
 | [0011](0011-backup-recovery.md) | Layered backup and restore proof | Proposed |
 | [0012](0012-provider-image-canonicalization-and-state-boundary.md) | Provider image canonicalization and encrypted local state | Accepted |
+| [0013](0013-phase-3-host-security-boundary.md) | Establish the host security boundary before RKE2 | Accepted |
 
 Use [template.md](template.md) for later decisions.

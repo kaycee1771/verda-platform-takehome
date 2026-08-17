@@ -1,0 +1,232 @@
+---
+- name: Read the cgroup filesystem type
+  ansible.builtin.command:
+    argv:
+      - stat
+      - --file-system
+      - --format=%T
+      - /sys/fs/cgroup
+  register: diagnostics_cgroup_fs
+  changed_when: false
+
+- name: Read active swap devices
+  ansible.builtin.command:
+    argv:
+      - swapon
+      - --show
+      - --noheadings
+  register: diagnostics_active_swap
+  changed_when: false
+
+- name: Read the effective image-managed system locale
+  ansible.builtin.command:
+    argv:
+      - localectl
+      - status
+      - --no-pager
+  register: diagnostics_system_locale
+  changed_when: false
+
+- name: Read time synchronization state
+  ansible.builtin.command:
+    argv:
+      - chronyc
+      - tracking
+  register: diagnostics_chrony_tracking
+  changed_when: false
+  retries: 24
+  delay: 5
+  until: "'Leap status     : Normal' in diagnostics_chrony_tracking.stdout"
+
+- name: Read root mount propagation
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - PROPAGATION
+      - /
+  register: diagnostics_root_propagation
+  changed_when: false
+
+- name: Verify NFSv4 support in the running Ubuntu kernel
+  ansible.builtin.shell: |
+    set -o pipefail
+    grep -E '^CONFIG_NFS_V4=(y|m)$' "/boot/config-$(uname -r)"
+  args:
+    executable: /bin/bash
+  register: diagnostics_nfs4_kernel
+  changed_when: false
+
+- name: Read required loaded storage modules
+  ansible.builtin.command:
+    argv:
+      - grep
+      - --extended-regexp
+      - '^(iscsi_tcp|dm_crypt) '
+      - /proc/modules
+  register: diagnostics_storage_modules
+  changed_when: false
+
+- name: Read the managed SSH daemon policy
+  ansible.builtin.command:
+    argv:
+      - sshd
+      - -T
+  register: diagnostics_sshd_policy
+  changed_when: false
+
+- name: Read the stable data filesystem
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --json
+      - --output
+      - TARGET,UUID,FSTYPE,OPTIONS,AVAIL,SIZE
+      - --target
+      - "{{ phase3_data_mount }}"
+  register: diagnostics_data_mount_report
+  changed_when: false
+
+- name: Read the WireGuard interface contract
+  ansible.builtin.command:
+    argv:
+      - ip
+      - --json
+      - address
+      - show
+      - dev
+      - "{{ phase3_wireguard_interface }}"
+  register: diagnostics_wireguard_report
+  changed_when: false
+
+- name: Prove no-fragment WireGuard payload to every peer
+  ansible.builtin.command:
+    argv:
+      - ping
+      - -I
+      - "{{ phase3_wireguard_interface }}"
+      - -c
+      - "3"
+      - -W
+      - "2"
+      - -M
+      - do
+      - -s
+      - "{{ phase3_wireguard_mtu | int - 28 }}"
+      - "{{ phase3_wireguard_addresses[item] }}"
+  loop: "{{ groups['management_servers'] | difference([inventory_hostname]) | sort }}"
+  changed_when: false
+
+- name: Prove the reserved future Cilium payload to every peer
+  ansible.builtin.command:
+    argv:
+      - ping
+      - -I
+      - "{{ phase3_wireguard_interface }}"
+      - -c
+      - "3"
+      - -W
+      - "2"
+      - -M
+      - do
+      - -s
+      - "{{ phase3_future_cilium_mtu | int - 28 }}"
+      - "{{ phase3_wireguard_addresses[item] }}"
+  loop: "{{ groups['management_servers'] | difference([inventory_hostname]) | sort }}"
+  changed_when: false
+
+- name: Prove a recent authenticated WireGuard handshake with every peer
+  ansible.builtin.shell: |
+    set -o pipefail
+    now=$(date +%s)
+    peer_count=0
+    while read -r _ timestamp; do
+      [[ "${timestamp}" =~ ^[0-9]+$ ]]
+      ((peer_count += 1))
+      ((timestamp > 0))
+      ((now - timestamp < 180))
+    done < <(wg show {{ phase3_wireguard_interface | quote }} latest-handshakes)
+    ((peer_count == {{ groups['management_servers'] | length - 1 }}))
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Read the scoped firewall table
+  ansible.builtin.command:
+    argv:
+      - nft
+      - --stateless
+      - list
+      - table
+      - inet
+      - verda_platform
+  register: diagnostics_firewall_report
+  changed_when: false
+
+- name: Read service activation state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - "{{ item }}"
+  loop:
+    - auditd.service
+    - chrony.service
+    - iscsid.service
+    - "wg-quick@{{ phase3_wireguard_interface }}.service"
+    - verda-platform-firewall.service
+  changed_when: false
+
+- name: Confirm RKE2 remains absent
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/local/bin/rke2
+    - /etc/rancher/rke2/config.yaml
+    - /var/lib/rancher/rke2
+  register: diagnostics_rke2_paths
+
+- name: Read the automatic security-update timer state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-enabled
+      - apt-daily-upgrade.timer
+  register: diagnostics_security_update_timer
+  changed_when: false
+
+- name: Read the automatic reboot policy
+  ansible.builtin.command:
+    argv:
+      - grep
+      - --fixed-strings
+      - 'Unattended-Upgrade::Automatic-Reboot "false";'
+      - /etc/apt/apt.conf.d/52verda-platform-unattended-upgrades
+  register: diagnostics_automatic_reboot_policy
+  changed_when: false
+
+- name: Assert the hardened-host boundary
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == phase3_expected_distribution
+      - ansible_facts['distribution_version'] == phase3_expected_release
+      - diagnostics_cgroup_fs.stdout | trim == phase3_expected_cgroup_fs
+      - diagnostics_active_swap.stdout | trim == ''
+      - "'System Locale: LANG=C.UTF-8' in diagnostics_system_locale.stdout"
+      - "'Leap status     : Normal' in diagnostics_chrony_tracking.stdout"
+      - diagnostics_root_propagation.stdout | trim == 'shared'
+      - diagnostics_nfs4_kernel.stdout | trim in ['CONFIG_NFS_V4=y', 'CONFIG_NFS_V4=m']
+      - "'iscsi_tcp ' in diagnostics_storage_modules.stdout"
+      - "'dm_crypt ' in diagnostics_storage_modules.stdout"
+      - "'permitrootlogin no' in diagnostics_sshd_policy.stdout"
+      - "'passwordauthentication no' in diagnostics_sshd_policy.stdout"
+      - "'kbdinteractiveauthentication no' in diagnostics_sshd_policy.stdout"
+      - "'allowusers ' ~ phase3_platform_admin in diagnostics_sshd_policy.stdout"
+      - (diagnostics_data_mount_report.stdout | from_json).filesystems[0].fstype == 'ext4'
+      - (diagnostics_wireguard_report.stdout | from_json)[0].mtu | int == phase3_wireguard_mtu | int
+      - "'policy drop' in diagnostics_firewall_report.stdout"
+      - diagnostics_security_update_timer.stdout | trim == 'enabled'
+      - diagnostics_automatic_reboot_policy.stdout | trim == 'Unattended-Upgrade::Automatic-Reboot "false";'
+      - diagnostics_rke2_paths.results | map(attribute='stat.exists') | select('equalto', true) | list | length == 0
+    fail_msg: One or more host hardening, storage, network, firewall, or phase-boundary assertions failed.

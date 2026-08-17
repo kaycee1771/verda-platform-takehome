@@ -12,6 +12,9 @@ all Linux capabilities dropped, a read-only container root, and no cloud credent
 `make bootstrap-tools` is the only networked quality step. It builds the digest-pinned base image,
 verifies upstream checksums, warms non-secret caches, and reports host tools without upgrading the
 workstation. `make validate`, pre-commit, negative tests, and CI parity are offline.
+GitHub Actions supplies its job-scoped, read-only `GITHUB_TOKEN` only to this bootstrap step. The
+token is forwarded by name to the ephemeral cache container, used solely for allowlisted GitHub
+Contents API requests, and is never persisted in the image, cache, reports, or command output.
 
 The local validator build disables BuildKit's default timestamped provenance attachment so identical
 inputs produce one stable image digest. Repository locks, upstream checksums, the verified Aqua

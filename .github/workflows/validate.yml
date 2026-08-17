@@ -44,6 +44,8 @@ jobs:
 
       - name: Bootstrap pinned tools and offline caches
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: make bootstrap-tools
 
       - name: Run CI-equivalent positive and rejection suites

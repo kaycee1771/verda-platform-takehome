@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Negative and positive tests for the bounded Phase 2 recovery plan."""
+"""Positive and negative tests for the bounded Phase 2 plan contracts."""
 
 from __future__ import annotations
 
@@ -38,6 +38,75 @@ def replacement() -> dict[str, object]:
             "after": instance(),
         },
     }
+
+
+def initial_resources() -> list[dict[str, object]]:
+    resources: list[dict[str, object]] = []
+    for index in range(1, 4):
+        node = instance(f"verda-mgmt-server-{index:02d}")
+        node["os_volume"] = {
+            "name": f"verda-mgmt-os-{index:02d}",
+            "size": 80,
+            "type": "NVMe",
+        }
+        node["existing_volumes"] = [f"data-volume-{index:02d}"]
+        resources.append(
+            {
+                "address": f'module.management.module.node["{index:02d}"].verda_instance.this',
+                "type": "verda_instance",
+                "change": {"actions": ["create"], "after": node},
+            }
+        )
+        resources.append(
+            {
+                "address": f'module.management.module.node["{index:02d}"].verda_volume.data',
+                "type": "verda_volume",
+                "change": {
+                    "actions": ["create"],
+                    "after": {
+                        "name": f"verda-mgmt-data-{index:02d}",
+                        "size": 100,
+                        "type": "NVMe",
+                        "location": "FIN-03",
+                    },
+                },
+            }
+        )
+    resources.append(
+        {
+            "address": "verda_ssh_key.management",
+            "type": "verda_ssh_key",
+            "change": {"actions": ["create"], "after": {"name": "management"}},
+        }
+    )
+    return resources
+
+
+class InitialPlanTests(unittest.TestCase):
+    def test_exact_initial_plan_passes(self) -> None:
+        result = ASSERT_PLAN.assert_initial_plan(initial_resources())
+        self.assertEqual(
+            result["resource_counts"],
+            {"verda_instance": 3, "verda_ssh_key": 1, "verda_volume": 3},
+        )
+
+    def test_missing_data_volume_attachment_is_rejected(self) -> None:
+        candidate = copy.deepcopy(initial_resources())
+        candidate[0]["change"]["after"]["existing_volumes"] = []
+        with self.assertRaisesRegex(AssertionError, "exactly one external data volume"):
+            ASSERT_PLAN.assert_initial_plan(candidate)
+
+    def test_absent_data_volume_attachment_is_rejected(self) -> None:
+        candidate = copy.deepcopy(initial_resources())
+        del candidate[0]["change"]["after"]["existing_volumes"]
+        with self.assertRaisesRegex(AssertionError, "exactly one external data volume"):
+            ASSERT_PLAN.assert_initial_plan(candidate)
+
+    def test_multiple_data_volume_attachments_are_rejected(self) -> None:
+        candidate = copy.deepcopy(initial_resources())
+        candidate[0]["change"]["after"]["existing_volumes"] = ["one", "two"]
+        with self.assertRaisesRegex(AssertionError, "exactly one external data volume"):
+            ASSERT_PLAN.assert_initial_plan(candidate)
 
 
 class Node02ReplacementTests(unittest.TestCase):

@@ -1,0 +1,14 @@
+# Managed by the Verda Platform Take-Home Phase 3 Ansible contract.
+[Interface]
+Address = {{ phase3_wireguard_addresses[inventory_hostname] }}/24
+ListenPort = {{ phase3_wireguard_port }}
+MTU = {{ phase3_wireguard_mtu }}
+
+{% for peer in groups['management_servers'] | sort if peer != inventory_hostname %}
+[Peer]
+# {{ peer }}
+PublicKey = {{ hostvars[peer].wireguard_public_key }}
+AllowedIPs = {{ phase3_wireguard_addresses[peer] }}/32
+Endpoint = {{ hostvars[peer].ansible_host }}:{{ phase3_wireguard_port }}
+
+{% endfor %}

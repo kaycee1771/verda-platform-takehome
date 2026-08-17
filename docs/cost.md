@@ -2,7 +2,7 @@
 
 ## Status
 
-**PASS — Stage A infrastructure is live at $0.23165/hour ($5.56/day).** The current three-node/six-volume count and provider burn rate reconcile, the corrective node-02 replacement did not change steady-state cost, and no Phase 3 service cost exists.
+**PASS through Phase 3 — Stage A infrastructure is live at $0.23165/hour ($5.56/day).** The current three-node/six-volume count and provider burn rate reconcile, the corrective node-02 replacement did not change steady-state cost, and host hardening, WireGuard, nftables, and filesystem preparation added no cloud resource or service charge.
 
 The envelope deliberately uses on-demand rather than spot capacity for control-plane/etcd nodes, the lean end of the blueprint's storage bounds, a capped allowance for services whose account price is not surfaced, and 15% contingency. Rates must be revalidated immediately before apply.
 
@@ -91,4 +91,5 @@ Verda documents prepaid ten-minute billing for pay-as-you-go instances and warns
 - Balance at final 2026-08-17 reconciliation: $115.40
 - Seven-day Stage A planning envelope: $50.51
 - Known infrastructure seven-day cost: $38.92; 15% contingency: $44.75
-- Phase 2 cost gate: PASS; Phase 2 overall gate: PASS
+- Phase 3 resource delta: none; the live preflight again reconciled 3 instances, 6 volumes, zero drift, and the expected hourly rate
+- Phase 2 cost gate: PASS; Phase 3 cost gate: PASS

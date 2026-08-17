@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-16
 - **Owners:** Network and security architecture
-- **Blocking gates:** GATE-007 before Phase 3 live configuration
+- **Blocking gates:** GATE-007 closed by Phase 3 host-network evidence; Kubernetes endpoint gates remain Phase 4+
 
 ## Context
 
@@ -42,7 +42,23 @@ The exact public IPs, `sslip.io` names, WireGuard addresses, MTU, peer allowlist
 
 ## Validation evidence
 
-Phase 0 acceptance evidence is `evidence/phase-0/network-capability-surface.md`. Before Phase 3 exits, prove all of the following on live nodes: public-IP inventory, WireGuard peer reachability, MTU/no-fragment checks, expected allowed/denied port matrix, RKE2 registration through the primary endpoint, direct-node API access, multi-node ingress reachability, primary-endpoint failure behavior, and recovery/reconciliation after address change where safely testable.
+Phase 0 acceptance evidence is `evidence/phase-0/network-capability-surface.md`. Phase 3 evidence in
+`evidence/phase-3/` proves three unique endpoints without recording their values, node-local
+WireGuard identity, all six directed peer paths, authenticated handshakes, no-fragment MTU checks,
+sustained traffic, the expected public allow/deny matrix, serial reboot survival, and strict
+administrator recovery.
+
+RKE2 registration through the primary endpoint, direct-node API access, multi-node ingress,
+primary-endpoint failure, and address-replacement reconciliation require services that Phase 3 is
+forbidden to install. Those tests remain hard Phase 4/5 gates and are not misrepresented as Phase 3
+evidence.
+
+## Phase 3 outcome
+
+The live underlay MTU is 1500 on all three nodes. The management WireGuard interface uses 1420 and
+reserves 1370 for the later Cilium VXLAN layer. The exact overlay mapping and peer public endpoints
+are generated only into ignored runtime files. ADR 0013 owns the hardened host, firewall, storage,
+and recovery details.
 
 ## Production evolution
 

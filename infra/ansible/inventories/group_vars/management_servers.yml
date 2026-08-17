@@ -1,0 +1,24 @@
+---
+phase3_expected_distribution: Ubuntu
+phase3_expected_release: "24.04"
+phase3_expected_cgroup_fs: cgroup2fs
+phase3_expected_public_mtu: 1500
+phase3_wireguard_interface: wg-mgmt
+phase3_wireguard_port: 51820
+phase3_wireguard_subnet: 10.250.0.0/24
+phase3_wireguard_mtu: 1420
+phase3_future_cilium_mtu: 1370
+phase3_platform_admin: platform-admin
+phase3_data_mount: /var/lib/longhorn
+phase3_data_size_bytes: 107374182400
+phase3_virtio_serial_suffix_length: 17
+phase3_min_data_filesystem_bytes: 102005473280
+phase3_min_data_free_bytes: 96636764160
+phase3_timezone: Etc/UTC
+phase3_wireguard_addresses:
+  verda-mgmt-server-01: 10.250.0.11
+  verda-mgmt-server-02: 10.250.0.12
+  verda-mgmt-server-03: 10.250.0.13
+
+# Populated only in the ignored runtime variable file after operator approval.
+phase3_admin_cidrs_v4: []

@@ -21,10 +21,10 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | R15 | Secrets | Sealed Secrets plus CI secret store | Secret scan and in-cluster decrypt test | Sanitized controller/recovery status | Contracted | No plaintext runtime secret in Git |
 | R16 | Backup | RKE2, Velero, Longhorn and component-specific layers | Age/status/checksum checks | Off-cluster backup inventory | Contracted | Recent recovery points exist |
 | R17 | Restore | Namespace/PVC restore with integrity fixture | Checksum and endpoint verification | Measured RTO/RPO report | Contracted | Data restored and verified |
-| R18 | Cost | Actual compute/storage/object/traffic ledger | Recalculation and inventory reconciliation | `docs/cost.md` plus cost evidence | PASS for Phase 2 — 3 instances/6 volumes and provider burn reconcile at $0.23165/hour | Actual/projected costs documented |
+| R18 | Cost | Actual compute/storage/object/traffic ledger | Recalculation and inventory reconciliation | `docs/cost.md` plus cost evidence | PASS through Phase 3 — no resource delta; 3 instances/6 volumes reconcile at $0.23165/hour | Actual/projected costs documented |
 | R19 | Kueue bonus | CPU queues first; optional GPU flavor later | Queued/admitted/priority tests | Queue status and dashboard | Core-gated | Excess job queues before pod creation |
-| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Phase 0 through current Phase 2 activity, corrections, and rejected approaches recorded | Inputs, corrections, and validation recorded |
-| R21 | Access | TLS endpoints and least-privilege reviewer identities | Independent endpoint/login smoke test | Evaluator-permission transcript | Contracted | Evaluator reaches approved services |
+| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Phase 0–3 activity, live corrections, credential boundary, and rejected approaches recorded | Inputs, corrections, and validation recorded |
+| R21 | Access | TLS endpoints and least-privilege reviewer identities | Independent endpoint/login smoke test | Evaluator-permission transcript | PARTIAL — named key-only host administrator and source allowlist verified; application/reviewer identities await later phases | Evaluator reaches approved services |
 | R22 | One-page summary | Evidence-aligned executive summary | Rendered page-count/content check | Final PDF/Markdown | Contracted | Exactly one page and factually aligned |
 
 ## Phase 0 traceability check
@@ -38,7 +38,7 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 
 | ID | Gate | Automated proof | State |
 |---|---|---|---|
-| Q01 | Canonical repository topology | `check_structure.py`: 115 directories and 186 required files | PASS |
+| Q01 | Canonical repository topology | `check_structure.py`: required directory/file contract with no unexplained root | PASS |
 | Q02 | Exact, reproducible tool delivery | Bootstrap plus 18 exact version assertions and cache provenance hashes | PASS |
 | Q03 | Positive static quality pipeline | `make validate` across every applicable Phase 1 validator | PASS |
 | Q04 | Kubernetes and custom-resource schemas | 12 valid resources across core, Argo CD, Kyverno, Kueue, Longhorn, Velero, Prometheus, and Sealed Secrets | PASS |
@@ -50,3 +50,30 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | Q10 | Repository governance | Real CODEOWNERS; protected `main`; app-bound required CI; PR, linear-history, no-force-push, no-deletion, conversation-resolution, secret-scanning, and push-protection controls verified through the GitHub API | PASS |
 
 Phase 2 is complete. This does not authorize Phase 3 or any host, network, or Kubernetes mutation.
+
+## Phase 2 infrastructure acceptance
+
+| ID | Gate | Automated/live proof | State |
+|---|---|---|---|
+| I01 | Exact Stage A resource boundary | Plan assertion plus live inventory: 3 instances, 3 OS volumes, 3 protected data volumes, and 1 registered SSH key | PASS |
+| I02 | Independent host reachability | Three unique public endpoints and exact hostname over dedicated-key SSH | PASS |
+| I03 | Persistent data lifecycle | `prevent_destroy`, bounded compute rollback, and preserved server-02 data volume through authorized compute recovery | PASS |
+| I04 | State security and recoverability | DPAPI-sealed external state plus independently located encrypted backup and round-trip checks | PASS |
+| I05 | Cost and drift | $0.23165/hour reconciled provider burn and zero-resource final Terraform plan | PASS |
+| I06 | Final protected-main CI | Commit `4d05890fa22edd126ff25df195bf93e2e3cf33eb`, run `32012648406`, job `95335349495` | PASS |
+
+## Phase 3 host and secure-network acceptance
+
+| ID | Gate | Automated/live proof | State |
+|---|---|---|---|
+| H01 | Immutable operating-system baseline | Ubuntu 24.04 Minimal, x86_64, cgroup v2, kernel/storage prerequisites, time, locale, swap, and service assertions on all hosts | PASS |
+| H02 | Safe administrative transition | Fresh pinned-key `platform-admin` session and sudo before root/password disable; timed rollback; independent positive/negative probes | PASS |
+| H03 | Persistent storage preparation | Exact stable attachment, complete empty-media proof before first format, ext4/UUID mount, ownership/free-space, reboot persistence | PASS |
+| H04 | Encrypted internal addressing | Node-local private keys, fixed overlay addresses, 1420 MTU, 6/6 no-fragment paths, recent handshakes, sustained ring traffic | PASS |
+| H05 | Public firewall boundary | SSH only from approved `/32`; peer-only WireGuard; HTTP/S, API, supervisor, etcd, kubelet, metrics, and sampled NodePorts denied | PASS |
+| H06 | Idempotency | Two complete prepare/network/diagnostic passes and post-reboot convergence report `changed=0` on all hosts | PASS |
+| H07 | Reboot survival | Three serial reboots prove new boot identities, cloud-init settlement, strict access, mounts, mesh, firewall, and time | PASS |
+| H08 | Phase isolation | Zero cloud actions; RKE2 binary/config/data absent; every Phase 4+ target still fails closed | PASS |
+
+Phase 3 is complete. This does not authorize RKE2, Kubernetes, Rancher, Argo CD, Harbor, DNS, Stage A
+platform verification, Stage B, or any Phase 4+ action.

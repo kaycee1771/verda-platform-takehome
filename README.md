@@ -4,16 +4,18 @@ This repository is being built phase by phase as a reproducible, secure-by-desig
 
 ## Current status
 
-**Phase 1 — PASS; Phase 2 is not authorized.** The repository structure, pinned quality toolchain,
-pre-commit controls, credential-free hosted CI, schema cache, policy/rule harnesses, secret scanning,
-positive/negative validation contracts, CODEOWNERS, and protected `main` workflow are implemented
-and evidenced. Phase 0 discovery and architecture decisions remain authoritative. No Verda resource
-has been created or changed.
+**Phases 0–3 — PASS; Phase 4 is not authorized.** Verda currently runs exactly three
+on-demand management instances with three instance-owned 80 GiB OS volumes and three protected
+100 GiB data volumes. The Phase 2 closeout proved unique public endpoints, hostname-bound SSH,
+encrypted external Terraform state and backup, guarded lifecycle behavior, reconciled cost, and
+zero drift. Phase 3 added named key-only administration, fail-safe SSH/firewall transitions, a
+three-node WireGuard mesh, guarded UUID-mounted data filesystems, two-pass idempotency, public-port
+denial tests, and three serial reboot proofs. RKE2 and every later platform component remain blocked.
 
 The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`, each with an 80 GiB
 root volume and a 100 GiB Longhorn data volume, using Ubuntu 24.04 Minimal. The seven-day envelope
 is $50.51, including a capped $5 unquoted-services allowance and 15% contingency against a verified
-$115.67 balance. Later credentials, live networking, and object-storage gates are tracked in
+$115.67 starting balance. Kubernetes, endpoint, and object-storage gates are tracked in
 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
 ## Delivery architecture
@@ -25,7 +27,7 @@ $115.67 balance. Later credentials, live networking, and object-storage gates ar
 
 See [architecture.md](docs/architecture.md), [operations-model.md](docs/operations-model.md), and the [ADR index](docs/adr/README.md).
 
-## Phase 1 developer workflow
+## Reproducible developer workflow
 
 Prerequisites are Git, GNU Make, PowerShell 7, and a running Docker Linux daemon. Bootstrap is the
 only networked quality step; all validation commands run in the same pinned non-root image with the
@@ -43,8 +45,10 @@ make ci
 ```
 
 `make ci` is the local equivalent of the validation job in `.github/workflows/validate.yml`.
-Unimplemented infrastructure, cluster, GitOps, application, recovery, and teardown targets fail
-closed with their owning phase and never perform a partial action.
+The canonical 18-phase target map is `config/phase-map.json`. At the completed Phase 3 gate, only
+`make configure CLUSTER=management` and `make verify-hosts CLUSTER=management` can enter the Phase 3
+host maintenance/verification orchestrator. Infrastructure mutation, RKE2, cluster verification, GitOps, platform services,
+Stage A verification, Stage B, and teardown fail closed with their owning phase.
 
 ## Safe Phase 0 discovery
 
@@ -57,7 +61,9 @@ make phase0-discover-account
 make phase0-validate
 ```
 
-Before a future CLI account probe, configure credentials locally without placing them in this repository. Cloud API credentials do not currently exist and must be created before Phase 2. The interactive CLI keeps values out of command history and repository files:
+Cloud API credentials are time-bound and process-only. Never place their values in this repository,
+command arguments, logs, Terraform plans, inventory, or evidence. A future live account probe must
+use a separately authorized credential through the documented environment-variable boundary:
 
 ```powershell
 verda auth login

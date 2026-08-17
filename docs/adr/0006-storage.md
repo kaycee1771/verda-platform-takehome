@@ -41,6 +41,13 @@ Use a genuinely off-cluster S3-compatible target for recovery data and Loki obje
 
 Before acceptance: verify volume create/attach/detach/preserve/delete behavior, stable device identity, idempotent format/mount, reboot persistence, Longhorn prerequisites, one-node failure/rebuild, capacity/latency, and protection against accidental deletion. Separately prove S3 TLS/path-style/credential scope, bucket lifecycle, backup status, checksum restore, and actual cost.
 
+Phase 2 proved protected attachment lifecycle and compute replacement without data-volume loss.
+Phase 3 then proved exact stable attachment identity, complete zero-media inspection before first
+format, ext4 creation only when absent, UUID-based `/var/lib/longhorn` persistence, ownership/free
+space, iSCSI/NFS/crypt prerequisites, idempotency, and survival across all three serial reboots.
+ADR status remains Proposed because Longhorn, replica failure/rebuild, off-cluster S3, backup, and
+restore are Phase 5/13 work and have not been implemented.
+
 ## Production evolution
 
 Choose a supported CSI/storage platform based on failure domains, IOPS, application consistency, encryption, and recovery objectives; isolate backup administration and retention across accounts/regions with immutability where available.

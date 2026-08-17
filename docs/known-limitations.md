@@ -5,12 +5,14 @@
 | Limitation | State | Consequence | Required resolution |
 |---|---|---|---|
 | Time-bound project Cloud API credential has no exposed resource scopes | ACCEPTED RESIDUAL — Phase 2 | Project scope is the narrowest self-service boundary | Keep it process-only, expire after review, and revoke during teardown |
-| Current self-service surfaces expose no private network, firewall/security group, managed LB, floating/VIP, or DNS | ACCEPTED RESIDUAL | Path A cannot be implemented; the default API endpoint is not truly HA | Use ADR-0005 Path B; live-test WireGuard, MTU, firewall, multi-node ingress, and break glass |
+| Current self-service surfaces expose no private network, firewall/security group, managed LB, floating/VIP, or DNS | ACCEPTED RESIDUAL | Path A cannot be implemented; the later default API endpoint will not be truly HA | ADR-0005 Path B host mesh/MTU/firewall are live-proven; test multi-node ingress, direct kubeconfig, and endpoint failure in their owning phases |
 | Object Storage Access Keys are not exposed in this project's Credentials page | FUTURE BLOCKER — Phase 5 | Verda S3 cannot yet back Loki/Velero/Longhorn | Confirm entitlement with Verda or select the ADR-approved external S3 fallback |
 | Object-storage path style, TLS, lifecycle, request/egress pricing, and application compatibility are unverified | FUTURE BLOCKER — Phase 5 | Backup/logging configuration could fail or exceed allowance | Run non-destructive compatibility and pricing checks before use |
 | Initial duplicate public-address allocation | RESOLVED — Phase 2 | The first server-02 could not be reached independently | An exact compute/OS-only replacement preserved its data volume; three unique endpoints and hostname-bound SSH now pass |
 | Provider 1.1.2 returns image_type after a UUID create request | MITIGATED PROVIDER DEFECT | Initial apply marked instances tainted despite successful creation | ADR 0012 pins both representations, validates the live mapping, and the final plan proves zero drift after taint recovery |
 | No candidate-controlled domain is supplied | NON-BLOCKING FALLBACK | Names depend on instance-address-derived DNS | Use documented `sslip.io` fallback and include exact residual behavior |
+| Current SSH source is one operator public `/32` | ACCEPTED RESIDUAL — Phase 3 | Operator address change denies new SSH sessions by design | Re-run the rollback-protected allowlist workflow from console/recovery; use VPN/bastion in production |
+| Phase 3 Cloud API credential was visibly supplied in an operator-controlled image | ROTATION REQUIRED | The value is outside Git but should be treated as exposed after its bounded use | Delete the source image and revoke/rotate the credential before handoff or immediately after no further authenticated work is required |
 
 ## Phase 1 quality-system boundaries
 

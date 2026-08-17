@@ -1,0 +1,153 @@
+---
+- name: Assert the immutable host identity and operating-system contract
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname == ansible_facts['hostname']
+      - ansible_facts['distribution'] == phase3_expected_distribution
+      - ansible_facts['distribution_version'] == phase3_expected_release
+      - ansible_facts['architecture'] == 'x86_64'
+      - ansible_facts['default_ipv4']['mtu'] | int == phase3_expected_public_mtu | int
+    fail_msg: The live host differs from the Phase 0 and Phase 2 operating-system contract.
+
+- name: Install the bounded host and future RKE2 prerequisites
+  ansible.builtin.apt:
+    name:
+      - apparmor
+      - auditd
+      - ca-certificates
+      - chrony
+      - conntrack
+      - cryptsetup
+      - curl
+      - dnsutils
+      - e2fsprogs
+      - ethtool
+      - iperf3
+      - jq
+      - logrotate
+      - nfs-common
+      - nftables
+      - open-iscsi
+      - openssl
+      - socat
+      - tcpdump
+      - unattended-upgrades
+      - wireguard-tools
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    install_recommends: false
+
+- name: Read the current timezone
+  ansible.builtin.command:
+    argv:
+      - timedatectl
+      - show
+      - --property=Timezone
+      - --value
+  register: common_current_timezone
+  changed_when: false
+
+- name: Set the deterministic UTC timezone
+  ansible.builtin.command:
+    argv:
+      - timedatectl
+      - set-timezone
+      - "{{ phase3_timezone }}"
+  when: common_current_timezone.stdout | trim != phase3_timezone
+  changed_when: true
+
+- name: Inspect the conflicting lightweight time-daemon unit
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - systemd-timesyncd.service
+      - --property=LoadState
+      - --value
+  register: common_timesyncd_load_state
+  changed_when: false
+
+- name: Disable the conflicting lightweight time daemon
+  ansible.builtin.systemd_service:
+    name: systemd-timesyncd.service
+    state: stopped
+    enabled: false
+    masked: true
+  when: common_timesyncd_load_state.stdout | trim != 'not-found'
+
+- name: Enable chrony time synchronization
+  ansible.builtin.systemd_service:
+    name: chrony.service
+    state: started
+    enabled: true
+
+- name: Enable host audit logging
+  ansible.builtin.systemd_service:
+    name: auditd.service
+    state: started
+    enabled: true
+
+- name: Enable the Longhorn iSCSI prerequisite
+  ansible.builtin.systemd_service:
+    name: iscsid.service
+    state: started
+    enabled: true
+
+- name: Create the future RKE2 CIS-profile etcd principal
+  ansible.builtin.user:
+    name: etcd
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+    comment: RKE2 embedded etcd
+
+- name: Create the systemd journal drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Bound persistent journal retention
+  ansible.builtin.copy:
+    content: |
+      [Journal]
+      Storage=persistent
+      Compress=yes
+      SystemMaxUse=1G
+      SystemKeepFree=2G
+      MaxRetentionSec=7day
+      ForwardToSyslog=no
+    dest: /etc/systemd/journald.conf.d/60-verda-platform.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart journald
+
+- name: Configure platform log rotation
+  ansible.builtin.copy:
+    content: |
+      /var/log/verda-platform/*.log {
+          daily
+          rotate 7
+          size 100M
+          missingok
+          notifempty
+          compress
+          delaycompress
+          copytruncate
+      }
+    dest: /etc/logrotate.d/verda-platform
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Create the bounded platform log directory
+  ansible.builtin.file:
+    path: /var/log/verda-platform
+    state: directory
+    owner: root
+    group: adm
+    mode: "0750"
