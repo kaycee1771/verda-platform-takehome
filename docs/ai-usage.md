@@ -106,3 +106,44 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
   credentials before any Phase 2 account inspection or mutation.
 - **Boundary:** This reconciliation changed repository quality controls only. No Verda Cloud
   credential or resource was created or modified.
+
+## 2026-08-17 - Phase 2 provisioning and fail-closed runtime corrections
+
+- **Human authorization:** The user authorized Phase 2, created no credential value in chat, signed
+  into the console, and explicitly confirmed creation of a time-bound Cloud API credential.
+- **Assistant activity:** Codex created reusable provider-1.1.2 modules, a three-node management
+  root, native mock tests, saved-plan assertions, cost controls, DPAPI state handling, deterministic
+  inventory generation, and guarded lifecycle operations.
+- **Credential correction:** The console's two unlabeled copy controls were initially interpreted in
+  the wrong order. The first authentication probe returned 401; Codex swapped only the two in-memory
+  variables, proved authentication, and never displayed or persisted either value.
+- **State correction:** Windows EFS returned `request is not supported`, so the design was changed to
+  current-user DPAPI sealing. An initial PowerShell generic byte-comparison call failed after apply;
+  SHA-256 byte-array comparison replaced it, state was immediately sealed, and an independently
+  located encrypted backup passed a decrypt/hash round trip.
+- **Provider correction:** Provider 1.1.2 accepted the pinned image UUID but returned
+  `ubuntu-24.04`, causing an inconsistent-result error after all resources were created. Codex
+  rejected `ignore_changes` and a local provider fork. ADR 0012 retains the immutable UUID as the
+  live invariant while using the official stable API image type as the provider transport value.
+- **Fail-closed finding:** Two VM records received the same public address. Direct SSH proved that
+  address reaches server-01, leaving server-02 without an independent endpoint. Codex rejected the
+  resulting three-instance replacement plan, stopped further cloud mutation, and left corrective
+  compute replacement behind explicit confirmation.
+- **Verification:** The complete credential-free `make ci` suite passed before apply; initial plan
+  assertions admitted exactly seven resources and no credential values; live inventory shows three
+  running instances, six attached volumes, and a reconciled $0.23165 hourly rate.
+- **Recovery authorization:** The user later authorized only server-02 compute and its instance-owned
+  OS disk replacement while preserving its persistent data volume. Codex implemented two guarded
+  Make targets and a plan mode that rejected every address/action except that exact replacement.
+- **Recovery result:** The saved plan contained one `delete/create`; encrypted backups passed before
+  and after apply; the original server-02 data-volume creation timestamp remained unchanged; and the
+  final plan contained zero resource actions.
+- **Verification corrections:** The first post-repair uniqueness check correctly stopped on stale
+  Terraform outputs; a zero-resource refreshed plan persisted the new output. A PowerShell quoting
+  defect then caused the remote hostname expression to run locally; Codex interrupted the read-only
+  retry, corrected and regression-tested the literal command, and reran all three SSH assertions.
+  Final CI then rejected the generated inventory because it lacked YAML's document marker; the
+  generator was corrected instead of weakening Ansible lint.
+- **Final boundary:** Three unique endpoints, exact attachments, hostname-bound SSH, inventory,
+  lifecycle, cost, state, backup, and no-drift gates pass. No host configuration, WireGuard,
+  firewall, RKE2, Kubernetes, Rancher, Argo CD, Harbor, DNS, or Stage B action occurred.

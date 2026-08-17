@@ -4,11 +4,12 @@
 
 | Limitation | State | Consequence | Required resolution |
 |---|---|---|---|
-| Cloud API credentials do not exist in the current project/profile | FUTURE BLOCKER — Phase 2 | Terraform cannot authenticate | Create a least-privilege credential immediately before Phase 2 and keep it outside Git/logs |
+| Time-bound project Cloud API credential has no exposed resource scopes | ACCEPTED RESIDUAL — Phase 2 | Project scope is the narrowest self-service boundary | Keep it process-only, expire after review, and revoke during teardown |
 | Current self-service surfaces expose no private network, firewall/security group, managed LB, floating/VIP, or DNS | ACCEPTED RESIDUAL | Path A cannot be implemented; the default API endpoint is not truly HA | Use ADR-0005 Path B; live-test WireGuard, MTU, firewall, multi-node ingress, and break glass |
 | Object Storage Access Keys are not exposed in this project's Credentials page | FUTURE BLOCKER — Phase 5 | Verda S3 cannot yet back Loki/Velero/Longhorn | Confirm entitlement with Verda or select the ADR-approved external S3 fallback |
 | Object-storage path style, TLS, lifecycle, request/egress pricing, and application compatibility are unverified | FUTURE BLOCKER — Phase 5 | Backup/logging configuration could fail or exceed allowance | Run non-destructive compatibility and pricing checks before use |
-| Public-IP allocation and deletion behavior is documented/schema-visible but not live-tested | FUTURE BLOCKER — Phase 2 exit | Reachability and teardown claims are not yet evidence-backed | Capture sanitized apply/inventory/connectivity/destroy evidence |
+| Initial duplicate public-address allocation | RESOLVED — Phase 2 | The first server-02 could not be reached independently | An exact compute/OS-only replacement preserved its data volume; three unique endpoints and hostname-bound SSH now pass |
+| Provider 1.1.2 returns image_type after a UUID create request | MITIGATED PROVIDER DEFECT | Initial apply marked instances tainted despite successful creation | ADR 0012 pins both representations, validates the live mapping, and the final plan proves zero drift after taint recovery |
 | No candidate-controlled domain is supplied | NON-BLOCKING FALLBACK | Names depend on instance-address-derived DNS | Use documented `sslip.io` fallback and include exact residual behavior |
 
 ## Phase 1 quality-system boundaries

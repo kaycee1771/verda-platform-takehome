@@ -2,3 +2,10 @@ title = "Verda platform take-home secret scanning"
 
 [extend]
 useDefault = true
+
+[[allowlists]]
+description = "Ignored checksum-pinned upstream provider/SDK discovery snapshots"
+paths = [
+  '''^\.local/provider-source-v1\.1\.2/''',
+  '''^\.local/verda-sdk-v1\.2\.2/''',
+]

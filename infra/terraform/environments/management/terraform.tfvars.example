@@ -1,0 +1,14 @@
+# No cloud credential belongs in this file. Authentication is read only from
+# VERDA_CLIENT_ID and VERDA_CLIENT_SECRET in the calling process.
+ssh_public_key_path = "/absolute/path/outside/git/id_ed25519.pub"
+
+# The accepted values below are already defaults and are repeated for reviewer
+# visibility. Changing one requires refreshed live discovery and review.
+location                  = "FIN-03"
+instance_type             = "CPU.4V.16G"
+os_image_id               = "77edfb23-bb0d-41cc-a191-dccae45d96fd"
+provider_image_value      = "ubuntu-24.04"
+root_volume_size_gib      = 80
+data_volume_size_gib      = 100
+preserve_data_volumes     = true
+resource_expiry_utc       = "2026-08-24T21:00:00Z"

@@ -1,5 +1,5 @@
 ---
-name: Terraform plan - Phase 2 gate
+name: Terraform contract - Phase 2 credential-free
 
 on:
   workflow_dispatch:
@@ -8,11 +8,5 @@ permissions:
   contents: read
 
 jobs:
-  phase-gate:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Stop before unimplemented infrastructure phase
-        shell: bash
-        run: |
-          echo 'Terraform planning requires Phase 2 and an approved credential boundary.' >&2
-          exit 64
+  terraform-contract:
+    uses: ./.github/workflows/validate.yml

@@ -2,4 +2,5 @@
 set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec bash "${repo_root}/scripts/quality/not-implemented.sh" inventory 2
+exec pwsh -NoLogo -NoProfile -NonInteractive -File \
+  "${repo_root}/scripts/infra/phase2.ps1" -Target inventory -Cluster management

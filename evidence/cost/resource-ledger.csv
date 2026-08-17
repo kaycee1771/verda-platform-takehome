@@ -1,0 +1,10 @@
+resource,kind,start_time_utc,rate_usd_per_hour,intended_expiry_utc,owner,state
+verda-mgmt-server-01,compute,2026-08-17T07:05:11.055Z,0.02790000,2026-08-24T21:00:00Z,platform,running
+verda-mgmt-server-02,compute,2026-08-17T07:54:54.912Z,0.02790000,2026-08-24T21:00:00Z,platform,running-replaced-compute-only
+verda-mgmt-server-03,compute,2026-08-17T07:05:10.957Z,0.02790000,2026-08-24T21:00:00Z,platform,running
+verda-mgmt-os-01,root-volume,2026-08-17T07:05:11.055Z,0.02191781,2026-08-24T21:00:00Z,platform,attached-instance-owned
+verda-mgmt-os-02,root-volume,2026-08-17T07:54:54.912Z,0.02191781,2026-08-24T21:00:00Z,platform,attached-instance-owned-replaced
+verda-mgmt-os-03,root-volume,2026-08-17T07:05:10.957Z,0.02191781,2026-08-24T21:00:00Z,platform,attached-instance-owned
+verda-mgmt-data-01,data-volume,2026-08-17T07:05:07.390Z,0.02739726,preserve-through-compute-rollback,platform,attached-protected
+verda-mgmt-data-02,data-volume,2026-08-17T07:05:08.577Z,0.02739726,preserve-through-compute-rollback,platform,attached-protected
+verda-mgmt-data-03,data-volume,2026-08-17T07:05:08.329Z,0.02739726,preserve-through-compute-rollback,platform,attached-protected

@@ -28,7 +28,7 @@ not_applicable() {
 terraform_validate() {
   local root
   mapfile -t roots < <(
-    find infra/terraform -type f -name '*.tf' -not -path '*/.terraform/*' -printf '%h\n' | sort -u
+    find infra/terraform -type f -name '.terraform-root' -printf '%h\n' | sort -u
   )
   for root in "${roots[@]}"; do
     [[ -d "${root}/.terraform" ]] || {
@@ -36,6 +36,18 @@ terraform_validate() {
       return 1
     }
     terraform -chdir="${root}" validate
+  done
+}
+
+terraform_test() {
+  local root
+  mapfile -t roots < <(
+    find infra/terraform -type f -name '.terraform-root' -printf '%h\n' | sort -u
+  )
+  for root in "${roots[@]}"; do
+    if find "${root}" -type f \( -name '*.tftest.hcl' -o -name '*.tftest.json' \) -print -quit | grep -q .; then
+      terraform -chdir="${root}" test -no-color
+    fi
   done
 }
 
@@ -89,10 +101,11 @@ prometheus_validate() {
 }
 
 trivy_validate() {
-  trivy config --cache-dir .local/trivy --skip-check-update --exit-code 1 \
+  trivy config --cache-dir .local/trivy --skip-check-update --timeout 15m --exit-code 1 \
     --severity HIGH,CRITICAL \
     --skip-dirs .git --skip-dirs .local --skip-dirs tmp \
-    --skip-dirs tests --skip-dirs policies/kyverno/tests .
+    --skip-dirs tests --skip-dirs policies/kyverno/tests \
+    --skip-dirs '**/.terraform' .
 }
 
 go_format_validate() {
@@ -120,11 +133,14 @@ markdown_validate() {
 run_gate 'repository structure contract' python scripts/quality/check_structure.py
 run_gate 'exact tool version lock' python scripts/quality/check_versions.py
 run_gate 'Terraform format' terraform fmt -check -recursive infra/terraform
+run_gate 'Phase 2 plan assertion unit tests' \
+  python -m unittest discover -s tests/static -p 'test_*.py'
 
-mapfile -t tf_roots < <(find infra/terraform -type f -name '*.tf' -not -path '*/.terraform/*' -printf '%h\n' | sort -u)
+mapfile -t tf_roots < <(find infra/terraform -type f -name '.terraform-root' -printf '%h\n' | sort -u)
 if ((${#tf_roots[@]})); then
   run_gate 'Terraform validate (all roots)' terraform_validate
   run_gate 'TFLint (all roots)' tflint_validate
+  run_gate 'Terraform native contract tests' terraform_test
 else
   not_applicable 'Terraform validate/TFLint' 'no Terraform root modules exist'
 fi
@@ -181,4 +197,4 @@ if ((${#failures[@]})); then
   exit 1
 fi
 
-echo '[PASS] All applicable Phase 1 validation gates passed.'
+echo '[PASS] All applicable repository validation gates passed.'

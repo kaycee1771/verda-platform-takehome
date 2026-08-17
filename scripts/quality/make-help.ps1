@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-Write-Host '[phase 1] target=help repository and quality system'
+Write-Host '[phase 2] target=help repository, quality, and Stage A infrastructure'
 @'
 Canonical targets
   make bootstrap-tools    Build the pinned local quality image and warm immutable caches.
@@ -15,8 +15,23 @@ Canonical targets
   make secret-scan        Scan the working tree and complete Git history with redaction.
   make ci                 Run the same positive and negative suites used by GitHub Actions.
   make discover           Run the Phase 0 non-mutating local Verda preflight.
+  make infra-init CLUSTER=management
+                          Initialize encrypted external local state and a dedicated SSH key.
+  make infra-plan CLUSTER=management
+                          Revalidate the live catalog, save and assert a plan, and enforce cost.
+  make infra-apply CLUSTER=management
+                          Apply only the exact previously reviewed saved plan.
+  make infra-repair-node-02-plan CLUSTER=management CONFIRM=--confirm
+                          Assert a one-instance node-02 replacement plan; preserve its data volume.
+  make infra-repair-node-02-apply CLUSTER=management CONFIRM=--confirm
+                          Apply only the reviewed node-02 replacement plan with both safety guards.
+  make inventory          Generate ignored machine-readable Ansible inventory from state.
+  make verify-hosts CLUSTER=management
+                          Verify attachments and SSH key access without host mutation.
+  make infra-lifecycle-check CLUSTER=management
+                          Prove full destroy is rejected and compute-only rollback is bounded.
+  make cost-report        Reconcile provider-reported resources and hourly burn.
 
-Future targets are present to preserve the command contract. Before their owning phase is
-implemented they stop with a phase-gate error; they never silently succeed or mutate cloud state.
+Targets owned by Phase 3 and later remain explicit non-mutating phase gates.
 Use `make <target> CLUSTER=...` as documented in README.md.
 '@ | Write-Host

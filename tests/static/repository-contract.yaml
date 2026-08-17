@@ -322,5 +322,6 @@ required_files:
   - tests/network/contract.yaml
   - tests/smoke/quality-smoke.sh
   - tests/static/repository-contract.yaml
+  - tests/static/test_assert_plan.py
   - tooling/README.md
   - tooling/quality/Dockerfile
