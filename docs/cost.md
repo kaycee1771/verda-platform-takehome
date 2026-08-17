@@ -1,8 +1,8 @@
-# Phase 0 Cost and Capacity Snapshot
+# Cost and Capacity Ledger
 
 ## Status
 
-**PASS — the selected seven-day Stage A envelope is $50.51 against a verified $115.67 project balance.** Phase 0 created no cloud resources and introduced no run rate.
+**PASS — Stage A infrastructure is live at $0.23165/hour ($5.56/day).** The current three-node/six-volume count and provider burn rate reconcile, the corrective node-02 replacement did not change steady-state cost, and no Phase 3 service cost exists.
 
 The envelope deliberately uses on-demand rather than spot capacity for control-plane/etcd nodes, the lean end of the blueprint's storage bounds, a capped allowance for services whose account price is not surfaced, and 15% contingency. Rates must be revalidated immediately before apply.
 
@@ -21,8 +21,8 @@ The Stage A 100 GiB data volumes provide 300 GiB raw Longhorn capacity. With thr
 
 | Input | Source | Current value |
 |---|---|---|
-| Project currency and balance | Authenticated Verda console | USD; $115.67 |
-| Current project run rate | Authenticated Verda console | $0.00/hour |
+| Project currency and initial Phase 2 balance | Authenticated Verda CLI | USD; $115.67 |
+| Current project run rate | Authenticated Verda CLI at final reconciliation | $0.23165/hour |
 | Assessment window | User decision | 168 hours (7 days) |
 | Selected CPU shape | Current project deploy catalog | `CPU.4V.16G`: 4 vCPU, 16 GiB RAM |
 | Selected location | Current availability list | `FIN-03`; same shape also visible in FIN-01/02 |
@@ -32,7 +32,7 @@ The Stage A 100 GiB data volumes provide 300 GiB raw Longhorn capacity. With thr
 | Object-storage price/entitlement | Current project and official docs | Not surfaced; bounded by allowance and blocked before Phase 5 |
 | Public-IP/traffic/request charges | Current project/public price page | No separate rate surfaced; bounded by allowance and must be rechecked before apply |
 
-The CLI has no active Cloud API profile, so the authenticated console is the billing/catalog authority for this snapshot. The CLI/provider are used to corroborate capability boundaries. No account identifier or coupon is recorded.
+The time-bound project credential remained process-only. The authenticated CLI and provider were used for the final account, resource, rate, catalog, and drift reconciliation. No account identifier, credential value, or coupon is recorded.
 
 ## Seven-day Stage A calculation
 
@@ -85,9 +85,10 @@ Verda documents prepaid ten-minute billing for pay-as-you-go instances and warns
 
 ## Current cost impact
 
-- Resources created: 0
-- Resources changed: 0
-- Cloud run rate introduced by Phase 0: $0.00/hour
-- Selected Stage A known run rate when later provisioned: $0.23165/hour
+- Resources created by Phase 2: 3 CPU instances, 3 instance-owned 80 GiB OS volumes, 3 protected 100 GiB data volumes, and 1 SSH-key record
+- Resources changed after creation: server-02 compute and its instance-owned OS disk were replaced once through the explicitly authorized, exact saved plan; all three persistent data volumes were preserved
+- Cloud run rate introduced by Phase 2: $0.23165/hour or $5.56/day
+- Balance at final 2026-08-17 reconciliation: $115.40
 - Seven-day Stage A planning envelope: $50.51
-- Phase 0 cost exit gate: PASS
+- Known infrastructure seven-day cost: $38.92; 15% contingency: $44.75
+- Phase 2 cost gate: PASS; Phase 2 overall gate: PASS

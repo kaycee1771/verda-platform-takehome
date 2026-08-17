@@ -4,7 +4,7 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 
 | ID | Requirement | Implementation contract | Automated verification | Required live evidence | Current state | Final exit condition |
 |---|---|---|---|---|---|---|
-| R01 | Verda CPU VMs with public IPs | Reusable Terraform modules with pinned IDs and protected lifecycle | Format, validate, plan, drift check | Sanitized instance inventory | Contracted; shape/image/location pinned | Reproducible apply and reachable hosts |
+| R01 | Verda CPU VMs with public IPs | Reusable Terraform modules with pinned IDs and protected lifecycle | Format, validate, plan, drift check | Sanitized instance inventory | PASS — 3 VMs, 3 unique endpoints, exact attachments, hostname-bound SSH, and zero drift verified | Reproducible apply and three uniquely reachable hosts |
 | R02 | Kubernetes | Three-node RKE2 cluster per implemented stage | Node, etcd, DNS, service, Cilium tests | `evidence/cluster/` transcripts | Contracted | Three Ready servers and healthy quorum |
 | R03 | Rancher | HA replicas on `verda-mgmt`; manage both clusters in Stage B | API/UI health and cluster-state check | Scoped reviewer view | Contracted | Intended clusters Active; direct access retained |
 | R04 | Argo CD | Pinned bootstrap, one root app, AppProjects, ApplicationSets | Sync/health and drift tests | Application inventory and drift recovery | Contracted | Git change reconciles automatically |
@@ -21,9 +21,9 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | R15 | Secrets | Sealed Secrets plus CI secret store | Secret scan and in-cluster decrypt test | Sanitized controller/recovery status | Contracted | No plaintext runtime secret in Git |
 | R16 | Backup | RKE2, Velero, Longhorn and component-specific layers | Age/status/checksum checks | Off-cluster backup inventory | Contracted | Recent recovery points exist |
 | R17 | Restore | Namespace/PVC restore with integrity fixture | Checksum and endpoint verification | Measured RTO/RPO report | Contracted | Data restored and verified |
-| R18 | Cost | Actual compute/storage/object/traffic ledger | Recalculation and inventory reconciliation | `docs/cost.md` plus cost evidence | Phase 0 envelope verified; live spend pending | Actual/projected costs documented |
+| R18 | Cost | Actual compute/storage/object/traffic ledger | Recalculation and inventory reconciliation | `docs/cost.md` plus cost evidence | PASS for Phase 2 — 3 instances/6 volumes and provider burn reconcile at $0.23165/hour | Actual/projected costs documented |
 | R19 | Kueue bonus | CPU queues first; optional GPU flavor later | Queued/admitted/priority tests | Queue status and dashboard | Core-gated | Excess job queues before pod creation |
-| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Phase 0 and Phase 1 activity, corrections, and rejected approaches recorded | Inputs, corrections, and validation recorded |
+| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Phase 0 through current Phase 2 activity, corrections, and rejected approaches recorded | Inputs, corrections, and validation recorded |
 | R21 | Access | TLS endpoints and least-privilege reviewer identities | Independent endpoint/login smoke test | Evaluator-permission transcript | Contracted | Evaluator reaches approved services |
 | R22 | One-page summary | Evidence-aligned executive summary | Rendered page-count/content check | Final PDF/Markdown | Contracted | Exactly one page and factually aligned |
 
@@ -49,4 +49,4 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | Q09 | Clean-clone bootstrap and validation | Fresh remote clone at `f4848cf`; zero copied `.local`; bootstrap and full CI parity passed with a clean worktree | PASS |
 | Q10 | Repository governance | Real CODEOWNERS; protected `main`; app-bound required CI; PR, linear-history, no-force-push, no-deletion, conversation-resolution, secret-scanning, and push-protection controls verified through the GitHub API | PASS |
 
-Phase 1 is complete. This does not authorize Phase 2 or any Verda Cloud mutation.
+Phase 2 is complete. This does not authorize Phase 3 or any host, network, or Kubernetes mutation.

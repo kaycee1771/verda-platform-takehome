@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-08-17",
+  "duration_hours": 168,
+  "contingency_percent": 15,
+  "hard_budget_usd": 45.0,
+  "verified_balance_usd": 115.67,
+  "rates_usd": {
+    "cpu_4v_16g_hour": 0.0279,
+    "nvme_gib_month": 0.2,
+    "billing_hours_month": 730
+  },
+  "topology": {
+    "node_count": 3,
+    "data_volume_count": 3,
+    "root_volume_size_gib": 80,
+    "data_volume_size_gib": 100
+  }
+}

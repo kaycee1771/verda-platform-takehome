@@ -21,6 +21,8 @@ secrets*.yml
 *.tfstate
 *.tfstate.*
 *.tfplan
+*.tfvars
+!*.tfvars.example
 crash.log
 crash.*.log
 override.tf
@@ -55,6 +57,8 @@ tmp/
 dist/
 build/
 coverage/
+__pycache__/
+*.py[cod]
 *.retry
 *.log
 *.sarif

@@ -118,6 +118,18 @@ Stage B may start only when Stage A is fully green; a clean rebuild needs no und
 
 The detailed day-zero/day-one contract is in `docs/operations-model.md`. In summary: Terraform owns Verda infrastructure, Ansible owns hosts and RKE2, bootstrap installs only Argo CD plus the root Application, Argo CD owns in-cluster desired state, CI owns artifact production, and Git owns the auditable desired state and promotion history.
 
-## Current Phase 0 posture
+## Current implemented posture
 
-No cloud resource exists. Authenticated console inspection selected `CPU.4V.16G`, `FIN-03`, Ubuntu 24.04 Minimal, and NVMe storage; it exposed no project or deployment controls for private networking, firewalls/security groups, load balancers, floating/VIPs, or DNS. Provider 1.1.2 and CLI 1.8.1 expose none of those network surfaces either, so ADR-0005 accepts Path B. The project also exposes no Object Storage Access Keys section; off-cluster S3 remains a named Phase 5 gate rather than an assumed capability.
+Phase 2 created exactly three `CPU.4V.16G` instances and six attached NVMe volumes in `FIN-03`
+through Terraform. The immutable Ubuntu 24.04 Minimal configuration UUID remains the live catalog
+invariant; ADR 0012 documents why provider 1.1.2 receives its canonical API image type. State is
+DPAPI-sealed outside Git with an independent encrypted backup; remote S3 state remains honestly
+deferred because object-storage entitlement and locking are unproven.
+
+Phase 2 is green after an explicitly authorized, assertion-bounded replacement of server-02 compute
+and its instance-owned OS disk. Its protected data volume retained the original identity and
+creation timestamp. Three unique public endpoints, exact attachments, dedicated-key SSH with remote
+hostname assertions, compute-only rollback, live cost, and final zero drift all pass. No host
+configuration, networking, RKE2, or Phase 3 action has started. Provider 1.1.2 and CLI 1.8.1 still
+expose no private network, firewall/security group, load balancer, floating/VIP, or DNS resources,
+so ADR 0005 Path B remains the intended later network path.

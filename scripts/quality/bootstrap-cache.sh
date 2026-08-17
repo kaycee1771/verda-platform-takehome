@@ -8,7 +8,7 @@ export TF_PLUGIN_CACHE_DIR="${PWD}/.local/terraform-plugin-cache"
 python scripts/quality/bootstrap_schemas.py
 
 mapfile -t terraform_roots < <(
-  find infra/terraform -type f -name '*.tf' -not -path '*/.terraform/*' -printf '%h\n' | sort -u
+  find infra/terraform -type f -name '.terraform-root' -printf '%h\n' | sort -u
 )
 if ((${#terraform_roots[@]} == 0)); then
   echo '[N/A] Terraform provider cache: no root modules exist.'
