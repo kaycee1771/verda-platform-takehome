@@ -34,6 +34,9 @@ are under active development.
 
 ### Changed
 
+- Made hosted schema bootstrap resistant to shared-runner raw-content rate limits by using the
+  job-scoped read-only GitHub token only through allowlisted GitHub Contents API requests; local
+  unauthenticated bootstrap and immutable checksum enforcement remain unchanged.
 - Converted all three Ubuntu 24.04 Minimal hosts to named key-only administration, mounted each
   protected data volume by UUID, and established the peer-only 1420-byte WireGuard management mesh.
 - Reserved a tested 1370-byte MTU for the future Cilium VXLAN layer while retaining the Phase 4 RKE2

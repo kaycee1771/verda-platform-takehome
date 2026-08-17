@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 import yaml
@@ -19,6 +21,9 @@ CACHE = ROOT / ".local" / "schema-cache"
 SOURCE_CACHE = CACHE / ".sources"
 RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
 MAX_DOWNLOAD_ATTEMPTS = 6
+GITHUB_RAW_HOST = "raw.githubusercontent.com"
+GITHUB_API_ORIGIN = "https://api.github.com"
+GITHUB_API_VERSION = "2022-11-28"
 
 
 def sha256(payload: bytes) -> str:
@@ -42,8 +47,48 @@ def retry_delay(error: HTTPError | URLError, attempt: int) -> int:
     return min(2**attempt, 30)
 
 
+def github_contents_api_url(source_url: str) -> str | None:
+    """Map an immutable GitHub raw URL to the authenticated Contents API."""
+    parsed = urlsplit(source_url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != GITHUB_RAW_HOST
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    parts = parsed.path.lstrip("/").split("/", 3)
+    if len(parts) != 4 or not all(parts):
+        return None
+    owner, repository, ref, path = parts
+    return (
+        f"{GITHUB_API_ORIGIN}/repos/{quote(owner, safe='')}/"
+        f"{quote(repository, safe='')}/contents/{quote(path, safe='/')}"
+        f"?ref={quote(ref, safe='')}"
+    )
+
+
+def download_request(source_url: str) -> Request:
+    """Build a request without forwarding credentials beyond GitHub's API host."""
+    headers = {"User-Agent": "verda-platform-quality-bootstrap/1"}
+    request_url = source_url
+    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+    api_url = github_contents_api_url(source_url) if github_token else None
+    if api_url is not None:
+        request_url = api_url
+        headers.update(
+            {
+                "Accept": "application/vnd.github.raw+json",
+                "Authorization": f"Bearer {github_token}",
+                "X-GitHub-Api-Version": GITHUB_API_VERSION,
+            }
+        )
+    return Request(request_url, headers=headers)
+
+
 def download(url: str, expected_sha256: str) -> bytes:
-    request = Request(url, headers={"User-Agent": "verda-platform-quality-bootstrap/1"})
+    request = download_request(url)
     payload: bytes | None = None
     for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
         try:

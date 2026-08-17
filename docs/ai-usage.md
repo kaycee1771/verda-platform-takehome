@@ -200,3 +200,18 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
   future service ports, and continuing after a failed proof were rejected.
 - **Boundary:** No Verda Cloud resource, Terraform state resource, RKE2 binary, Kubernetes object,
   DNS record, Stage B resource, or post-Phase-3 platform component was created or modified.
+
+## 2026-08-17 - Phase 3 publication CI portability repair
+
+- **Observed failure:** The first hosted pull-request run exhausted bounded retries while GitHub's
+  raw-content endpoint returned HTTP 429 on a cold shared-runner cache. Report upload then failed
+  secondarily because bootstrap had stopped before producing reports.
+- **Human approval:** Codex reported the exact failure and proposed a focused authenticated-
+  bootstrap correction. The user explicitly approved implementation and continuation.
+- **Assistant activity:** Codex verified GitHub's official job-token, least-privilege, and Contents
+  API raw-media contracts; limited the existing read-only job token to the bootstrap step and
+  ephemeral cache container; allowlisted token use to API requests derived from locked GitHub raw
+  URLs; and added regression coverage for routing, non-forwarding, local fallback, and log secrecy.
+- **Verification:** The repaired pinned bootstrap passed, followed by the complete network-disabled
+  37-test `make ci` chain, all negative fixtures, all pre-commit hooks, and clean working-tree and
+  complete-history Gitleaks scans. No Verda resource or host was contacted or modified.

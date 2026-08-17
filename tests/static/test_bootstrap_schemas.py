@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import pathlib
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 from urllib.error import HTTPError
 
@@ -66,6 +68,74 @@ class BootstrapSchemaTests(unittest.TestCase):
                 RUNTIME.download("https://example.invalid/schema", checksum), payload
             )
         sleep.assert_called_once_with(1)
+
+    def test_github_token_uses_allowlisted_contents_api_only(self) -> None:
+        source = (
+            "https://raw.githubusercontent.com/example/project/"
+            "0123456789abcdef/schema.yaml"
+        )
+        with mock.patch.dict(RUNTIME.os.environ, {"GITHUB_TOKEN": "ephemeral-token"}):
+            request = RUNTIME.download_request(source)
+
+        self.assertEqual(
+            request.full_url,
+            "https://api.github.com/repos/example/project/contents/schema.yaml"
+            "?ref=0123456789abcdef",
+        )
+        self.assertEqual(request.get_header("Authorization"), "Bearer ephemeral-token")
+        self.assertEqual(request.get_header("Accept"), "application/vnd.github.raw+json")
+        self.assertEqual(
+            request.get_header("X-github-api-version"), RUNTIME.GITHUB_API_VERSION
+        )
+
+    def test_github_token_is_not_forwarded_to_untrusted_hosts(self) -> None:
+        source = "https://example.invalid/schema.yaml"
+        with mock.patch.dict(RUNTIME.os.environ, {"GITHUB_TOKEN": "ephemeral-token"}):
+            request = RUNTIME.download_request(source)
+
+        self.assertEqual(request.full_url, source)
+        self.assertIsNone(request.get_header("Authorization"))
+
+    def test_unauthenticated_bootstrap_retains_locked_raw_url(self) -> None:
+        source = (
+            "https://raw.githubusercontent.com/example/project/"
+            "0123456789abcdef/schema.yaml"
+        )
+        with mock.patch.dict(RUNTIME.os.environ, {}, clear=True):
+            request = RUNTIME.download_request(source)
+
+        self.assertEqual(request.full_url, source)
+        self.assertIsNone(request.get_header("Authorization"))
+
+    def test_retry_output_never_discloses_github_token(self) -> None:
+        payload = b"locked-schema"
+        checksum = hashlib.sha256(payload).hexdigest()
+        rate_limit = HTTPError(
+            "https://api.github.com/repos/example/project/contents/schema.yaml",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "1"},
+            None,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.dict(RUNTIME.os.environ, {"GITHUB_TOKEN": "never-print-me"}),
+            mock.patch.object(
+                RUNTIME, "urlopen", side_effect=[rate_limit, FakeResponse(payload)]
+            ),
+            mock.patch.object(RUNTIME.time, "sleep"),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(
+                RUNTIME.download(
+                    "https://raw.githubusercontent.com/example/project/"
+                    "0123456789abcdef/schema.yaml",
+                    checksum,
+                ),
+                payload,
+            )
+
+        self.assertNotIn("never-print-me", output.getvalue())
 
     def test_download_rejects_wrong_checksum_after_success(self) -> None:
         with mock.patch.object(RUNTIME, "urlopen", return_value=FakeResponse(b"wrong")):

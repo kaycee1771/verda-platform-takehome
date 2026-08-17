@@ -85,10 +85,15 @@ $cacheCommand = "bash scripts/quality/bootstrap-cache.sh && " +
     'chmod -R u+rwX,g+rwX,o-rwx /workspace/.local'
 $cacheArgs = @(
     'run', '--rm', '--user', '0:0',
-    '--volume', "${repoRoot}:/workspace", '--workdir', '/workspace',
-    $image, 'bash', '-c',
-    $cacheCommand
+    '--volume', "${repoRoot}:/workspace", '--workdir', '/workspace'
 )
+$githubToken = [Environment]::GetEnvironmentVariable('GITHUB_TOKEN')
+if (-not [string]::IsNullOrWhiteSpace($githubToken)) {
+    # Forward only the variable name. Docker reads its value from this process and the
+    # short-lived --rm container is used solely for networked cache bootstrap.
+    $cacheArgs += @('--env', 'GITHUB_TOKEN')
+}
+$cacheArgs += @($image, 'bash', '-c', $cacheCommand)
 & docker @cacheArgs 2>&1 |
     Tee-Object -FilePath $cacheLog
 if ($LASTEXITCODE -ne 0) {
