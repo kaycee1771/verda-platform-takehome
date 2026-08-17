@@ -1,0 +1,54 @@
+# Managed by the Verda Platform Take-Home Phase 3 Ansible contract.
+flush table inet verda_platform
+
+table inet verda_platform {
+  set admin_ipv4 {
+    type ipv4_addr
+    flags interval
+    elements = { {{ phase3_admin_cidrs_v4 | join(', ') }} }
+  }
+
+  set public_peer_ipv4 {
+    type ipv4_addr
+    elements = {
+{% for peer in groups['management_servers'] | sort if peer != inventory_hostname %}
+      {{ hostvars[peer].ansible_host }}{% if not loop.last %},{% endif %}
+{% endfor %}
+    }
+  }
+
+  set overlay_peer_ipv4 {
+    type ipv4_addr
+    elements = {
+{% for peer in groups['management_servers'] | sort if peer != inventory_hostname %}
+      {{ phase3_wireguard_addresses[peer] }}{% if not loop.last %},{% endif %}
+{% endfor %}
+    }
+  }
+
+  chain input {
+    type filter hook input priority -10; policy drop;
+    iifname "lo" accept
+    ct state invalid drop
+    ct state { established, related } accept
+    ip protocol icmp accept
+    ip6 nexthdr ipv6-icmp accept
+    ip saddr @admin_ipv4 tcp dport 22 ct state new limit rate 15/minute accept
+    ip saddr @public_peer_ipv4 udp dport {{ phase3_wireguard_port }} accept
+    iifname "{{ phase3_wireguard_interface }}" ip saddr @overlay_peer_ipv4 accept
+    limit rate 5/minute log prefix "verda-input-drop " level warn
+    counter drop
+  }
+
+  chain forward {
+    type filter hook forward priority -10; policy drop;
+    ct state invalid drop
+    ct state { established, related } accept
+    iifname "{{ phase3_wireguard_interface }}" ip saddr @overlay_peer_ipv4 accept
+    counter drop
+  }
+
+  chain output {
+    type filter hook output priority -10; policy accept;
+  }
+}

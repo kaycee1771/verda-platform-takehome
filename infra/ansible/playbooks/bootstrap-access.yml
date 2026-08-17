@@ -1,0 +1,9 @@
+---
+- name: Establish verified non-root administration before SSH hardening
+  hosts: management_servers
+  order: inventory
+  serial: 1
+  gather_facts: false
+  any_errors_fatal: true
+  roles:
+    - role: access_bootstrap

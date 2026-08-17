@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+backup=/run/phase3-firewall-rollback.nft
+present=/run/phase3-firewall-rollback.present
+
+case "${1:-}" in
+  prepare)
+    rm -f -- "${backup}" "${present}"
+    if nft list table inet verda_platform >/dev/null 2>&1; then
+      nft --stateless list table inet verda_platform > "${backup}"
+      touch "${present}"
+    fi
+    ;;
+  restore)
+    nft delete table inet verda_platform >/dev/null 2>&1 || true
+    if [[ -f "${present}" ]]; then
+      nft --file "${backup}"
+    fi
+    ;;
+  *)
+    echo 'usage: phase3-firewall-rollback prepare|restore' >&2
+    exit 64
+    ;;
+esac

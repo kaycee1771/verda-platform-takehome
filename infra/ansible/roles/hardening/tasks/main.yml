@@ -1,0 +1,129 @@
+---
+- name: Disable active swap immediately
+  ansible.builtin.command:
+    argv:
+      - swapoff
+      - --all
+  when: ansible_facts['swaptotal_mb'] | int > 0
+  changed_when: true
+
+- name: Disable persistent swap entries
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^(?!#)(\S+\s+\S+\s+swap\s+.*)$'
+    replace: '# Phase 3 disabled swap: \1'
+
+- name: Persist required pre-RKE2 kernel modules
+  ansible.builtin.copy:
+    content: |
+      overlay
+      br_netfilter
+      ip_vs
+      ip_vs_rr
+      ip_vs_wrr
+      ip_vs_sh
+      nf_conntrack
+      iscsi_tcp
+      dm_crypt
+    dest: /etc/modules-load.d/60-verda-rke2.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Load required pre-RKE2 kernel modules
+  ansible.builtin.command:
+    argv:
+      - modprobe
+      - "{{ item }}"
+  loop:
+    - overlay
+    - br_netfilter
+    - ip_vs
+    - ip_vs_rr
+    - ip_vs_wrr
+    - ip_vs_sh
+    - nf_conntrack
+    - iscsi_tcp
+    - dm_crypt
+  changed_when: false
+
+- name: Persist bounded Kubernetes host sysctls
+  ansible.builtin.copy:
+    content: |
+      # Host prerequisites only. Phase 4 must install and apply RKE2's pinned CIS sysctl file before first start.
+      net.ipv4.ip_forward = 1
+      net.ipv6.conf.all.forwarding = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      fs.inotify.max_user_instances = 8192
+      fs.inotify.max_user_watches = 524288
+      fs.file-max = 2097152
+      vm.max_map_count = 262144
+      kernel.panic = 10
+      kernel.panic_on_oops = 1
+    dest: /etc/sysctl.d/60-verda-rke2.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply host sysctls before Kubernetes
+
+- name: Configure future container and kubelet descriptor limits
+  ansible.builtin.copy:
+    content: |
+      * soft nofile 1048576
+      * hard nofile 1048576
+      root soft nofile 1048576
+      root hard nofile 1048576
+    dest: /etc/security/limits.d/60-verda-platform.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure security-only unattended upgrades without automatic reboot
+  ansible.builtin.copy:
+    content: |
+      Unattended-Upgrade::Allowed-Origins {
+          "${distro_id}:${distro_codename}-security";
+          "${distro_id}ESMApps:${distro_codename}-apps-security";
+          "${distro_id}ESM:${distro_codename}-infra-security";
+      };
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+    dest: /etc/apt/apt.conf.d/52verda-platform-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply controlled security updates
+
+- name: Enable the daily security-update cadence
+  ansible.builtin.copy:
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Gather service facts for network manager detection
+  ansible.builtin.service_facts:
+
+- name: Configure NetworkManager only when it is active
+  when:
+    - "'NetworkManager.service' in ansible_facts.services"
+    - ansible_facts.services['NetworkManager.service'].state == 'running'
+  block:
+    - name: Make future Cilium interfaces unmanaged by NetworkManager
+      ansible.builtin.copy:
+        content: |
+          [keyfile]
+          unmanaged-devices=interface-name:cilium*;interface-name:lxc*;interface-name:cilium_vxlan;interface-name:cilium_wg0
+        dest: /etc/NetworkManager/conf.d/rke2-cilium.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload NetworkManager before RKE2
+
+- name: Apply hardening handlers before storage and network verification
+  ansible.builtin.meta: flush_handlers

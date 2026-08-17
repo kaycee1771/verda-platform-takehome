@@ -1,8 +1,12 @@
 ---
-- name: Phase 3 gate for host preparation
-  hosts: localhost
-  gather_facts: false
-  tasks:
-    - name: Stop until host configuration is authorized
-      ansible.builtin.fail:
-        msg: Phase 3 host preparation is not implemented.
+- name: Prepare management hosts for a future RKE2 CIS-profile installation
+  hosts: management_servers
+  order: inventory
+  serial: 1
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  roles:
+    - role: common
+    - role: hardening
+    - role: storage_device

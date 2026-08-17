@@ -1,0 +1,195 @@
+---
+# Role name uses an underscore to satisfy Ansible's production role-name contract.
+- name: Derive the provider-stable data-device path
+  ansible.builtin.set_fact:
+    storage_device_path: >-
+      /dev/disk/by-id/virtio-{{ data_volume_id[-(phase3_virtio_serial_suffix_length | int) :] }}
+
+- name: Resolve the exact stable data-device link
+  ansible.builtin.stat:
+    path: "{{ storage_device_path }}"
+    follow: true
+  register: storage_device_stat
+
+- name: Reject an absent or non-block data device
+  ansible.builtin.assert:
+    that:
+      - storage_device_stat.stat.exists
+      - storage_device_stat.stat.isblk
+    fail_msg: The Terraform attachment does not resolve to exactly one stable block device.
+
+- name: Inspect the complete candidate block-device tree
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - --bytes
+      - --json
+      - --output
+      - NAME,PATH,SIZE,TYPE,FSTYPE,FSVER,LABEL,UUID,MOUNTPOINTS
+      - "{{ storage_device_path }}"
+  register: storage_device_lsblk
+  changed_when: false
+
+- name: Parse the candidate block-device tree
+  ansible.builtin.set_fact:
+    storage_device_block: "{{ (storage_device_lsblk.stdout | from_json).blockdevices[0] }}"
+
+- name: Reject the wrong disk, partitioned media, or unexpected filesystem
+  ansible.builtin.assert:
+    that:
+      - storage_device_block.size | int == phase3_data_size_bytes | int
+      - storage_device_block.type == 'disk'
+      - storage_device_block.children is not defined or storage_device_block.children | length == 0
+      - storage_device_block.fstype in [none, '', 'ext4']
+      - >-
+        storage_device_block.fstype != 'ext4' or
+        storage_device_block.label == 'longhorn-data'
+      - >-
+        storage_device_block.mountpoints | reject('equalto', none) | list | length == 0 or
+        phase3_data_mount in storage_device_block.mountpoints
+    fail_msg: Data-device safety checks found the wrong size, partitions, foreign filesystem, or an unexpected mount.
+
+- name: Inspect filesystem and partition signatures without modifying media
+  ansible.builtin.command:
+    argv:
+      - wipefs
+      - --no-act
+      - --noheadings
+      - --output
+      - TYPE
+      - "{{ storage_device_path }}"
+  register: storage_device_signatures
+  changed_when: false
+
+- name: Reject signatures other than the managed ext4 filesystem
+  ansible.builtin.assert:
+    that:
+      - >-
+        (storage_device_block.fstype in [none, ''] and storage_device_signatures.stdout | trim == '') or
+        (storage_device_block.fstype == 'ext4' and storage_device_signatures.stdout | trim == 'ext4')
+    fail_msg: The candidate data disk contains an unrecognized signature.
+
+- name: Prove every byte of unformatted media is zero
+  ansible.builtin.shell: |
+    set -o pipefail
+    size_bytes=$(blockdev --getsize64 {{ storage_device_path | quote }})
+    cmp --bytes="${size_bytes}" {{ storage_device_path | quote }} /dev/zero
+  args:
+    executable: /bin/bash
+  when: storage_device_block.fstype in [none, '']
+  changed_when: false
+
+- name: Create ext4 only on proven-empty attached media
+  ansible.builtin.command:
+    argv:
+      - mkfs.ext4
+      - -F
+      - -m
+      - "0"
+      - -L
+      - longhorn-data
+      - "{{ storage_device_path }}"
+  when: storage_device_block.fstype in [none, '']
+  changed_when: true
+
+- name: Read the managed filesystem UUID
+  ansible.builtin.command:
+    argv:
+      - blkid
+      - -s
+      - UUID
+      - -o
+      - value
+      - "{{ storage_device_path }}"
+  register: storage_device_uuid_command
+  changed_when: false
+
+- name: Retain the managed filesystem UUID for verification
+  ansible.builtin.set_fact:
+    storage_device_uuid: "{{ storage_device_uuid_command.stdout | trim }}"
+
+- name: Create the Longhorn data mountpoint
+  ansible.builtin.file:
+    path: "{{ phase3_data_mount }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Persist the data mount by filesystem UUID
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^UUID=\S+\s+{{ phase3_data_mount | regex_escape }}\s+'
+    line: "UUID={{ storage_device_uuid }} {{ phase3_data_mount }} ext4 defaults,noatime 0 2"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Read the current Longhorn mount source
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - UUID
+      - --mountpoint
+      - "{{ phase3_data_mount }}"
+  register: storage_device_current_mount
+  failed_when: storage_device_current_mount.rc not in [0, 1]
+  changed_when: false
+
+- name: Mount the protected data filesystem
+  ansible.builtin.command:
+    argv:
+      - mount
+      - "{{ phase3_data_mount }}"
+  when: storage_device_current_mount.rc == 1
+  changed_when: true
+
+- name: Enforce ownership and mode on the mounted data filesystem
+  ansible.builtin.file:
+    path: "{{ phase3_data_mount }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Verify the mounted filesystem identity and capacity
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --json
+      - --output
+      - TARGET,UUID,FSTYPE,OPTIONS
+      - --target
+      - "{{ phase3_data_mount }}"
+  register: storage_device_mounted_filesystem
+  changed_when: false
+
+- name: Measure data-filesystem capacity and free space in bytes
+  ansible.builtin.command:
+    argv:
+      - df
+      - --block-size=1
+      - --output=size,avail,target
+      - "{{ phase3_data_mount }}"
+  register: storage_device_capacity
+  changed_when: false
+
+- name: Inspect mounted data-filesystem ownership
+  ansible.builtin.stat:
+    path: "{{ phase3_data_mount }}"
+  register: storage_device_mount_stat
+
+- name: Assert the exact persistent mount contract
+  ansible.builtin.assert:
+    that:
+      - (storage_device_mounted_filesystem.stdout | from_json).filesystems | length == 1
+      - (storage_device_mounted_filesystem.stdout | from_json).filesystems[0].uuid == storage_device_uuid
+      - (storage_device_mounted_filesystem.stdout | from_json).filesystems[0].fstype == 'ext4'
+      - (storage_device_capacity.stdout_lines[1].split())[0] | int >= phase3_min_data_filesystem_bytes | int
+      - (storage_device_capacity.stdout_lines[1].split())[1] | int >= phase3_min_data_free_bytes | int
+      - storage_device_mount_stat.stat.uid == 0
+      - storage_device_mount_stat.stat.gid == 0
+      - storage_device_mount_stat.stat.mode == '0750'
+    fail_msg: The Longhorn data mount does not match the managed filesystem UUID.

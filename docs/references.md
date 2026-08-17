@@ -1,6 +1,6 @@
 # Primary References
 
-References were re-checked on 2026-08-16. Material implementation decisions use the exact provider
+References were re-checked through 2026-08-17. Material implementation decisions use the exact provider
 schema and version-specific documentation where available. Phase 1 quality tools and schema sources
 are exact-pinned in `versions.lock.yaml`, `aqua.yaml`, and `schemas/schema-sources.lock.yaml`.
 
@@ -24,9 +24,15 @@ are exact-pinned in `versions.lock.yaml`, `aqua.yaml`, and `schemas/schema-sourc
 - [Terraform Registry: Verda provider 1.1.2](https://registry.terraform.io/providers/verda-cloud/verda/1.1.2)
 - [Verda provider source repository](https://github.com/verda-cloud/terraform-provider-verda)
 - [RKE2 high availability](https://docs.rke2.io/install/ha)
+- [RKE2 installation requirements](https://docs.rke2.io/install/requirements)
 - [RKE2 network/CNI options](https://docs.rke2.io/networking/basic_network_options)
 - [RKE2 networking services and ingress guidance](https://docs.rke2.io/networking/networking_services)
 - [RKE2 CIS hardening guide](https://docs.rke2.io/security/hardening_guide)
+- [RKE2 known issues: NetworkManager and firewalld](https://docs.rke2.io/known_issues)
+- [Cilium routing and encapsulation overhead](https://docs.cilium.io/en/stable/network/concepts/routing/)
+- [Longhorn 1.12.0 installation requirements](https://longhorn.io/docs/1.12.0/deploy/install/)
+- [WireGuard quick start](https://www.wireguard.com/quickstart/)
+- [Netfilter nftables manual](https://netfilter.org/projects/nftables/manpage.html)
 - [Rancher current versions](https://ranchermanager.docs.rancher.com/versions)
 - [Rancher architecture recommendations](https://ranchermanager.docs.rancher.com/v2.14/reference-guides/rancher-manager-architecture/architecture-recommendations)
 - [Argo CD ApplicationSet generators](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators/)
@@ -57,6 +63,9 @@ are exact-pinned in `versions.lock.yaml`, `aqua.yaml`, and `schemas/schema-sourc
 - The provider source README still contains pre-registry installation language, while Terraform Registry and current Verda documentation publish the provider. The registry and successful locked initialization govern.
 - The generic Verda Terraform instance page mentions example attributes absent from provider 1.1.2. The exported 1.1.2 schema governs.
 - Current object-storage documentation describes a project Credentials section for Object Storage Access Keys, but that section is absent from the inspected project. Entitlement is a Phase 5 gate, not an assumed feature.
+- Longhorn's official requirements site currently publishes the 1.12.0 documentation path while the
+  locked chart/CRD patch is 1.12.1. Phase 3 applies only the shared host prerequisites from 1.12.0;
+  Phase 5 must re-check the exact 1.12.1 release and compatibility before installing the chart.
 - Aqua's standard registry accepts the versioned release ref, not the raw registry commit. Bootstrap
   resolves `v4.552.0` and fails unless it still maps to the locked commit; package checksums remain
   mandatory.

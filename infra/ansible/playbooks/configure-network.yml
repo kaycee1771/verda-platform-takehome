@@ -1,8 +1,23 @@
 ---
-- name: Phase 3 gate for network configuration
-  hosts: localhost
-  gather_facts: false
-  tasks:
-    - name: Stop until network configuration is authorized
-      ansible.builtin.fail:
-        msg: Phase 3 network configuration is not implemented.
+- name: Generate node-local WireGuard identity material
+  hosts: management_servers
+  order: inventory
+  serial: 1
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  roles:
+    - role: wireguard
+      wireguard_identity_only: true
+
+- name: Configure the encrypted management mesh and host firewall
+  hosts: management_servers
+  order: inventory
+  serial: 1
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  roles:
+    - role: wireguard
+      wireguard_identity_only: false
+    - role: firewall

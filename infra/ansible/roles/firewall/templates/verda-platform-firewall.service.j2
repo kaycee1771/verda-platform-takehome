@@ -1,0 +1,13 @@
+[Unit]
+Description=Verda Platform scoped nftables firewall
+Documentation=https://documentation.ubuntu.com/security/security-features/network/firewall/nftables/
+Wants=network-pre.target
+Before=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/verda-firewall-apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

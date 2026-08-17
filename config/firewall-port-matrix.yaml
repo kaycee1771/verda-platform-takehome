@@ -1,0 +1,77 @@
+---
+schema_version: 1
+active_phase: 3
+public_ingress:
+  - name: ssh-administration
+    protocol: tcp
+    ports: "22"
+    source: approved-admin-cidrs
+    phase_3_action: allow
+  - name: wireguard-management-mesh
+    protocol: udp
+    ports: "51820"
+    source: exact-management-peer-public-ips
+    phase_3_action: allow
+  - name: http-ingress
+    protocol: tcp
+    ports: "80"
+    source: internet
+    phase_3_action: deny
+    future_owner: 5
+  - name: https-ingress
+    protocol: tcp
+    ports: "443"
+    source: internet
+    phase_3_action: deny
+    future_owner: 5
+  - name: kubernetes-api
+    protocol: tcp
+    ports: "6443"
+    source: approved-candidate-cidrs
+    phase_3_action: deny
+    future_owner: 4
+internal_overlay_reservations:
+  - name: rke2-supervisor
+    protocol: tcp
+    ports: "9345"
+    source: exact-overlay-peers
+    future_owner: 4
+  - name: kubernetes-api
+    protocol: tcp
+    ports: "6443"
+    source: exact-overlay-peers
+    future_owner: 4
+  - name: etcd
+    protocol: tcp
+    ports: "2379-2381"
+    source: exact-overlay-peers
+    future_owner: 4
+  - name: kubelet-metrics
+    protocol: tcp
+    ports: "10250"
+    source: exact-overlay-peers
+    future_owner: 4
+  - name: cilium-health
+    protocol: tcp
+    ports: "4240"
+    source: exact-overlay-peers
+    future_owner: 4
+  - name: cilium-vxlan
+    protocol: udp
+    ports: "8472"
+    source: exact-overlay-peers
+    future_owner: 4
+  - name: cilium-wireguard
+    protocol: udp
+    ports: "51871"
+    source: exact-overlay-peers
+    future_owner: 4
+  - name: longhorn-data-plane
+    protocol: any
+    ports: dynamic
+    source: exact-overlay-peers
+    future_owner: 5
+phase_3_overlay_policy: allow-only-exact-management-peers-on-wg-mgmt
+phase_3_public_default: drop
+phase_3_forward_default: drop
+phase_3_output_default: accept

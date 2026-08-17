@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+rules=/etc/nftables.d/90-verda-platform.nft
+nft list table inet verda_platform >/dev/null 2>&1 || nft add table inet verda_platform
+nft --check --file "${rules}"
+nft --file "${rules}"

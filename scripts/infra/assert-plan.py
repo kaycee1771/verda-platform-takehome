@@ -127,7 +127,7 @@ def assert_initial_plan(changes: list[dict[str, Any]]) -> dict[str, Any]:
         os_volume = instance.get("os_volume") or {}
         if os_volume.get("size") != 80 or os_volume.get("type") != "NVMe":
             fail("an instance does not use an 80 GiB NVMe OS volume")
-        if len(instance.get("existing_volumes") or [None]) != 1:
+        if len(instance.get("existing_volumes") or []) != 1:
             fail("an instance does not attach exactly one external data volume")
 
     volume_names = {item.get("name") for item in volumes}

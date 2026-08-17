@@ -62,7 +62,7 @@ tflint_validate() {
 }
 
 ansible_validate() {
-  ansible-lint --offline infra/ansible
+  ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-lint --offline infra/ansible
 }
 
 shell_validate() {

@@ -43,7 +43,8 @@ required_directories:
   - infra/ansible/roles/hardening
   - infra/ansible/roles/wireguard
   - infra/ansible/roles/firewall
-  - infra/ansible/roles/storage-device
+  - infra/ansible/roles/storage_device
+  - infra/ansible/roles/access_bootstrap
   - infra/ansible/roles/rke2-server
   - infra/ansible/roles/rke2-agent
   - infra/ansible/roles/etcd-backup
@@ -167,6 +168,8 @@ required_files:
   - .github/workflows/promote.yml
   - .github/workflows/scheduled-validation.yml
   - .github/workflows/release-evidence.yml
+  - config/phase-map.json
+  - config/firewall-port-matrix.yaml
   - .github/pull_request_template.md
   - .github/ISSUE_TEMPLATE/bug.yml
   - .github/ISSUE_TEMPLATE/config.yml
@@ -194,6 +197,8 @@ required_files:
   - docs/adr/0009-secret-management.md
   - docs/adr/0010-observability.md
   - docs/adr/0011-backup-recovery.md
+  - docs/adr/0012-provider-image-canonicalization-and-state-boundary.md
+  - docs/adr/0013-phase-3-host-security-boundary.md
   - docs/runbooks/template.md
   - docs/runbooks/cluster-api-unavailable.md
   - docs/runbooks/node-not-ready.md
@@ -224,6 +229,15 @@ required_files:
   - evidence/phase-1/secret-scanning.md
   - evidence/phase-1/ci-parity.md
   - evidence/phase-1/clean-clone.md
+  - evidence/phase-3/README.md
+  - evidence/phase-3/preflight-and-boundary.md
+  - evidence/phase-3/host-hardening-report.md
+  - evidence/phase-3/ansible-idempotency.md
+  - evidence/phase-3/external-port-scan.md
+  - evidence/phase-3/wireguard-reachability.md
+  - evidence/phase-3/mount-uuid-report.md
+  - evidence/phase-3/reboot-and-exit-gates.md
+  - evidence/phase-3/repository-validation.md
   - applications/README.md
   - config/README.md
   - environments/README.md
@@ -233,10 +247,30 @@ required_files:
   - infra/ansible/requirements.yml
   - infra/ansible/inventories/generated/.gitkeep
   - infra/ansible/playbooks/prepare-hosts.yml
+  - infra/ansible/playbooks/bootstrap-access.yml
   - infra/ansible/playbooks/configure-network.yml
   - infra/ansible/playbooks/install-rke2.yml
   - infra/ansible/playbooks/verify-hosts.yml
   - infra/ansible/playbooks/remove-rke2.yml
+  - infra/ansible/inventories/group_vars/management_servers.yml
+  - infra/ansible/roles/access_bootstrap/tasks/main.yml
+  - infra/ansible/roles/access_bootstrap/templates/90-verda-platform.conf.j2
+  - infra/ansible/roles/access_bootstrap/templates/phase3-ssh-rollback.sh.j2
+  - infra/ansible/roles/common/tasks/main.yml
+  - infra/ansible/roles/common/handlers/main.yml
+  - infra/ansible/roles/hardening/tasks/main.yml
+  - infra/ansible/roles/hardening/handlers/main.yml
+  - infra/ansible/roles/storage_device/tasks/main.yml
+  - infra/ansible/roles/wireguard/tasks/main.yml
+  - infra/ansible/roles/wireguard/handlers/main.yml
+  - infra/ansible/roles/wireguard/templates/wg-mgmt.conf.j2
+  - infra/ansible/roles/wireguard/templates/private-key-override.conf.j2
+  - infra/ansible/roles/firewall/tasks/main.yml
+  - infra/ansible/roles/firewall/templates/90-verda-platform.nft.j2
+  - infra/ansible/roles/firewall/templates/verda-firewall-apply.sh.j2
+  - infra/ansible/roles/firewall/templates/phase3-firewall-rollback.sh.j2
+  - infra/ansible/roles/firewall/templates/verda-platform-firewall.service.j2
+  - infra/ansible/roles/diagnostics/tasks/main.yml
   - bootstrap/README.md
   - bootstrap/argocd/install.sh
   - bootstrap/argocd/values.yaml
@@ -273,6 +307,9 @@ required_files:
   - schemas/README.md
   - schemas/schema-sources.lock.yaml
   - scripts/README.md
+  - scripts/host/prepare-runtime.py
+  - scripts/host/phase3.ps1
+  - scripts/host/invoke-phase3-secure.ps1
   - scripts/bootstrap-tools.sh
   - scripts/discover-verda.sh
   - scripts/generate-inventory.sh
@@ -323,5 +360,9 @@ required_files:
   - tests/smoke/quality-smoke.sh
   - tests/static/repository-contract.yaml
   - tests/static/test_assert_plan.py
+  - tests/static/test_bootstrap_schemas.py
+  - tests/static/test_phase_map.py
+  - tests/static/test_phase3_runtime.py
+  - tests/static/test_phase3_contract.py
   - tooling/README.md
   - tooling/quality/Dockerfile

@@ -14,6 +14,7 @@ one-instance recovery described below.
 - [Live resource verification](live-resource-verification.md)
 - [State boundary](state-boundary.md)
 - [Recovery and exit gates](recovery-and-exit-gates.md)
+- [Final hosted CI](hosted-ci.md)
 
 No credential, private key, Terraform state, plan binary, resource ID, or public IP is committed.
 Raw logs remain ignored under `.local/`; state, plan, key material, and encrypted backups are outside

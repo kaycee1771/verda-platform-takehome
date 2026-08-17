@@ -1,0 +1,140 @@
+---
+- name: Reject an empty or malformed administrative source allowlist
+  ansible.builtin.assert:
+    that:
+      - phase3_admin_cidrs_v4 | length > 0
+      - >-
+        phase3_admin_cidrs_v4 |
+        select('match', '^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$') |
+        list | length == phase3_admin_cidrs_v4 | length
+    fail_msg: An approved IPv4 CIDR allowlist is required before firewall mutation.
+
+- name: Disable the distribution-wide nftables loader
+  ansible.builtin.systemd_service:
+    name: nftables.service
+    state: stopped
+    enabled: false
+
+- name: Create the dedicated nftables configuration directory
+  ansible.builtin.file:
+    path: /etc/nftables.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the scoped atomic firewall apply helper
+  ansible.builtin.template:
+    src: verda-firewall-apply.sh.j2
+    dest: /usr/local/sbin/verda-firewall-apply
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the timed firewall recovery helper
+  ansible.builtin.template:
+    src: phase3-firewall-rollback.sh.j2
+    dest: /usr/local/sbin/phase3-firewall-rollback
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Render the exact host firewall rules
+  ansible.builtin.template:
+    src: 90-verda-platform.nft.j2
+    dest: /etc/nftables.d/90-verda-platform.nft
+    owner: root
+    group: root
+    mode: "0600"
+  register: firewall_rules
+
+- name: Render the persistent scoped firewall service
+  ansible.builtin.template:
+    src: verda-platform-firewall.service.j2
+    dest: /etc/systemd/system/verda-platform-firewall.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: firewall_service
+
+- name: Apply a changed firewall under timed automatic rollback
+  when: firewall_rules.changed or firewall_service.changed
+  block:
+    - name: Capture the previous scoped firewall state
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/phase3-firewall-rollback
+          - prepare
+      changed_when: false
+
+    - name: Clear an obsolete firewall rollback timer
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - stop
+          - phase3-firewall-rollback.timer
+          - phase3-firewall-rollback.service
+      failed_when: false
+      changed_when: false
+
+    - name: Arm a five-minute automatic firewall rollback
+      ansible.builtin.command:
+        argv:
+          - systemd-run
+          - --collect
+          - --unit=phase3-firewall-rollback
+          - --on-active=5m
+          - /usr/local/sbin/phase3-firewall-rollback
+          - restore
+      changed_when: true
+
+    - name: Validate and atomically apply only the platform table
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/verda-firewall-apply
+      changed_when: true
+
+    - name: Prove a fresh strict-key administrator session through the firewall
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -i
+          - /tmp/phase3-ssh-key
+          - -o
+          - BatchMode=yes
+          - -o
+          - IdentitiesOnly=yes
+          - -o
+          - StrictHostKeyChecking=yes
+          - -o
+          - UserKnownHostsFile=/run/config/known_hosts
+          - -o
+          - ConnectTimeout=10
+          - "{{ phase3_platform_admin }}@{{ ansible_host }}"
+          - sudo -n nft list table inet verda_platform
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Cancel the firewall rollback after fresh-session verification
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - stop
+          - phase3-firewall-rollback.timer
+      changed_when: true
+
+    - name: Remove temporary firewall recovery material
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /run/phase3-firewall-rollback.present
+        - /run/phase3-firewall-rollback.nft
+
+- name: Enable and retain the scoped firewall service
+  ansible.builtin.systemd_service:
+    name: verda-platform-firewall.service
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,8 +1,10 @@
 ---
-- name: Phase 3 gate for host verification
-  hosts: localhost
-  gather_facts: false
-  tasks:
-    - name: Stop until host verification is implemented
-      ansible.builtin.fail:
-        msg: Phase 3 host verification is not implemented.
+- name: Verify the complete hardened-host contract
+  hosts: management_servers
+  order: inventory
+  serial: 1
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  roles:
+    - role: diagnostics

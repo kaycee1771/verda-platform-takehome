@@ -2,4 +2,4 @@
 set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec bash "${repo_root}/scripts/quality/not-implemented.sh" verify-cluster 3
+exec bash "${repo_root}/scripts/quality/not-implemented.sh" verify-cluster 4
