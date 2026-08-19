@@ -1,0 +1,113 @@
+---
+# Values are consumed by the pinned Longhorn 1.12.1 Helm source. The release
+# namespace is intentionally explicit so a chart default cannot move data-plane
+# components into another namespace.
+namespaceOverride: longhorn-system
+
+global:
+  nodeSelector:
+    kubernetes.io/os: linux
+
+networkPolicies:
+  enabled: false
+  restrictInternalTraffic: true
+  type: rke2
+  kubeAPIServerSourceCIDRs: []
+
+service:
+  ui:
+    type: ClusterIP
+  manager:
+    type: ClusterIP
+
+# The chart-owned class is disabled. The reviewed classes under resources/ are
+# the only dynamic-provisioning contract and avoid mutating Longhorn's built-in
+# class across upgrades.
+persistence:
+  createStorageClass: false
+  defaultClass: false
+
+# Longhorn explicitly recommends disabling this Helm hook under Argo CD.
+preUpgradeChecker:
+  jobEnabled: false
+  upgradeVersionCheck: true
+
+csi:
+  kubeletRootDir: /var/lib/kubelet
+  attacherReplicaCount: 3
+  provisionerReplicaCount: 3
+  resizerReplicaCount: 3
+  snapshotterReplicaCount: 3
+
+defaultSettings:
+  # Never auto-enrol a new node or its root filesystem. Git owns the three
+  # Longhorn Node resources and their one permitted dedicated mount.
+  createDefaultDiskLabeledNodes: true
+  defaultDataPath: /var/lib/longhorn
+  defaultDataLocality: disabled
+  defaultReplicaCount: '{"v1":"3","v2":"3"}'
+
+  replicaSoftAntiAffinity: false
+  replicaZoneSoftAntiAffinity: true
+  replicaDiskSoftAntiAffinity: false
+  replicaAutoBalance: least-effort
+
+  storageOverProvisioningPercentage: 100
+  storageMinimalAvailablePercentage: 25
+  storageReservedPercentageForDefaultDisk: 10
+  allowEmptyNodeSelectorVolume: false
+  allowEmptyDiskSelectorVolume: false
+  allowVolumeCreationWithDegradedAvailability: false
+
+  disableSchedulingOnCordonedNode: true
+  nodeDownPodDeletionPolicy: do-nothing
+  nodeDrainPolicy: block-if-contains-last-replica
+  replicaReplenishmentWaitInterval: 600
+  concurrentReplicaRebuildPerNodeLimit: 1
+  rebuildConcurrentSyncLimit: 1
+  autoSalvage: false
+
+  v1DataEngine: true
+  v2DataEngine: false
+  systemManagedPodsImagePullPolicy: if-not-present
+  systemManagedComponentsNodeSelector: kubernetes.io/os:linux
+  csiStorageCapacityTracking: true
+  nodeDiskHealthMonitoring: true
+
+  upgradeChecker: false
+  allowCollectingLonghornUsageMetrics: false
+  logLevel: Info
+
+longhornManager:
+  log:
+    format: json
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  serviceLabels:
+    verda.io/metrics: longhorn
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+
+longhornUI:
+  replicas: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+ingress:
+  enabled: false
+
+httproute:
+  enabled: false
+
+# Prometheus Operator is a later-phase dependency. Longhorn Manager already
+# exposes its metrics service; Phase 6 may enable this object after installing
+# the ServiceMonitor CRD and its matching NetworkPolicy allowance.
+metrics:
+  serviceMonitor:
+    enabled: false

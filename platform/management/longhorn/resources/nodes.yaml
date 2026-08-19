@@ -1,0 +1,72 @@
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: verda-mgmt-server-01
+  namespace: longhorn-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  name: verda-mgmt-server-01
+  tags:
+    - management-storage
+  disks:
+    verda-data:
+      allowScheduling: true
+      diskDriver: ""
+      diskType: filesystem
+      evictionRequested: false
+      path: /var/lib/longhorn
+      storageReserved: 10737418240
+      tags:
+        - dedicated
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: verda-mgmt-server-02
+  namespace: longhorn-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  name: verda-mgmt-server-02
+  tags:
+    - management-storage
+  disks:
+    verda-data:
+      allowScheduling: true
+      diskDriver: ""
+      diskType: filesystem
+      evictionRequested: false
+      path: /var/lib/longhorn
+      storageReserved: 10737418240
+      tags:
+        - dedicated
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: verda-mgmt-server-03
+  namespace: longhorn-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  name: verda-mgmt-server-03
+  tags:
+    - management-storage
+  disks:
+    verda-data:
+      allowScheduling: true
+      diskDriver: ""
+      diskType: filesystem
+      evictionRequested: false
+      path: /var/lib/longhorn
+      storageReserved: 10737418240
+      tags:
+        - dedicated
