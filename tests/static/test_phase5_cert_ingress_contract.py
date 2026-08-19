@@ -198,12 +198,27 @@ class Phase5CertIngressContractTests(unittest.TestCase):
 
     def test_ingress_is_blocked_until_certificate_and_authentication_are_proven(self) -> None:
         for settings, expected in (
-            ((), "productionCertificateVerified=true"),
-            (("gates.productionCertificateVerified=true",), "argocdAuthenticationVerified=true"),
+            (
+                (
+                    "gates.productionCertificateVerified=false",
+                    "gates.argocdAuthenticationVerified=false",
+                    "gates.argocdInternalHttpVerified=false",
+                ),
+                "productionCertificateVerified=true",
+            ),
+            (
+                (
+                    "gates.productionCertificateVerified=true",
+                    "gates.argocdAuthenticationVerified=false",
+                    "gates.argocdInternalHttpVerified=false",
+                ),
+                "argocdAuthenticationVerified=true",
+            ),
             (
                 (
                     "gates.productionCertificateVerified=true",
                     "gates.argocdAuthenticationVerified=true",
+                    "gates.argocdInternalHttpVerified=false",
                 ),
                 "argocdInternalHttpVerified=true",
             ),
