@@ -153,6 +153,7 @@ kubernetes_validate() {
     gitops/root/platform-project.yaml \
     gitops/root/cert-manager-controller.yaml \
     gitops/root/cert-manager-staging.yaml \
+    gitops/root/cert-manager-production.yaml \
     gitops/root/longhorn-prerequisites.yaml \
     gitops/root/longhorn-controller.yaml \
     gitops/root/longhorn-resources.yaml \
