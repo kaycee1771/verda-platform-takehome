@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import os
 from pathlib import Path
 
@@ -70,6 +71,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--inventory", type=Path, required=True)
+    parser.add_argument("--crds-output", type=Path, required=True)
     args = parser.parse_args()
 
     documents = [
@@ -82,6 +84,7 @@ def main() -> int:
 
     names: set[str] = set()
     crds: set[str] = set()
+    crd_documents: list[dict] = []
     inventory: list[str] = []
     bootstrap_projects = 0
     server_policies: list[dict] = []
@@ -120,6 +123,18 @@ def main() -> int:
                 )
         if kind == "CustomResourceDefinition":
             crds.add(name)
+            annotations = metadata.get("annotations", {})
+            if annotations.get("helm.sh/resource-policy") != "keep":
+                fail("an Argo CD CRD is missing the required keep policy")
+            owned_crd = copy.deepcopy(document)
+            owned_metadata = owned_crd.setdefault("metadata", {})
+            owned_metadata.setdefault("labels", {})[
+                "app.kubernetes.io/managed-by"
+            ] = "Helm"
+            owned_annotations = owned_metadata.setdefault("annotations", {})
+            owned_annotations["meta.helm.sh/release-name"] = "argocd"
+            owned_annotations["meta.helm.sh/release-namespace"] = "argocd"
+            crd_documents.append(owned_crd)
         if kind == "ConfigMap" and name == "argocd-cmd-params-cm":
             internal_http_verified = document.get("data", {}).get("server.insecure") == "true"
         if kind == "ConfigMap" and name == "argocd-rbac-cm":
@@ -188,8 +203,8 @@ def main() -> int:
 
     if not EXPECTED_WORKLOADS.issubset(names):
         fail("the render is missing a required Argo CD workload")
-    if not EXPECTED_CRDS.issubset(crds):
-        fail("the render is missing a required Argo CD CRD")
+    if crds != EXPECTED_CRDS:
+        fail("the render does not contain the exact Argo CD CRD set")
     if bootstrap_projects != 1:
         fail("the render must contain exactly one platform-bootstrap AppProject")
     if not internal_http_verified:
@@ -227,6 +242,12 @@ def main() -> int:
         stream.write("apiVersion\tkind\tnamespace\tname\timages\n")
         stream.write("\n".join(sorted(inventory)))
         stream.write("\n")
+    args.crds_output.parent.mkdir(parents=True, exist_ok=True)
+    crd_descriptor = os.open(
+        args.crds_output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+    )
+    with os.fdopen(crd_descriptor, "w", encoding="utf-8", newline="\n") as stream:
+        yaml.safe_dump_all(crd_documents, stream, explicit_start=True, sort_keys=False)
     print(
         "[PASS] Argo CD render security and secret boundary validated; "
         f"objects={len(documents)}"
