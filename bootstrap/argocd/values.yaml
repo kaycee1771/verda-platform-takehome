@@ -1,2 +1,132 @@
 ---
-# Phase 4 will add reviewed Argo CD values. This document is intentionally empty in Phase 1.
+# Day-zero only. Day-one platform services and exposure are reconciled from Git.
+global:
+  logging:
+    format: json
+    level: info
+  networkPolicy:
+    create: true
+    defaultDenyIngress: false
+
+crds:
+  install: true
+  keep: true
+
+configs:
+  cm:
+    admin.enabled: true
+    users.anonymous.enabled: false
+    exec.enabled: false
+    statusbadge.enabled: false
+    accounts.platform-admin: login
+    accounts.reviewer: login
+    resource.customizations.health.argoproj.io_Application: |
+      health = {}
+      health.status = "Progressing"
+      health.message = "Waiting for child Application health"
+      if obj.status ~= nil and obj.status.health ~= nil then
+        health.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          health.message = obj.status.health.message
+        end
+      end
+      return health
+  params:
+    server.insecure: false
+  rbac:
+    policy.default: role:authenticated
+    policy.matchMode: glob
+    scopes: "[groups]"
+    policy.csv: |
+      g, platform-admin, role:admin
+      g, reviewer, role:reviewer
+      p, role:reviewer, applications, get, platform-bootstrap/*, allow
+      p, role:reviewer, applications, sync, platform-bootstrap/*, deny
+      p, role:reviewer, applications, action/*, platform-bootstrap/*, deny
+      p, role:reviewer, logs, get, platform-bootstrap/*, allow
+
+dex:
+  enabled: false
+
+controller:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  metrics:
+    enabled: true
+    serviceMonitor: {enabled: false}
+
+server:
+  replicas: 2
+  pdb: {enabled: true, minAvailable: 1}
+  ingress: {enabled: false}
+  ingressGrpc: {enabled: false}
+  route: {enabled: false}
+  httproute: {enabled: false}
+  grpcroute: {enabled: false}
+  service: {type: ClusterIP}
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  metrics:
+    enabled: true
+    serviceMonitor: {enabled: false}
+
+repoServer:
+  replicas: 2
+  pdb: {enabled: true, minAvailable: 1}
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  metrics:
+    enabled: true
+    serviceMonitor: {enabled: false}
+
+applicationSet:
+  replicas: 2
+  pdb: {enabled: true, minAvailable: 1}
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  metrics:
+    enabled: true
+    serviceMonitor: {enabled: false}
+
+notifications:
+  enabled: false
+
+redis:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 256Mi}
+
+redisSecretInit:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 128Mi}
+
+# Helm owns this restricted authorization anchor to remove the root-AppProject
+# bootstrap cycle. It can render only Argo child objects in namespace argocd.
+extraObjects:
+  - apiVersion: argoproj.io/v1alpha1
+    kind: AppProject
+    metadata:
+      name: platform-bootstrap
+      namespace: argocd
+      labels:
+        app.kubernetes.io/managed-by: Helm
+        platform.verda-demo.io/ownership: day-zero
+    spec:
+      description: Restricted fixed point for the single platform root Application
+      sourceRepos:
+        - https://github.com/kaycee1771/verda-platform-takehome.git
+      destinations:
+        - namespace: argocd
+          server: https://kubernetes.default.svc
+      clusterResourceWhitelist: []
+      namespaceResourceWhitelist:
+        - {group: argoproj.io, kind: Application}
+        - {group: argoproj.io, kind: ApplicationSet}
+        - {group: argoproj.io, kind: AppProject}
+      orphanedResources:
+        warn: true
