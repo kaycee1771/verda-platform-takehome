@@ -1,6 +1,6 @@
 # Phase 5 Exit Gates
 
-Status: PARTIAL — live and final local gates PASS; hosted closeout gate PENDING.
+Status: PASS.
 
 | Gate | Result | Sanitized proof |
 |---|---|---|
@@ -15,11 +15,10 @@ Status: PARTIAL — live and final local gates PASS; hosted closeout gate PENDIN
 | Version/live compatibility | PASS | Locked Argo CD, cert-manager, and Longhorn artifacts verified in the live path |
 | No Verda billable-resource expansion | PASS | No compute, volume, address, key, or object-storage resource added by Phase 5 |
 | Final evidence-curated local `make ci` | PASS | 175 static tests and every canonical offline gate passed |
-| Final protected hosted closeout CI | PENDING | Must pass after reviewed publication |
+| Final protected hosted closeout CI | PASS | Run `32305521901`, job `96237316122` |
 
-Phase 5 remains PARTIAL until the final hosted row passes and the closeout is merged.
-The phase map remains active at 5. After merge, Phase 6 may begin under the
-existing continuous Phases 5–17 directive and its own fail-closed prerequisites.
+Phase 5 is complete. The phase map advances to 6 under the existing continuous
+Phases 5–17 directive and Phase 6's own fail-closed prerequisites.
 
 This file contains no address, resource identity, credential, session, kubeconfig,
 certificate body, checksum value, or raw live payload.

@@ -306,5 +306,5 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
 - **Evidence safety:** Curation used only sanitized aggregate scalars supplied by the guarded
   verifiers. Raw logs, addresses, object identities, certificate bodies, kubeconfigs, account
   sessions, and credentials were not opened or copied into Git.
-- **Current boundary:** All Phase 5 live and final local gates pass. Phase 5 remains PARTIAL until
-  hosted closeout CI passes and merges; Phase 6 remains fail closed until then.
+- **Current boundary:** All Phase 5 live, local, and hosted gates pass. Phase 6 is active under its
+  own capacity, deployment, and end-to-end acceptance gates.

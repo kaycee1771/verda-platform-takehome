@@ -5,6 +5,9 @@ are under active development.
 
 ## Unreleased
 
+- Closed Phase 5 after live GitOps, storage, TLS, RBAC, capacity, local CI, and hosted CI gates
+  passed; advanced the fail-closed target map to Phase 6.
+
 ### Added
 
 - Phase 5 pinned Argo CD bootstrap, exact root/child GitOps ownership, cert-manager staging-to-

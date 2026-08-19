@@ -1,13 +1,14 @@
 # Phase 5 Hosted CI
 
-Status: PENDING.
+Status: PASS.
 
-Protected `main` commit `adc0a071d69852e30659f07999aa95f50401027b`
-passed hosted run `32299258822`, job `96217807991`. That baseline contains the
-definitive live-verification source but predates this final evidence curation.
+The reviewed Phase 5 closeout commit
+`d6d0e4f7fc2f69286836deed515b39d778038be6` passed hosted run
+`32305521901`, job `96237316122`.
 
-The Phase 5 closeout change has not yet passed the protected hosted workflow. The
-final pull-request and protected-main run identities will be recorded here only
-after local CI passes and the reviewed change is published.
+The credential-free workflow repeated repository validation, negative fixtures,
+pre-commit, complete-history secret scanning, and non-sensitive report upload.
+The job completed successfully in 2 minutes 20 seconds.
 
-No hosted success is inferred from the earlier protected live source commit.
+The earlier protected live source remains `adc0a071`; this hosted result validates
+the reviewed closeout tree without substituting for the live runtime evidence.

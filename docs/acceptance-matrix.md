@@ -112,7 +112,6 @@ passed. Phase 5 is authorized and starts with its own read-only preflight.
 | P07 | External boundary | HTTPS 200, non-ACME HTTP 404, four allowed and 28 denied TCP classes on each node | PASS |
 | P08 | Post-install capacity | +0.065 CPU cores and +16.830 GiB memory after equal-node loss; worst-two-node storage remains positive | PASS for Phase 5; Phase 6 not admitted |
 | P09 | Final current-tree local quality | Complete credential-free `make ci` after evidence curation | PASS |
-| P10 | Hosted closeout quality | Reviewed PR and protected-main workflow | PENDING |
+| P10 | Hosted closeout quality | Reviewed PR and protected workflow | PASS |
 
-Overall Phase 5 state is **PARTIAL** solely because P10 remains pending. All live exit gates and P09
-pass. Phase 6 remains prohibited until the hosted closeout merges.
+Overall Phase 5 state is **PASS**. Phase 6 is active under its own fail-closed gates.

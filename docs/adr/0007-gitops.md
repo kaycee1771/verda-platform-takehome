@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-16
 - **Owners:** GitOps architecture
-- **Blocking gates:** Phase 5 live and final local gates closed; hosted closeout CI remains
+- **Blocking gates:** Phase 5 live, local, and hosted closeout gates are closed; Phase 6 capacity and acceptance remain
 
 ## Context
 

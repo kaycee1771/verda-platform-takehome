@@ -12,8 +12,8 @@ bundle, active-cluster idempotency, and stability window all passed. An independ
 rerun of the corrected current tree, final current-tree local quality, PR validation, and
 protected-main hosted CI also passed. Phase 4 is closed. Phase 5 has now passed its protected live
 bootstrap, GitOps ownership, Longhorn resilience, certificate, authenticated ingress, direct-access,
-and external-boundary gates. Its final current-tree local CI passes; closeout remains partial only
-until hosted CI is recorded and merged.
+and external-boundary gates. Its final current-tree local and hosted closeout CI pass. Phase 5 is
+closed and Phase 6 is active.
 
 Current verified capabilities:
 
@@ -54,6 +54,6 @@ Current verified capabilities:
 - Positive post-install one-node-loss scheduling headroom and an exact public boundary of four
   allowed and 28 denied TCP port classes on each of three nodes.
 
-Phases 0–4 are complete. Phase 5 live gates and final local CI pass, but Phase 5 remains PARTIAL
-until hosted closeout CI passes and merges. Stage B, the application, and Phase 6+
-functionality remain fail closed behind their owning gates.
+Phases 0–5 are complete. Phase 6 is active under its exact capacity, GitOps, and end-to-end
+acceptance gates. Stage B, the application, and later functionality remain fail closed behind
+their owning phases.

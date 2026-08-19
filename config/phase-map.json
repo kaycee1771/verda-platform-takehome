@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "active_phase": 5,
+  "active_phase": 6,
   "phases": [
     {"id": 0, "name": "Engineering contract and discovery"},
     {"id": 1, "name": "Repository and quality system"},
@@ -28,9 +28,10 @@
     "configure",
     "verify-hosts",
     "cluster-bootstrap",
-    "verify-cluster"
+    "verify-cluster",
+    "bootstrap-gitops"
   ],
-  "enabled_phase_targets": ["bootstrap-gitops"],
+  "enabled_phase_targets": ["platform-status", "stage-a-verify"],
   "target_owners": {
     "help": {"default": 1},
     "bootstrap-tools": {"default": 1},

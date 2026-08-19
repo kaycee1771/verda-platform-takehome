@@ -74,5 +74,5 @@ Manual console work is allowed only for credentials/billing, a provider capabili
   rescheduling, and the test cleanup left no temporary workload or volume artifact.
 - Protected direct kubeconfig access remains independent of Argo ingress and future Rancher. All
   kubeconfigs, account sessions, endpoints, and raw live reports remain outside Git.
-- Phase 5 is not closed until hosted closeout CI passes and merges. Phase 6 and
+- Phase 5 is closed. Phase 6 is active; later phases and
   every broader Stage A component remain inactive until that gate is recorded.

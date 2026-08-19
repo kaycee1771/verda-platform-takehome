@@ -2,10 +2,9 @@
 
 ## Status
 
-PARTIAL
+PASS
 
-All live Phase 5 exit gates and final current-tree local CI pass. Hosted closeout
-CI remains pending, so overall PASS is not yet claimed.
+All live, final current-tree local, and hosted closeout gates pass.
 
 ## Implemented
 
@@ -89,7 +88,7 @@ CI remains pending, so overall PASS is not yet claimed.
   hosted gate.
 - Final current-tree local CI: PASS — 175 static/behavioral tests and every
   canonical offline gate passed.
-- Hosted closeout CI: PENDING.
+- Hosted closeout CI: PASS — run `32305521901`, job `96237316122`.
 
 ## Evidence created
 
@@ -107,7 +106,9 @@ CI remains pending, so overall PASS is not yet claimed.
 
 ## Deviations or failures
 
-- Phase 5 is not yet closed because hosted closeout CI has not completed and merged.
+- The first hosted closeout run passed validation but failed only when its report
+  uploader could not traverse a generated test directory. The harness now removes
+  that empty directory; the replacement hosted run passed validation and upload.
 - The public hostname uses the accepted `sslip.io` design rather than a custom
   domain. This is deliberate and does not weaken TLS or authentication.
 - Longhorn replication is not represented as off-cluster backup or application-
@@ -156,11 +157,10 @@ CI remains pending, so overall PASS is not yet claimed.
 - Rancher-independent break-glass access: PASS.
 - Positive post-install capacity margin: PASS for Phase 5.
 - Final current-tree local CI: PASS.
-- Protected hosted closeout CI: PENDING.
+- Protected hosted closeout CI: PASS.
 
 ## Next phase
 
-The only immediate work is Phase 5 closeout: publish through protected review and
-record hosted CI. After that closeout is merged, Phase 6 may
-begin under the existing continuous Phases 5–17 directive and its own fail-closed
-prerequisites. The phase map remains active at Phase 5 until the merge.
+Phase 6 may begin under the existing continuous Phases 5–17 directive and its own
+fail-closed prerequisites. The phase map advances to Phase 6 with only its owned
+status and Stage A verification targets enabled.

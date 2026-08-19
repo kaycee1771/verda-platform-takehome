@@ -2,15 +2,15 @@
 
 ## Current state
 
-- Active phase: Phase 5 — LIVE GATES PASS / CLOSEOUT PARTIAL
-- Phase status: PARTIAL — bootstrap, GitOps ownership, storage resilience, TLS, authentication, endpoint-boundary, and final local CI gates pass; hosted closeout CI is pending
-- Stage A status: PHASE 5 PLATFORM BOUNDARY READY — three-node RKE2, Argo CD, cert-manager, authenticated TLS ingress, and three-node Longhorn are live; Phase 6 remains fail closed until Phase 5 closeout is merged
+- Active phase: Phase 6 — STAGE A END-TO-END PLATFORM BASELINE
+- Phase status: Phase 5 PASS — bootstrap, GitOps ownership, storage resilience, TLS, authentication, endpoint-boundary, local, and hosted gates pass
+- Stage A status: PHASE 6 ACTIVE — the Phase 5 platform boundary is closed; mandatory Stage A services remain fail closed behind Phase 6 capacity and acceptance gates
 - Stage B status: NOT STARTED — prohibited until Stage A is green and the Stage B decision gate passes
-- Last protected-main hosted baseline: commit `adc0a071d69852e30659f07999aa95f50401027b`, run `32299258822`, job `96217807991`; validation passed before final evidence curation
-- Definitive Phase 5 live-verification source: protected `main` commit `adc0a071d69852e30659f07999aa95f50401027b`; the final evidence-curated hosted closeout identity is pending
-- Current blocker: the hosted closeout workflow is not yet recorded and merged
+- Last hosted closeout baseline: commit `d6d0e4f7fc2f69286836deed515b39d778038be6`, run `32305521901`, job `96237316122`; credential-free validation and report upload passed
+- Definitive Phase 5 live-verification source: protected `main` commit `adc0a071d69852e30659f07999aa95f50401027b`; final closeout source is the reviewed Phase 5 PR
+- Current blocker: none for Phase 5; Phase 6 must pass its own preflight, capacity, deployment, and end-to-end gates
 - Cloud mutation performed: the original seven-resource plan plus one explicitly authorized, assertion-bounded replacement of server-02 compute/OS only; `verda-mgmt-data-02` was preserved
-- Next permitted action: publish through the protected review path and record hosted closeout CI; do not begin Phase 6 before merge
+- Next permitted action: merge the reviewed Phase 5 closure, verify protected-main CI, then execute Phase 6 under the existing continuous directive
 
 ## Phase ledger
 
@@ -21,7 +21,7 @@
 | 2 — Verda infrastructure provisioning | PASS | 2026-08-17 | 2026-08-17 | `evidence/phase-2/` | Exact resources, unique endpoints, three-host SSH, lifecycle safety, cost, encrypted state, and zero drift verified |
 | 3 — Host hardening and secure node networking | PASS | 2026-08-17 | 2026-08-17 | `evidence/phase-3/` | Hardened access, UUID mounts, peer-only WireGuard, firewall, two-pass idempotency, and three serial reboots verified |
 | 4 — Management RKE2 cluster | PASS | 2026-08-18 | 2026-08-19 | `evidence/phase-4/` | Live, local, PR, and protected-main hosted gates pass |
-| 5 — Storage, ingress, certificates, and bootstrap boundary | PARTIAL | 2026-08-19 | — | `evidence/phase-5/` | All live and final local gates pass; hosted closeout quality pending |
+| 5 — Storage, ingress, certificates, and bootstrap boundary | PASS | 2026-08-19 | 2026-08-20 | `evidence/phase-5/` | Live, local, and hosted closeout gates pass |
 
 ## Environment inventory
 
@@ -87,7 +87,7 @@
 | External endpoint boundary is exact on all three nodes | PASS | `evidence/phase-5/tls-access-and-boundary.md` | Retain the four allowed and 28 denied port classes |
 | Post-install capacity retains one-node-loss headroom | PASS | `evidence/phase-5/capacity-before-after.md` | Re-evaluate exact Phase 6 requests and PVCs before admission |
 | Final current-tree local CI | PASS | `evidence/phase-5/repository-validation.md` | Retain exact offline/credential-free parity |
-| Final hosted closeout CI | PENDING | `evidence/phase-5/hosted-ci.md` | Publish only after local CI, then record protected result |
+| Final hosted closeout CI | PASS | `evidence/phase-5/hosted-ci.md` | Retain immutable run and job identity |
 
 ## Phase 0 exit-gate ledger
 
