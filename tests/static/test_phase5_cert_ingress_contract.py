@@ -160,6 +160,7 @@ class Phase5CertIngressContractTests(unittest.TestCase):
             CERT / "production",
             f"hostname={SAFE_HOSTNAME}",
             f"acmeEmail={SAFE_EMAIL}",
+            "stagingIssuerVerified=false",
         )
         self.assertNotEqual(blocked.returncode, 0)
         self.assertIn("stagingIssuerVerified=true", blocked.stderr)
