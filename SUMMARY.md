@@ -6,7 +6,11 @@ reproducible credential-free quality system. Phase 2 then provisioned and proved
 infrastructure boundary: three Verda management instances, three protected data volumes, unique
 public endpoints, dedicated-key SSH, encrypted external state, bounded rollback, cost compliance,
 and final zero drift. Phase 3 then established and live-proved the complete pre-Kubernetes host
-security, network, and storage boundary.
+security, network, and storage boundary. Phase 4 has now completed its definitive guarded bootstrap:
+the three-node RKE2 management cluster, failure drills, recovery points, hardening checks, support
+bundle, active-cluster idempotency, and stability window all passed. An independent verification
+rerun of the corrected current tree and final current-tree local quality also passed. Hosted CI
+remains open, so Phase 4 is not yet closed.
 
 Current verified capabilities:
 
@@ -27,7 +31,16 @@ Current verified capabilities:
   no-fragment peer paths, sustained ring traffic, and exact peer endpoint allowlists.
 - Ext4 data volumes mounted by UUID at `/var/lib/longhorn` only after full empty-media proof, with
   clean idempotent reruns and persistence across three serial reboots.
+- Three Ready and schedulable RKE2 server/etcd nodes with encrypted secrets, audit logging, healthy
+  embedded etcd, and checksum-pinned bundled Cilium and Traefik.
+- Complete unfiltered Hubble-disabled Cilium functional coverage plus a Hubble-enabled strict flow
+  canary, bounded event buffering, exact per-agent/source zero lost-event delta across that canary,
+  DNS/service/policy/MTU proof, and internal three-node ingress.
+- Local and off-cluster compressed etcd snapshots, focused all-node CIS checks, approved-source
+  public-port proof, one-node and primary-endpoint drills, and sanitized diagnostic collection.
+- A 270-second post-drill stability window and active-cluster convergence replay with no changes,
+  failures, or unreachable hosts.
 
-Phase 3 host hardening and secure node networking are complete. RKE2, Kubernetes,
-GitOps, platform services, Stage A verification, Stage B, and the application remain unimplemented
-and fail closed behind their blueprint phases.
+Phases 0–3 are complete. Phase 4 remains PARTIAL only until hosted CI passes.
+GitOps, platform services, Stage B, and the application remain
+unimplemented and fail closed behind later blueprint phases; Phase 5 is not authorized.

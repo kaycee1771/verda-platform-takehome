@@ -1,0 +1,56 @@
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-cilium
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    MTU: {{ phase4_cilium_mtu }}
+    routingMode: tunnel
+    tunnelProtocol: vxlan
+    kubeProxyReplacement: "false"
+    policyEnforcementMode: default
+    rollOutCiliumPods: true
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
+    bpf:
+      monitorAggregation: medium
+    encryption:
+      enabled: false
+    hostFirewall:
+      enabled: false
+    prometheus:
+      enabled: true
+      metricsService: true
+      serviceMonitor:
+        enabled: false
+    operator:
+      replicas: 2
+      prometheus:
+        enabled: true
+        serviceMonitor:
+          enabled: false
+    hubble:
+      enabled: true
+      eventBufferCapacity: "8191"
+      metrics:
+        enableOpenMetrics: true
+        enabled:
+          - dns:query;ignoreAAAA
+          - drop
+          - tcp
+          - flow
+          - icmp
+          - http
+      relay:
+        enabled: true
+        replicas: 2
+        prometheus:
+          enabled: true
+          serviceMonitor:
+            enabled: false
+      ui:
+        enabled: false

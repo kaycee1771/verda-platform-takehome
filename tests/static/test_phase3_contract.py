@@ -98,10 +98,11 @@ class Phase3ContractTests(unittest.TestCase):
         for persistence_command in ("setx", "Out-File", "Set-Content"):
             self.assertNotIn(persistence_command, launcher)
 
-    def test_rke2_install_remains_a_failing_phase_four_gate(self) -> None:
+    def test_rke2_install_is_owned_by_guarded_phase_four_role(self) -> None:
         playbook = (ROOT / "infra" / "ansible" / "playbooks" / "install-rke2.yml").read_text()
-        self.assertIn("Phase 4 gate", playbook)
-        self.assertIn("ansible.builtin.fail", playbook)
+        self.assertIn("phase4_action", playbook)
+        self.assertIn("role: rke2_server", playbook)
+        self.assertNotIn("not yet implemented", playbook)
 
 
 if __name__ == "__main__":

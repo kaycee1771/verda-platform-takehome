@@ -1,6 +1,6 @@
 # ADR 0011: Use Layered Recovery and Require Restore Proof
 
-- **Status:** Proposed
+- **Status:** Accepted for the Phase 4 management-snapshot boundary; restore proof remains phase-gated
 - **Date:** 2026-08-16
 - **Owners:** Recovery architecture
 - **Blocking gates:** GATE-008 and live restore evidence
@@ -11,7 +11,7 @@ Git, Terraform state, etcd, Kubernetes objects, persistent volumes, component da
 
 ## Decision
 
-Use Git for declarative state, protected Terraform state/backup for infrastructure lifecycle, RKE2 etcd snapshots for cluster state, Velero for Kubernetes resources/filesystem backups, Longhorn snapshot/backup for volume recovery, component-specific exports where consistency requires them, and an encrypted off-repository Sealed Secrets key backup. Use separate credentials/buckets/prefixes in a genuinely off-cluster S3-compatible target. Prefer Verda object storage only if the current project entitlement appears and compatibility passes; otherwise use ADR-0006's external S3 fallback.
+Use Git for declarative state, protected Terraform state/backup for infrastructure lifecycle, RKE2 etcd snapshots for cluster state, Velero for Kubernetes resources/filesystem backups, Longhorn snapshot/backup for volume recovery, component-specific exports where consistency requires them, and an encrypted off-repository Sealed Secrets key backup. Use separate credentials/buckets/prefixes in a genuinely off-cluster S3-compatible target. The current project now has Verda object-storage entitlement and passed the Phase 4 compatibility boundary, so management etcd snapshots use that off-cluster target through the documented manual provider-gap exception. ADR-0006's external S3 fallback remains the portability path.
 
 ## Alternatives considered
 
@@ -23,12 +23,18 @@ Use Git for declarative state, protected Terraform state/backup for infrastructu
 
 - Recovery has multiple runbooks and retention/credential dependencies.
 - Recovery objectives must be stated per data class, not as one vague platform number.
-- The current project does not expose Verda Object Storage Access Keys, so recovery cannot assume that target.
-- This ADR remains Proposed until an off-cluster backup and checksum-verified restore pass.
+- Verda Terraform provider 1.1.2 cannot own the bucket or credential lifecycle; inventory,
+  rotation, and teardown therefore remain explicit operator responsibilities.
+- Phase 4 proves scheduled and on-demand compressed recovery points in local and off-cluster
+  location classes. It does not claim a destructive restore rehearsal or measured recovery SLO.
 
 ## Validation evidence
 
-At minimum: current snapshot/backup status, isolated destination, namespace/PVC deletion and restore, data checksum, endpoint test, measured RTO/RPO, and recovery-key protection. Node reconstruction and optional etcd restore add deeper proof.
+Phase 4 evidence proves current snapshot status, an isolated off-cluster destination, positive size,
+ready state, compression, schedule, retention, and protected credentials without recording raw
+locations. Later recovery phases must add isolated restore, data checksum, endpoint validation,
+measured RTO/RPO, and recovery-key protection before claiming end-to-end restore proof. Node
+reconstruction and an etcd restore rehearsal provide deeper assurance.
 
 ## Production evolution
 

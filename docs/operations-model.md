@@ -36,3 +36,27 @@ The intended steady state has exactly two imperative in-cluster actions: install
 | Secret-controller loss | Encrypted off-repository Sealed Secrets recovery key |
 
 Manual console work is allowed only for credentials/billing, a provider capability gap, or break-glass recovery. Every exception must record the operator, time, reason, affected resource, resulting drift, and reconciliation action.
+
+## Phase 4 management-cluster bootstrap boundary
+
+- RKE2 preparation and start are separate Ansible actions. Preparation cannot start until the
+  read-only Terraform/state/cost boundary, complete Phase 3 verification, route/CIDR gate, and
+  rollback-protected firewall update pass.
+- The first server becomes healthy before either join; joins are serial and use WireGuard `9345`.
+  Common immutable configuration is parity-hashed across all three nodes.
+- The RKE2 token and protected direct/primary kubeconfigs live only in the external ACL-restricted
+  controller directory. The token recovery copy is DPAPI sealed for the current operator.
+- S3 values are process-only and are applied to the cluster through standard input with secret
+  logging disabled. Acceptance requires both `file://` and `s3://` snapshot listings.
+- Failure drills stop only one RKE2 server at a time and restore full health before the next drill.
+  The default primary endpoint SPOF and protected direct-node recovery path are tested separately.
+- On 2026-08-19, the authorized exact-source allowlist recovery, object-storage entitlement, and
+  complete preflight closed the earlier blockers. The serial bootstrap produced three Ready
+  server/etcd nodes, common-config parity, healthy Cilium/networking, and local plus off-cluster
+  snapshots without changing a Verda infrastructure resource.
+- Terraform remains authoritative for the unchanged three-instance/six-volume boundary. Ansible now
+  owns the live RKE2 configuration and snapshot schedule. The manually created object-storage bucket
+  and credential are an explicit provider-gap exception with separate teardown obligations.
+- Failure drills, stability, active-cluster idempotency, and support-bundle proof passed during the
+  definitive bootstrap. Independent current-tree verification and final local quality pass; hosted
+  CI remains mandatory before Phase 4 closure. Argo CD and every Phase 5+ owner remain inactive.

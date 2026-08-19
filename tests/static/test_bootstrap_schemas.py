@@ -36,6 +36,32 @@ class FakeResponse:
 
 
 class BootstrapSchemaTests(unittest.TestCase):
+    def test_phase_four_network_smoke_has_complete_locked_schema_coverage(self) -> None:
+        lock = RUNTIME.yaml.safe_load(RUNTIME.LOCK.read_text(encoding="utf-8"))
+        locked_core = {
+            item["name"]: item["sha256"] for item in lock["kubernetes"]["files"]
+        }
+        required = {
+            "daemonset-apps-v1.json",
+            "service-v1.json",
+            "networkpolicy-networking-v1.json",
+            "ingress-networking-v1.json",
+        }
+        self.assertTrue(required.issubset(locked_core))
+        for name in required:
+            with self.subTest(schema=name):
+                self.assertRegex(locked_core[name], r"^[0-9a-f]{64}$")
+
+        validate = (
+            pathlib.Path(__file__).parents[2] / "scripts" / "quality" / "validate.sh"
+        ).read_text(encoding="utf-8")
+        kubeconform_contract = validate.split("kubernetes_validate() {", 1)[1].split(
+            "\n}", 1
+        )[0]
+        self.assertIn(
+            "tests/cluster/phase4/network-smoke.yaml", kubeconform_contract
+        )
+
     def test_every_materialized_schema_has_an_output_integrity_lock(self) -> None:
         lock = RUNTIME.yaml.safe_load(RUNTIME.LOCK.read_text(encoding="utf-8"))
         for item in lock["crds"]["materialized"]:

@@ -1,0 +1,214 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: phase4-network-test
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.35
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: echo
+  namespace: phase4-network-test
+spec:
+  selector:
+    matchLabels:
+      app: phase4-echo
+  template:
+    metadata:
+      labels:
+        app: phase4-echo
+    spec:
+      containers:
+        - name: echo
+          image: quay.io/cilium/alpine-curl:v1.10.0@sha256:913e8c9f3d960dde03882defa0edd3a919d529c2eb167caa7f54194528bde364
+          command: [/bin/sh, -ec]
+          args:
+            - >-
+              dd if=/dev/zero of=/www/mtu.bin bs=1024 count=1024 2>/dev/null;
+              serve_index() {
+                while true; do
+                  { printf 'HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nphase4-ok\n'; } |
+                    busybox nc -l -p 8080;
+                done;
+              };
+              serve_mtu() {
+                while true; do
+                  {
+                    printf 'HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n';
+                    cat /www/mtu.bin;
+                  } |
+                    busybox nc -l -p 8081;
+                done;
+              };
+              serve_index &
+              serve_mtu &
+              wait
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: mtu
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /index.html
+              port: http
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts:
+            - name: web
+              mountPath: /www
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      volumes:
+        - name: web
+          emptyDir: {sizeLimit: 2Mi}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: client
+  namespace: phase4-network-test
+spec:
+  selector:
+    matchLabels:
+      app: phase4-client
+  template:
+    metadata:
+      labels:
+        app: phase4-client
+        access: allowed
+    spec:
+      containers:
+        - name: client
+          image: quay.io/cilium/alpine-curl:v1.10.0@sha256:913e8c9f3d960dde03882defa0edd3a919d529c2eb167caa7f54194528bde364
+          command: [/bin/sh, -ec]
+          args: [sleep infinity]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile: {type: RuntimeDefault}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: denied-client
+  namespace: phase4-network-test
+  labels:
+    app: phase4-denied-client
+    access: denied
+spec:
+  containers:
+    - name: client
+      image: quay.io/cilium/alpine-curl:v1.10.0@sha256:913e8c9f3d960dde03882defa0edd3a919d529c2eb167caa7f54194528bde364
+      command: [/bin/sh, -ec]
+      args: [sleep infinity]
+      resources:
+        requests: {cpu: 10m, memory: 16Mi}
+        limits: {cpu: 100m, memory: 64Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: {drop: [ALL]}
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: {type: RuntimeDefault}
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile: {type: RuntimeDefault}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: phase4-network-test
+spec:
+  selector:
+    app: phase4-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: echo-default-deny
+  namespace: phase4-network-test
+spec:
+  podSelector:
+    matchLabels:
+      app: phase4-echo
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: echo-allow-approved-client
+  namespace: phase4-network-test
+spec:
+  podSelector:
+    matchLabels:
+      app: phase4-echo
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              access: allowed
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8081
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rke2-traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo
+  namespace: phase4-network-test
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: phase4.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo
+                port:
+                  name: http

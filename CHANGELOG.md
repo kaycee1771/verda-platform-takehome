@@ -7,6 +7,20 @@ are under active development.
 
 ### Added
 
+- Phase 4 management-RKE2 role and guarded orchestrator with exact artifact verification,
+  preparation/start separation, external DPAPI token recovery, parity-controlled configuration,
+  serial joins, CIS profile/sysctls/audit, Cilium, Traefik, S3 snapshot, live verification, failure
+  drills, and sanitized support-bundle automation.
+- Immutable management/future-workload CIDRs, pod MTU, source-controlled network/CIS/cluster tests,
+  official compatibility evidence, and gate-by-gate sanitized Phase 4 evidence.
+- A live three-server RKE2 management cluster with healthy embedded etcd, Cilium/Hubble, CoreDNS,
+  internal Traefik, secrets encryption, audit logging, and local plus off-cluster snapshots.
+- Definitive Phase 4 bootstrap proof for the approved-source external boundary, non-primary and
+  designated-primary drills, sanitized support archive, zero-change active-cluster replay, and
+  270-second recovered-state stability window.
+- Phase 4 evidence safety tests that reject raw reports, archives, kubeconfigs, secret assignments,
+  private-key material, and operational endpoint identifiers while allowing documented public
+  configuration and ordinary security prose.
 - Phase 3 fail-closed host orchestrator, strict runtime generator, hardened-access bootstrap,
   baseline, storage, WireGuard, scoped nftables, diagnostics, serial reboot, external-scan, MTU,
   throughput, idempotency, and sanitized-report automation.
@@ -34,6 +48,25 @@ are under active development.
 
 ### Changed
 
+- Bounded the complete unfiltered Cilium functional suite to concurrency one with Hubble and flow
+  validation disabled, retained a separate Hubble-enabled strict flow canary, scoped exact
+  per-agent/source lost-event deltas to that canary window, raised the pinned Hubble event buffer by
+  one supported step, and added live rollout/effective-config conformance gates.
+- Kept destructive zero-restart Cilium reconciliation only before verification; post-drill recovery
+  now waits for exact API/Cilium/Hubble readiness and preserves expected restart history for the
+  stability baseline.
+- Scoped offline-cache provenance to actual tool/provider inputs and added every Terraform provider
+  lock to the fingerprint; RKE2-only metadata no longer requires a network rebuild, while material
+  cache changes still fail closed.
+- Renamed implemented Phase 4 Ansible roles to valid underscore names and prefixed internal
+  registered variables so the complete production lint profile passes without exclusions.
+- Reconciled the exact administrator-source allowlist through the authorized timed-rollback path and
+  retained the three-node public boundary without a broad exception.
+- Documented the manually enabled Verda object-storage bucket and scoped credential as an explicit
+  provider-1.1.2 capability exception with separate rotation and teardown ownership.
+- Began Phase 4 with repository-only reconciliation: recorded the final Phase 3 protected-main CI,
+  corrected application/GitOps/workflow/teardown phase ownership, and enabled only explicit safe
+  completed-phase prerequisites plus the management cluster bootstrap/verification targets.
 - Made hosted schema bootstrap resistant to shared-runner raw-content rate limits by using the
   job-scoped read-only GitHub token only through allowlisted GitHub Contents API requests; local
   unauthenticated bootstrap and immutable checksum enforcement remain unchanged.
@@ -66,6 +99,12 @@ are under active development.
 
 ### Security
 
+- Stopped Phase 4 before host mutation when the prior exact administrator `/32` denied all three
+  nodes; no broad SSH rule, public supervisor port, console power action, or RKE2 start was used.
+- Kept the RKE2 token, kubeconfigs, S3 values, and recovery material outside Git by design; complete
+  working-tree and history scans remain clean.
+- Corrected Cilium L7 proxy traffic with one interface, pod-CIDR, and proxy-mark-scoped host rule;
+  no global forward accept, public Cilium port, or disabled connectivity test was introduced.
 - Applied rollback-protected SSH and firewall changes, proved a fresh strict session before
   lock-down, restricted SSH to the current exact `/32`, and verified root/password denial plus
   external closure of all future application and control-plane TCP ports.

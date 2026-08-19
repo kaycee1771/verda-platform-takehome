@@ -2,7 +2,14 @@
 
 ## Status
 
-**PASS through Phase 3 — Stage A infrastructure is live at $0.23165/hour ($5.56/day).** The current three-node/six-volume count and provider burn rate reconcile, the corrective node-02 replacement did not change steady-state cost, and host hardening, WireGuard, nftables, and filesystem preparation added no cloud resource or service charge.
+**PASS through the current Phase 4 infrastructure boundary — Stage A infrastructure remains live at
+$0.23165/hour ($5.55948/day), excluding unrounded object-storage usage.** The three-node/six-volume
+count and provider burn rate reconcile, and RKE2 installation added no instance, volume, address, or
+SSH-key resource. Object storage is enabled through a documented manual provider-gap exception; its
+positive-size byte/request charge remains an explicit operational-ledger residual, is not
+represented as zero, and is bounded by the existing $5 unquoted-services allowance. Exact
+capacity/operations reconciliation belongs to Phase 14 and does not expand the Phase 4 compute or
+block-storage envelope.
 
 The envelope deliberately uses on-demand rather than spot capacity for control-plane/etcd nodes, the lean end of the blueprint's storage bounds, a capped allowance for services whose account price is not surfaced, and 15% contingency. Rates must be revalidated immediately before apply.
 
@@ -22,14 +29,15 @@ The Stage A 100 GiB data volumes provide 300 GiB raw Longhorn capacity. With thr
 | Input | Source | Current value |
 |---|---|---|
 | Project currency and initial Phase 2 balance | Authenticated Verda CLI | USD; $115.67 |
-| Current project run rate | Authenticated Verda CLI at final reconciliation | $0.23165/hour |
+| Phase 4 project balance | Authenticated Verda CLI at 2026-08-19 13:37Z | $103.01 at that timestamp |
+| Current project run rate | Authenticated Verda CLI at 2026-08-19 13:37Z | $0.23165/hour; $5.55948/day |
 | Assessment window | User decision | 168 hours (7 days) |
 | Selected CPU shape | Current project deploy catalog | `CPU.4V.16G`: 4 vCPU, 16 GiB RAM |
 | Selected location | Current availability list | `FIN-03`; same shape also visible in FIN-01/02 |
 | On-demand compute rate | Current project deploy catalog | $0.02790/node-hour |
 | Exact image | Current project deploy catalog | Ubuntu 24.04 + Minimal Image; configuration ID `77edfb23-bb0d-41cc-a191-dccae45d96fd` |
 | NVMe rate | Console volume quote and current official pricing | $0.20/GiB-month; 50 GiB quoted at $0.01370/hour |
-| Object-storage price/entitlement | Current project and official docs | Not surfaced; bounded by allowance and blocked before Phase 5 |
+| Object-storage price/entitlement | Current project and official docs | Entitlement enabled manually; positive-size byte/request charge is unmeasured, covered by the $5 allowance, and reconciled exactly in Phase 14 |
 | Public-IP/traffic/request charges | Current project/public price page | No separate rate surfaced; bounded by allowance and must be rechecked before apply |
 
 The time-bound project credential remained process-only. The authenticated CLI and provider were used for the final account, resource, rate, catalog, and drift reconciliation. No account identifier, credential value, or coupon is recorded.
@@ -62,7 +70,7 @@ remaining after envelope = $65.16
 envelope / balance = 43.66%
 ```
 
-The known VM-plus-NVMe run rate is $0.23165/hour or $5.56/day. A 12-hour infrastructure buffer is $2.78; the remaining balance after the full envelope is materially larger. The $5 allowance is a planning cap, not a fabricated Verda quote: if live object/traffic/registry pricing would exceed it, stop and re-plan before provisioning that service.
+The known VM-plus-NVMe run rate is $0.23165/hour or $5.55948/day. A 12-hour infrastructure buffer is $2.78; the remaining balance after the full envelope is materially larger. The $5 allowance is a planning cap, not a fabricated Verda quote: if live object/traffic/registry pricing would exceed it, stop and re-plan before provisioning that service.
 
 ## Conditional Stage B scenario
 
@@ -87,9 +95,22 @@ Verda documents prepaid ten-minute billing for pay-as-you-go instances and warns
 
 - Resources created by Phase 2: 3 CPU instances, 3 instance-owned 80 GiB OS volumes, 3 protected 100 GiB data volumes, and 1 SSH-key record
 - Resources changed after creation: server-02 compute and its instance-owned OS disk were replaced once through the explicitly authorized, exact saved plan; all three persistent data volumes were preserved
-- Cloud run rate introduced by Phase 2: $0.23165/hour or $5.56/day
+- Cloud run rate introduced by Phase 2: $0.23165/hour or $5.55948/day
 - Balance at final 2026-08-17 reconciliation: $115.40
+- Balance at the 2026-08-19 13:37Z authenticated reconciliation: $103.01; this value is
+  timestamp-bound and is not presented as the current balance after that instant
 - Seven-day Stage A planning envelope: $50.51
 - Known infrastructure seven-day cost: $38.92; 15% contingency: $44.75
 - Phase 3 resource delta: none; the live preflight again reconciled 3 instances, 6 volumes, zero drift, and the expected hourly rate
 - Phase 2 cost gate: PASS; Phase 3 cost gate: PASS
+- Phase 4 pre-installation reconciliation: exactly 3 instances and 6 volumes, zero Terraform drift,
+  $0.23165/hour infrastructure run rate, and a seven-day infrastructure-plus-contingency projection
+  of $44.75385
+- Phase 4 resource delta: none; RKE2, Cilium, Traefik, and host configuration add no Verda compute or
+  block-volume resource
+- Phase 4 object-storage delta: one manually managed snapshot bucket with a positive-size recovery
+  point; its unmeasured byte/request charge is a separately tracked provider-billing residual, is not
+  rounded to zero, and remains inside the $5 unquoted-services allowance pending exact Phase 14
+  capacity/operations reconciliation
+- Phase 4 infrastructure cost gate: PASS; the guarded bootstrap rechecked the unchanged three-node
+  resource envelope before mutation, and Phase 4 created no additional compute or block volumes

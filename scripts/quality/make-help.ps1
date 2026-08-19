@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-Write-Host '[phase 3] target=help repository, quality, and hardened management hosts'
+Write-Host '[phase 4] target=help management RKE2 cluster'
 @'
 Canonical targets
   make bootstrap-tools    Build the pinned local quality image and warm immutable caches.
@@ -20,7 +20,11 @@ Canonical targets
                           Requires process-only Verda credentials and PHASE3_ADMIN_CIDRS.
   make verify-hosts CLUSTER=management
                           Verify strict SSH, storage, time, WireGuard, MTU, and firewall controls.
+  make cluster-bootstrap CLUSTER=management
+                          Run the guarded Phase 4 RKE2 preflight and staged bootstrap.
+  make verify-cluster CLUSTER=management
+                          Run the Phase 4 cluster, network, snapshot, security, and failure gates.
 
-Phase 2 cloud mutation is closed. RKE2 and every Phase 4+ target fail closed according to
-config/phase-map.json. Use `make <target> CLUSTER=...` as documented in README.md.
+Phase 2 cloud mutation remains closed. Explicit read-only/convergence prerequisites from completed
+phases remain available; Phase 5+ targets fail closed according to config/phase-map.json.
 '@ | Write-Host

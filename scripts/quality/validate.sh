@@ -86,6 +86,7 @@ kubernetes_validate() {
   kubeconform -strict -summary -kubernetes-version 1.35.0 \
     -schema-location "${schema_location}" \
     tests/fixtures/kubernetes/valid \
+    tests/cluster/phase4/network-smoke.yaml \
     policies/kyverno/tests/policy.yaml \
     policies/kyverno/tests/resources.yaml \
     "${render_dir}"
@@ -167,7 +168,7 @@ if find tests/fixtures/helm -name Chart.yaml -print -quit | grep -q .; then
 else
   not_applicable 'Helm lint' 'no chart exists'
 fi
-not_applicable 'application environment Helm renders' 'application chart begins in Phase 6; the Phase 1 chart fixture is validated above'
+  not_applicable 'application environment Helm renders' 'application chart begins in Phase 9; the Phase 1 chart fixture is validated above'
 run_gate 'Kubernetes and CRD schema validation' kubernetes_validate
 run_gate 'Kyverno passing/failing policy fixtures' kyverno test policies/kyverno/tests --detailed-results
 run_gate 'Prometheus rule syntax and unit tests' prometheus_validate
@@ -177,7 +178,7 @@ if find . -type f -name '*.go' -not -path './.git/*' -not -path './.local/*' -pr
   run_gate 'Go vet' go vet ./applications/platform-demo/...
   run_gate 'Go tests' go test ./applications/platform-demo/...
 else
-  not_applicable 'Go format/vet/test' 'application source begins in Phase 6; module ownership is reserved only'
+  not_applicable 'Go format/vet/test' 'application source begins in Phase 9; module ownership is reserved only'
 fi
 
 if find . -type f -name Dockerfile -not -path './.git/*' -not -path './.local/*' -print -quit | grep -q .; then

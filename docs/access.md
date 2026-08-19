@@ -1,8 +1,10 @@
 # Assessor Access Instructions
 
-**Status:** Phase 3 host boundary verified; application and platform access remain future work. Do
-not add live endpoints, source CIDRs, passwords, private keys, administrator kubeconfigs, or recovery
-material to this file.
+**Status:** The Phase 4 management cluster is live. Named SSH administration works from the exact
+approved sources, the API is healthy internally, and the approved-source external API/direct-path
+plus negative port-boundary checks passed. Application, platform UI, and assessor access remain
+future work. Do not add live endpoints, source CIDRs, private keys, administrator kubeconfigs, or
+recovery material to this file.
 
 ## Access principles
 
@@ -23,19 +25,27 @@ material to this file.
 | Argo CD | OPEN | 443 | Read-only assessor | Out of band | OPEN |
 | Harbor | OPEN | 443 | Read-only assessor | Out of band | OPEN |
 | Grafana | OPEN | 443 | Viewer | Out of band | OPEN |
-| Kubernetes API | OPEN | 6443 or SSH tunnel | Read-only kubeconfig | Out of band | OPEN |
-| SSH | Redacted direct endpoint | 22 | `platform-admin`; operator only in Phase 3 | Public key plus source `/32` allowlist | 2026-08-24 |
+| Kubernetes API | Redacted primary/direct paths | 6443 or SSH tunnel | Administrator path exists; assessor role pending | Out of band | 2026-08-24 |
+| SSH | Redacted direct endpoint | 22 | `platform-admin`; source-restricted | Public key plus exact `/32` allowlist | 2026-08-24 |
 
-All service rows except SSH are design contracts, not live endpoints. TCP 80, 443, 6443, 9345,
-2379–2381, 10250, 9090, and sampled NodePorts are currently filtered or closed externally. RKE2 and
-all listed platform services remain absent.
+All application and platform UI rows remain design contracts, not live endpoints. RKE2 is present;
+public `9345`, etcd, kubelet, Cilium, metrics, HTTP/S, and NodePort allow rules remain absent. The
+source-controlled external scan and corrected current-tree independent verification proved that
+observed boundary from the approved source. A genuinely independent non-allowlisted vantage remains
+a documented limitation.
 
 ## Verification flow
 
-The Phase 3 host check is automated by `make verify-hosts CLUSTER=management` and uses external
-runtime material. It proves pinned host identity, named key login, root/password denial, firewall,
-WireGuard, storage, time, and RKE2 absence without printing endpoint or secret values. Later phases
-will add copy-paste-safe DNS, TLS, scoped login, artifact, health, metrics, logs, and backup checks.
+The Phase 3 host check is automated by `make verify-hosts CLUSTER=management`. Phase 4 adds
+`make verify-cluster CLUSTER=management` for node, API, etcd, Cilium, networking, snapshots, CIS,
+firewall, fault, stability, and diagnostics gates. Both commands use external runtime material and
+omit endpoint or secret values from curated evidence.
+
+The 2026-08-18 changed-source condition was recovered through the explicitly authorized
+rollback-protected exact-source workflow. No broad temporary SSH rule was used. Protected primary
+and direct-node administrator kubeconfigs stay in the ACL-restricted external directory and are
+never distributed through Git. Later phases must add assessor identities, copy-paste-safe TLS URLs,
+and independent login checks.
 
 ## Revocation
 

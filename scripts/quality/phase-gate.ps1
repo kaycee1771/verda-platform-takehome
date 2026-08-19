@@ -37,16 +37,55 @@ if ($null -ne $clusterOwner) {
 
 $activePhase = [int]$phaseMap.active_phase
 $enabledTargets = @($phaseMap.enabled_phase_targets)
-if ($requiredPhase -eq $activePhase -and $Target -in $enabledTargets) {
+$enabledCompletedTargets = @($phaseMap.enabled_completed_phase_targets)
+$currentPhaseTarget = $requiredPhase -eq $activePhase -and $Target -in $enabledTargets
+$completedPrerequisiteTarget = $requiredPhase -lt $activePhase -and $Target -in $enabledCompletedTargets
+
+if ($currentPhaseTarget -or $completedPrerequisiteTarget) {
     if ($cluster -ne 'management') {
-        throw "Phase 3 authorizes only CLUSTER=management; Stage B is prohibited."
+        throw "Phase 4 authorizes only CLUSTER=management; Stage B is prohibited."
     }
-    $phase3Script = Join-Path $repoRoot 'scripts\host\phase3.ps1'
-    if (-not (Test-Path -LiteralPath $phase3Script -PathType Leaf)) {
-        throw 'The Phase 3 host orchestrator is absent; no action was taken.'
+
+    $scriptPath = $null
+    $scriptArguments = @()
+    switch ($Target) {
+        'infra-plan' {
+            $scriptPath = Join-Path $repoRoot 'scripts\infra\phase2.ps1'
+            $scriptArguments = @('-Target', 'plan', '-Cluster', $cluster)
+        }
+        'infra-lifecycle-check' {
+            $scriptPath = Join-Path $repoRoot 'scripts\infra\phase2.ps1'
+            $scriptArguments = @('-Target', 'lifecycle-check', '-Cluster', $cluster)
+        }
+        'inventory' {
+            $scriptPath = Join-Path $repoRoot 'scripts\infra\phase2.ps1'
+            $scriptArguments = @('-Target', 'inventory', '-Cluster', $cluster)
+        }
+        'configure' {
+            $scriptPath = Join-Path $repoRoot 'scripts\host\phase3.ps1'
+            $scriptArguments = @('-Target', 'configure', '-Cluster', $cluster)
+        }
+        'verify-hosts' {
+            $scriptPath = Join-Path $repoRoot 'scripts\host\phase3.ps1'
+            $scriptArguments = @('-Target', 'verify', '-Cluster', $cluster)
+        }
+        'cluster-bootstrap' {
+            $scriptPath = Join-Path $repoRoot 'scripts\cluster\phase4.ps1'
+            $scriptArguments = @('-Target', 'bootstrap', '-Cluster', $cluster)
+        }
+        'verify-cluster' {
+            $scriptPath = Join-Path $repoRoot 'scripts\cluster\phase4.ps1'
+            $scriptArguments = @('-Target', 'verify', '-Cluster', $cluster)
+        }
+        default {
+            throw "Target '$Target' has no approved Phase 4 dispatcher route; no action was taken."
+        }
     }
-    $phase3Target = if ($Target -eq 'configure') { 'configure' } else { 'verify' }
-    & pwsh -NoLogo -NoProfile -NonInteractive -File $phase3Script -Target $phase3Target -Cluster $cluster
+
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "The approved orchestrator for '$Target' is absent; no action was taken."
+    }
+    & pwsh -NoLogo -NoProfile -NonInteractive -File $scriptPath @scriptArguments
     exit $LASTEXITCODE
 }
 

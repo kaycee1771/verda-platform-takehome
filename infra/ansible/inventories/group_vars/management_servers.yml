@@ -22,3 +22,48 @@ phase3_wireguard_addresses:
 
 # Populated only in the ignored runtime variable file after operator approval.
 phase3_admin_cidrs_v4: []
+
+# Phase 4 immutable management-cluster contract. Runtime orchestration rejects
+# any overlap with controller or node routes before the first RKE2 process starts.
+phase4_cluster_name: verda-mgmt
+phase4_rke2_version: v1.35.7+rke2r1
+phase4_rke2_release_commit: 382a8b31a8fd78e376ab6f02c4bb0ec5592aada2
+phase4_rke2_artifact_url: >-
+  https://github.com/rancher/rke2/releases/download/v1.35.7%2Brke2r1/rke2.linux-amd64.tar.gz
+phase4_rke2_artifact_sha256: 7a29a6fbf512903a6a4611a289bcb3bdf01ddeea9df1a09b1bd1f210f3d6948a
+phase4_rke2_images_core_url: >-
+  https://github.com/rancher/rke2/releases/download/v1.35.7%2Brke2r1/rke2-images-core.linux-amd64.tar.zst
+phase4_rke2_images_core_sha256: f7d4aad521229dfa820a3dea2365582681aa1aa4a076bd02122b0ac0eb79e265
+phase4_rke2_images_cilium_url: >-
+  https://github.com/rancher/rke2/releases/download/v1.35.7%2Brke2r1/rke2-images-cilium.linux-amd64.tar.zst
+phase4_rke2_images_cilium_sha256: dc9cb3d8af8db6a0a0312e3be3e31b1fa44a20731b8d3f7a1e30e8481940c12c
+phase4_rke2_installer_source: >-
+  https://raw.githubusercontent.com/rancher/rke2/382a8b31a8fd78e376ab6f02c4bb0ec5592aada2/install.sh
+phase4_rke2_installer_sha256: 2d24db2184dd6b1a5e281fa45cc9a8234c889394721746f89b5fe953fdaaf40a
+phase4_cilium_version: 1.19.6
+phase4_cilium_chart_version: 1.19.601
+phase4_cilium_chart_sha256: 1d8e9a91426c039715b197deb04a65231de2d42c54149e241ed40fc9c3e827fc
+phase4_cilium_cli_version: v0.19.7
+phase4_cilium_cli_url: >-
+  https://github.com/cilium/cilium-cli/releases/download/v0.19.7/cilium-linux-amd64.tar.gz
+phase4_cilium_cli_sha256: cd15e0983bf0acc7946cd05d453d1e58376ea92dec2642e745212df2b07d8852
+phase4_traefik_version: 3.7.8
+phase4_traefik_chart_version: 40.1.009
+phase4_traefik_chart_sha256: 388339b673815c3f3b54f43100900fffa45661242e12d17c16e1ea88777d3a35
+phase4_management_pod_cidr: 10.42.0.0/16
+phase4_management_service_cidr: 10.43.0.0/16
+phase4_management_cluster_dns: 10.43.0.10
+phase4_management_cluster_domain: cluster.local
+phase4_workload_pod_cidr: 10.44.0.0/16
+phase4_workload_service_cidr: 10.45.0.0/16
+phase4_cilium_mtu: 1370
+phase4_rke2_data_dir: /var/lib/rancher/rke2
+phase4_rke2_token_file: /etc/rancher/rke2/token
+phase4_rke2_admin_group: rke2-admin
+phase4_snapshot_schedule: "0 */6 * * *"
+phase4_snapshot_retention: 8
+phase4_snapshot_secret_name: rke2-etcd-snapshot-s3-config
+phase4_snapshot_folder: verda-takehome-etcd/mgmt
+phase4_kube_reserved: cpu=500m,memory=1Gi,ephemeral-storage=1Gi
+phase4_system_reserved: cpu=500m,memory=1Gi,ephemeral-storage=1Gi
+phase4_cluster_firewall_enabled: false

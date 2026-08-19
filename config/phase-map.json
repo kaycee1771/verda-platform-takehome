@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "active_phase": 3,
+  "active_phase": 4,
   "phases": [
     {"id": 0, "name": "Engineering contract and discovery"},
     {"id": 1, "name": "Repository and quality system"},
@@ -21,7 +21,14 @@
     {"id": 16, "name": "Failure drills and operational verification"},
     {"id": 17, "name": "Evidence, access, summary, demo, and handoff"}
   ],
-  "enabled_phase_targets": ["configure", "verify-hosts"],
+  "enabled_completed_phase_targets": [
+    "infra-plan",
+    "infra-lifecycle-check",
+    "inventory",
+    "configure",
+    "verify-hosts"
+  ],
+  "enabled_phase_targets": ["cluster-bootstrap", "verify-cluster"],
   "target_owners": {
     "help": {"default": 1},
     "bootstrap-tools": {"default": 1},
@@ -46,6 +53,7 @@
     "inventory": {"management": 2, "workload": 7},
     "configure": {"management": 3, "workload": 7},
     "verify-hosts": {"management": 3, "workload": 7},
+    "cluster-bootstrap": {"management": 4, "workload": 7},
     "verify-cluster": {"management": 4, "workload": 7},
     "bootstrap-gitops": {"default": 5},
     "platform-status": {"default": 6},

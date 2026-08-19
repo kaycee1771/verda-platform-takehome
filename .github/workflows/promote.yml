@@ -1,5 +1,5 @@
 ---
-name: Promote - Phase 6 gate
+name: Promote - Phase 10 gate
 
 on:
   workflow_dispatch:
@@ -14,5 +14,5 @@ jobs:
       - name: Stop before unimplemented promotion phase
         shell: bash
         run: |
-          echo 'Digest-based promotion requires Phase 6.' >&2
+          echo 'Digest-based promotion requires Phase 10.' >&2
           exit 64

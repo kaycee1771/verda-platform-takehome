@@ -1,0 +1,432 @@
+---
+- name: Validate the immutable RKE2 server contract
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Ubuntu'
+      - ansible_facts['distribution_version'] == '24.04'
+      - ansible_facts['architecture'] == 'x86_64'
+      - phase4_rke2_version == 'v1.35.7+rke2r1'
+      - phase4_cilium_version == '1.19.6'
+      - phase4_traefik_version == '3.7.8'
+      - phase4_cilium_mtu | int == phase3_future_cilium_mtu | int
+      - phase4_rke2_data_dir != phase3_data_mount
+      - phase4_management_pod_cidr != phase4_management_service_cidr
+      - inventory_hostname in phase3_wireguard_addresses
+      - groups['management_servers'] | length == 3
+    fail_msg: The pinned Phase 4 operating-system, topology, version, storage, or network contract differs.
+
+- name: Read the host etcd principal
+  ansible.builtin.command:
+    argv: [getent, passwd, etcd]
+  register: rke2_server_phase4_etcd_principal
+  changed_when: false
+
+- name: Require the non-login system etcd principal
+  ansible.builtin.assert:
+    that:
+      - >-
+        rke2_server_phase4_etcd_principal.stdout is
+        match('^etcd:[^:]*:[0-9]+:[0-9]+:RKE2 embedded etcd:[^:]*:/usr/sbin/nologin$')
+    fail_msg: The RKE2 CIS profile requires the pre-existing local etcd user and group.
+
+- name: Preserve root-only host data path parents
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - /var/lib/rancher
+    - /var/lib/rancher/rke2
+    - /var/lib/rancher/rke2/server
+    - /var/lib/rancher/rke2/server/db
+  when: phase4_action == 'prepare'
+
+- name: Create the restricted RKE2 administrator group
+  ansible.builtin.group:
+    name: "{{ phase4_rke2_admin_group }}"
+    state: present
+    system: true
+
+- name: Grant the named administrator protected kubeconfig access
+  ansible.builtin.user:
+    name: "{{ phase3_platform_admin }}"
+    groups: "{{ phase4_rke2_admin_group }}"
+    append: true
+
+- name: Create RKE2 configuration, cache, and manifest directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /etc/rancher/rke2, mode: "0750"}
+    - {path: /etc/rancher/rke2/config.yaml.d, mode: "0750"}
+    - {path: /var/cache/verda/rke2, mode: "0750"}
+    - {path: /var/lib/rancher/rke2/agent/images, mode: "0750"}
+    - {path: /var/lib/rancher/rke2/server/manifests, mode: "0750"}
+    - {path: /var/lib/rancher/rke2/server/logs, mode: "0750"}
+    - {path: /etc/systemd/system/rke2-server.service.d, mode: "0755"}
+    - {path: /usr/local/libexec/verda-phase4, mode: "0755"}
+    - {path: /usr/local/share/verda-phase4, mode: "0755"}
+  when: phase4_action == 'prepare'
+
+- name: Install source-controlled Phase 4 verification programs
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../{{ item.source }}"
+    dest: "{{ item.destination }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - source: scripts/cluster/verify-management.sh
+      destination: /usr/local/libexec/verda-phase4/verify-management
+    - source: scripts/cluster/network-smoke.sh
+      destination: /usr/local/libexec/verda-phase4/network-smoke
+    - source: scripts/cluster/cis-self-assessment.sh
+      destination: /usr/local/libexec/verda-phase4/cis-self-assessment
+    - source: scripts/cluster/etcdctl-local.sh
+      destination: /usr/local/libexec/verda-phase4/etcdctl-local
+    - source: scripts/cluster/snapshot-evidence.sh
+      destination: /usr/local/libexec/verda-phase4/snapshot-evidence
+    - source: scripts/cluster/stability-window.sh
+      destination: /usr/local/libexec/verda-phase4/stability-window
+    - source: scripts/cluster/reconcile-cilium-agent.sh
+      destination: /usr/local/libexec/verda-phase4/reconcile-cilium-agent
+    - source: scripts/cluster/hubble-metrics-gate.py
+      destination: /usr/local/libexec/verda-phase4/hubble-metrics-gate
+    - source: scripts/cluster/cleanup-test-namespaces.sh
+      destination: /usr/local/libexec/verda-phase4/cleanup-test-namespaces
+    - source: scripts/collect-rke2-diagnostics.sh
+      destination: /usr/local/libexec/verda-phase4/collect-diagnostics
+  when: phase4_action == 'prepare'
+
+- name: Install the source-controlled Phase 4 network test manifest
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../tests/cluster/phase4/network-smoke.yaml"
+    dest: /usr/local/share/verda-phase4/network-smoke.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  when: phase4_action == 'prepare'
+
+- name: Read an existing RKE2 binary version
+  ansible.builtin.command:
+    argv: [/usr/local/bin/rke2, --version]
+  register: rke2_server_phase4_existing_rke2
+  changed_when: false
+  failed_when: false
+
+- name: Reject an unowned RKE2 version transition
+  ansible.builtin.assert:
+    that:
+      - >-
+        rke2_server_phase4_existing_rke2.rc != 0 or
+        phase4_rke2_version in rke2_server_phase4_existing_rke2.stdout
+    fail_msg: An unexpected RKE2 binary exists; use the reviewed serial upgrade or recovery procedure.
+
+- name: Read an existing Cilium CLI version
+  ansible.builtin.command:
+    argv: [/usr/local/bin/cilium, version, --client]
+  register: rke2_server_phase4_existing_cilium_cli
+  changed_when: false
+  failed_when: false
+
+- name: Reject an unowned Cilium CLI version transition
+  ansible.builtin.assert:
+    that:
+      - >-
+        rke2_server_phase4_existing_cilium_cli.rc != 0 or
+        phase4_cilium_cli_version in
+        rke2_server_phase4_existing_cilium_cli.stdout
+    fail_msg: An unexpected Cilium CLI exists; use the reviewed tool-upgrade procedure.
+
+- name: Download the exact RKE2 tar installation artifact
+  ansible.builtin.get_url:
+    url: "{{ phase4_rke2_artifact_url }}"
+    dest: /var/cache/verda/rke2/rke2.linux-amd64.tar.gz
+    checksum: "sha256:{{ phase4_rke2_artifact_sha256 }}"
+    owner: root
+    group: root
+    mode: "0640"
+  when:
+    - phase4_action == 'prepare'
+    - rke2_server_phase4_existing_rke2.rc != 0
+
+- name: Install the verified RKE2 tar artifact without starting it
+  ansible.builtin.unarchive:
+    src: /var/cache/verda/rke2/rke2.linux-amd64.tar.gz
+    dest: /usr/local
+    remote_src: true
+    owner: root
+    group: root
+  when:
+    - phase4_action == 'prepare'
+    - rke2_server_phase4_existing_rke2.rc != 0
+
+- name: Stage the exact official RKE2 air-gap image archives
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "/var/lib/rancher/rke2/agent/images/{{ item.name }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: "0640"
+  loop:
+    - name: rke2-images-core.linux-amd64.tar.zst
+      url: "{{ phase4_rke2_images_core_url }}"
+      sha256: "{{ phase4_rke2_images_core_sha256 }}"
+    - name: rke2-images-cilium.linux-amd64.tar.zst
+      url: "{{ phase4_rke2_images_cilium_url }}"
+      sha256: "{{ phase4_rke2_images_cilium_sha256 }}"
+  when: phase4_action == 'prepare'
+
+- name: Enable conditional imports for unchanged verified image archives
+  ansible.builtin.copy:
+    content: ""
+    dest: /var/lib/rancher/rke2/agent/images/.cache.json
+    owner: root
+    group: root
+    mode: "0640"
+    force: false
+  when: phase4_action == 'prepare'
+
+- name: Download the exact Cilium CLI artifact
+  ansible.builtin.get_url:
+    url: "{{ phase4_cilium_cli_url }}"
+    dest: /var/cache/verda/rke2/cilium-linux-amd64.tar.gz
+    checksum: "sha256:{{ phase4_cilium_cli_sha256 }}"
+    owner: root
+    group: root
+    mode: "0640"
+  when:
+    - phase4_action == 'prepare'
+    - rke2_server_phase4_existing_cilium_cli.rc != 0
+
+- name: Install the verified Cilium CLI artifact
+  ansible.builtin.unarchive:
+    src: /var/cache/verda/rke2/cilium-linux-amd64.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    include: [cilium]
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - phase4_action == 'prepare'
+    - rke2_server_phase4_existing_cilium_cli.rc != 0
+
+- name: Assert the process-only cluster token boundary
+  ansible.builtin.assert:
+    that:
+      - lookup('ansible.builtin.env', 'PHASE4_RKE2_TOKEN') | length >= 64
+      - lookup('ansible.builtin.env', 'PHASE4_RKE2_TOKEN') is match('^[A-Za-z0-9_-]+$')
+    fail_msg: A strong process-only RKE2 token is required.
+  no_log: true
+  when: phase4_action == 'prepare'
+
+- name: Inspect an existing remote token boundary without reading its value
+  ansible.builtin.stat:
+    path: "{{ phase4_rke2_token_file }}"
+    get_checksum: true
+    checksum_algorithm: sha256
+  register: rke2_server_phase4_existing_token
+  no_log: true
+  when: phase4_action == 'prepare'
+
+- name: Refuse a token lineage change on a prepared or active server
+  ansible.builtin.assert:
+    that:
+      - >-
+        not rke2_server_phase4_existing_token.stat.exists or
+        rke2_server_phase4_existing_token.stat.checksum ==
+        ((lookup('ansible.builtin.env', 'PHASE4_RKE2_TOKEN') ~ '\n') | hash('sha256'))
+    fail_msg: The process-only token does not match the established encrypted recovery lineage.
+  no_log: true
+  when: phase4_action == 'prepare'
+
+- name: Install the out-of-band cluster token with no log disclosure
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.env', 'PHASE4_RKE2_TOKEN') }}\n"
+    dest: "{{ phase4_rke2_token_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: phase4_action == 'prepare'
+
+- name: Render the empty primary configuration anchor
+  ansible.builtin.copy:
+    content: "---\n"
+    dest: /etc/rancher/rke2/config.yaml
+    owner: root
+    group: "{{ phase4_rke2_admin_group }}"
+    mode: "0640"
+  when: phase4_action == 'prepare'
+
+- name: Render the immutable common cluster configuration
+  ansible.builtin.template:
+    src: rke2-common.yaml.j2
+    dest: /etc/rancher/rke2/config.yaml.d/10-common.yaml
+    owner: root
+    group: "{{ phase4_rke2_admin_group }}"
+    mode: "0640"
+  when: phase4_action == 'prepare'
+
+- name: Render the node-specific cluster configuration
+  ansible.builtin.template:
+    src: rke2-node.yaml.j2
+    dest: /etc/rancher/rke2/config.yaml.d/20-node.yaml
+    owner: root
+    group: "{{ phase4_rke2_admin_group }}"
+    mode: "0640"
+  when: phase4_action == 'prepare'
+
+- name: Render the bounded Kubernetes audit policy
+  ansible.builtin.template:
+    src: audit-policy.yaml.j2
+    dest: /etc/rancher/rke2/audit-policy.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  when: phase4_action == 'prepare'
+
+- name: Render the RKE2-matched Cilium customization before first start
+  ansible.builtin.template:
+    src: rke2-cilium-config.yaml.j2
+    dest: /var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml
+    owner: root
+    group: root
+    mode: "0640"
+  when: phase4_action == 'prepare'
+
+- name: Render the narrow Hubble Relay node-metrics policy
+  ansible.builtin.template:
+    src: hubble-relay-node-metrics-policy.yaml.j2
+    dest: /var/lib/rancher/rke2/server/manifests/verda-hubble-relay-node-metrics-policy.yaml
+    owner: root
+    group: root
+    mode: "0640"
+  when: phase4_action == 'prepare'
+
+- name: Render the RKE2-matched Traefik customization before first start
+  ansible.builtin.template:
+    src: rke2-traefik-config.yaml.j2
+    dest: /var/lib/rancher/rke2/server/manifests/rke2-traefik-config.yaml
+    owner: root
+    group: root
+    mode: "0640"
+  when: phase4_action == 'prepare'
+
+- name: Install the restricted RKE2 systemd override
+  ansible.builtin.copy:
+    content: |
+      [Service]
+      UMask=0022
+      LimitNOFILE=1048576
+    dest: /etc/systemd/system/rke2-server.service.d/10-verda-platform.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: phase4_action == 'prepare'
+
+- name: Read current RKE2 service state before CIS sysctl activation
+  ansible.builtin.command:
+    argv: [systemctl, is-active, rke2-server.service]
+  register: rke2_server_phase4_service_before_sysctl
+  changed_when: false
+  failed_when: false
+  when: phase4_action == 'prepare'
+
+- name: Install the exact RKE2-generated CIS sysctl file
+  ansible.builtin.copy:
+    src: /usr/local/share/rke2/rke2-cis-sysctl.conf
+    dest: /etc/sysctl.d/60-rke2-cis.conf
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  register: rke2_server_phase4_cis_sysctl
+  when: phase4_action == 'prepare'
+
+- name: Refuse an online CIS sysctl replacement
+  ansible.builtin.assert:
+    that:
+      - >-
+        not rke2_server_phase4_cis_sysctl.changed or
+        rke2_server_phase4_service_before_sysctl.rc != 0
+    fail_msg: The pinned CIS sysctl changed while RKE2 is active; use a reviewed serial maintenance operation.
+  when: phase4_action == 'prepare'
+
+- name: Activate the exact CIS sysctls only before first start
+  ansible.builtin.systemd_service:
+    name: systemd-sysctl.service
+    state: restarted
+  when:
+    - phase4_action == 'prepare'
+    - rke2_server_phase4_cis_sysctl.changed
+    - rke2_server_phase4_service_before_sysctl.rc != 0
+
+- name: Reload service definitions without starting RKE2
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    name: rke2-server.service
+    enabled: true
+  when: phase4_action == 'prepare'
+
+- name: Prove the prepared RKE2 binary and Cilium CLI versions
+  ansible.builtin.command:
+    argv: "{{ item.argv }}"
+  loop:
+    - {argv: [/usr/local/bin/rke2, --version], expected: "{{ phase4_rke2_version }}"}
+    - {argv: [/usr/local/bin/cilium, version, --client], expected: "{{ phase4_cilium_cli_version }}"}
+  register: rke2_server_phase4_prepared_versions
+  changed_when: false
+  failed_when: item.expected not in rke2_server_phase4_prepared_versions.stdout
+  when: phase4_action in ['prepare', 'verify']
+
+- name: Start or retain the selected RKE2 server
+  ansible.builtin.systemd_service:
+    name: rke2-server.service
+    enabled: true
+    state: started
+    daemon_reload: true
+    no_block: true
+  when: phase4_action == 'start'
+
+- name: Wait for the selected internal API listener
+  ansible.builtin.wait_for:
+    host: "{{ phase3_wireguard_addresses[inventory_hostname] }}"
+    port: 6443
+    connect_timeout: 5
+    timeout: 900
+  when: phase4_action == 'start'
+
+- name: Read RKE2 service activation
+  ansible.builtin.command:
+    argv: [systemctl, is-active, rke2-server.service]
+  register: rke2_server_phase4_service_activation
+  changed_when: false
+  failed_when: false
+  when: phase4_action in ['start', 'verify']
+
+- name: Enforce the action-specific RKE2 service state
+  ansible.builtin.assert:
+    that:
+      - >-
+        (phase4_action == 'start' and
+         rke2_server_phase4_service_activation.stdout in ['activating', 'active']) or
+        (phase4_action == 'verify' and
+         rke2_server_phase4_service_activation.stdout == 'active')
+    fail_msg: The RKE2 service state does not satisfy the selected lifecycle stage.
+  when: phase4_action in ['start', 'verify']
+
+- name: Compute the sanitized common-config parity hash
+  ansible.builtin.command:
+    argv: [sha256sum, /etc/rancher/rke2/config.yaml.d/10-common.yaml]
+  register: rke2_server_phase4_common_config_hash
+  changed_when: false
+  when: phase4_action in ['prepare', 'verify']

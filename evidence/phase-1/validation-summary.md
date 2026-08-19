@@ -23,9 +23,9 @@
 
 ## Explicit not-applicable gates
 
-- Environment chart rendering is not applicable until the Phase 6 application chart exists; the
+- Environment chart rendering is not applicable until the Phase 9 application chart exists; the
   Phase 1 fixture chart is linted, rendered, and schema-validated.
-- Go format, vet, and tests are not applicable until Phase 6 application source exists. The module
+- Go format, vet, and tests are not applicable until Phase 9 application source exists. The module
   boundary is reserved but no future functionality is claimed.
 
 The isolated-clone `validate.log` is 8,432 bytes with SHA-256

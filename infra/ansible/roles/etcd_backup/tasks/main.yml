@@ -1,0 +1,112 @@
+---
+- name: Validate the guarded snapshot action
+  ansible.builtin.assert:
+    that:
+      - phase4_snapshot_action in ['configure', 'snapshot', 'verify']
+      - phase4_snapshot_secret_name | length > 0
+    fail_msg: A valid Phase 4 off-cluster snapshot action is required.
+
+- name: Validate process-only S3 configuration without disclosure
+  ansible.builtin.assert:
+    that:
+      - lookup('ansible.builtin.env', 'PHASE4_S3_ENDPOINT') is match('^https://[^/]+(?::[0-9]+)?$')
+      - lookup('ansible.builtin.env', 'PHASE4_S3_BUCKET') is match('^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$')
+      - lookup('ansible.builtin.env', 'PHASE4_S3_REGION') | length > 0
+      - lookup('ansible.builtin.env', 'PHASE4_S3_ACCESS_KEY') | length > 0
+      - lookup('ansible.builtin.env', 'PHASE4_S3_SECRET_KEY') | length > 0
+    fail_msg: Complete process-only HTTPS S3 configuration is mandatory.
+  no_log: true
+
+- name: Apply the S3 snapshot secret through standard input only
+  ansible.builtin.command:
+    argv:
+      - /var/lib/rancher/rke2/bin/kubectl
+      - --kubeconfig
+      - /etc/rancher/rke2/rke2.yaml
+      - apply
+      - --server-side
+      - --field-manager=verda-phase4-ansible
+      - --filename=-
+    stdin: >-
+      {{
+        {
+          'apiVersion': 'v1',
+          'kind': 'Secret',
+          'metadata': {
+            'name': phase4_snapshot_secret_name,
+            'namespace': 'kube-system'
+          },
+          'type': 'etcd.k3s.cattle.io/s3-config-secret',
+          'stringData': {
+            'etcd-s3-endpoint': lookup('ansible.builtin.env', 'PHASE4_S3_ENDPOINT')
+              | regex_replace('^https://', '') | regex_replace('/$', ''),
+            'etcd-s3-skip-ssl-verify': 'false',
+            'etcd-s3-access-key': lookup('ansible.builtin.env', 'PHASE4_S3_ACCESS_KEY'),
+            'etcd-s3-secret-key': lookup('ansible.builtin.env', 'PHASE4_S3_SECRET_KEY'),
+            'etcd-s3-session-token': lookup('ansible.builtin.env', 'PHASE4_S3_SESSION_TOKEN'),
+            'etcd-s3-bucket': lookup('ansible.builtin.env', 'PHASE4_S3_BUCKET'),
+            'etcd-s3-folder': phase4_snapshot_folder,
+            'etcd-s3-region': lookup('ansible.builtin.env', 'PHASE4_S3_REGION'),
+            'etcd-s3-insecure': 'false',
+            'etcd-s3-timeout': '5m',
+            'etcd-s3-retention': phase4_snapshot_retention | string
+          }
+        } | to_json
+      }}
+  register: etcd_backup_phase4_snapshot_secret_apply
+  changed_when: >-
+    'configured' in etcd_backup_phase4_snapshot_secret_apply.stdout or
+    'created' in etcd_backup_phase4_snapshot_secret_apply.stdout
+  no_log: true
+  when: phase4_snapshot_action == 'configure'
+
+- name: Verify snapshot secret type without reading data
+  ansible.builtin.command:
+    argv:
+      - /var/lib/rancher/rke2/bin/kubectl
+      - --kubeconfig
+      - /etc/rancher/rke2/rke2.yaml
+      - --namespace
+      - kube-system
+      - get
+      - secret
+      - "{{ phase4_snapshot_secret_name }}"
+      - --output=jsonpath={.type}
+  register: etcd_backup_phase4_snapshot_secret_type
+  changed_when: false
+  failed_when: >-
+    etcd_backup_phase4_snapshot_secret_type.stdout !=
+    'etcd.k3s.cattle.io/s3-config-secret'
+
+- name: Trigger a named local and off-cluster snapshot
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/rke2
+      - etcd-snapshot
+      - save
+      - "--name=phase4-acceptance"
+  register: etcd_backup_phase4_snapshot_save
+  changed_when: true
+  no_log: true
+  when: phase4_snapshot_action == 'snapshot'
+
+- name: List local and off-cluster snapshots
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/rke2
+      - etcd-snapshot
+      - ls
+  register: etcd_backup_phase4_snapshot_list
+  changed_when: false
+  no_log: true
+  when: phase4_snapshot_action in ['snapshot', 'verify']
+
+- name: Require matching local and S3 recovery points
+  ansible.builtin.assert:
+    that:
+      - "'phase4-acceptance' in etcd_backup_phase4_snapshot_list.stdout"
+      - "'file://' in etcd_backup_phase4_snapshot_list.stdout"
+      - "'s3://' in etcd_backup_phase4_snapshot_list.stdout"
+    fail_msg: The acceptance snapshot is not present both locally and off cluster.
+  no_log: true
+  when: phase4_snapshot_action in ['snapshot', 'verify']

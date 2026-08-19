@@ -1,7 +1,7 @@
 ---
 schema_version: 2
-as_of: "2026-08-16"
-compatibility_review_status: "phase-1-verified"
+as_of: "2026-08-19"
+compatibility_review_status: "phase-4-live-bootstrap-verified"
 
 platform:
   project: "verda-platform-takehome"
@@ -38,7 +38,31 @@ rke2:
   rancher_version: "2.14.3"
   rancher_compatibility_source: >-
     https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/rancher-v2-14-3/
-  selection_status: "verified-compatible-not-installed"
+  release_published_at: "2026-08-04T20:03:30Z"
+  release_status: "stable-non-draft-non-prerelease"
+  installer_source: >-
+    https://raw.githubusercontent.com/rancher/rke2/382a8b31a8fd78e376ab6f02c4bb0ec5592aada2/install.sh
+  installer_sha256: "2d24db2184dd6b1a5e281fa45cc9a8234c889394721746f89b5fe953fdaaf40a"
+  linux_amd64_tarball: >-
+    https://github.com/rancher/rke2/releases/download/v1.35.7%2Brke2r1/rke2.linux-amd64.tar.gz
+  linux_amd64_tarball_sha256: "7a29a6fbf512903a6a4611a289bcb3bdf01ddeea9df1a09b1bd1f210f3d6948a"
+  images_core_linux_amd64: >-
+    https://github.com/rancher/rke2/releases/download/v1.35.7%2Brke2r1/rke2-images-core.linux-amd64.tar.zst
+  images_core_linux_amd64_sha256: "f7d4aad521229dfa820a3dea2365582681aa1aa4a076bd02122b0ac0eb79e265"
+  images_cilium_linux_amd64: >-
+    https://github.com/rancher/rke2/releases/download/v1.35.7%2Brke2r1/rke2-images-cilium.linux-amd64.tar.zst
+  images_cilium_linux_amd64_sha256: "dc9cb3d8af8db6a0a0312e3be3e31b1fa44a20731b8d3f7a1e30e8481940c12c"
+  image_delivery: "checksum-pinned official air-gap core plus Cilium archives"
+  kubernetes_version: "v1.35.7"
+  etcd_version: "v3.6.14-k3s1"
+  containerd_version: "v2.2.6-k3s1"
+  cilium_version: "v1.19.6"
+  cilium_chart_version: "1.19.601"
+  cilium_chart_sha256: "1d8e9a91426c039715b197deb04a65231de2d42c54149e241ed40fc9c3e827fc"
+  traefik_version: "v3.7.8"
+  traefik_chart_version: "40.1.009"
+  traefik_chart_sha256: "388339b673815c3f3b54f43100900fffa45661242e12d17c16e1ea88777d3a35"
+  selection_status: "phase-4-verified-compatible"
 
 helm:
   version: "3.21.4"
@@ -107,9 +131,13 @@ tool_delivery:
   validation_network: "none"
 
 future_phase_clis:
-  argocd: {version: null, status: "not-required-before-phase-4"}
+  argocd: {version: null, status: "not-required-before-phase-5"}
   rancher: {version: null, status: "not-selected-no-rancher-cli-architecture-decision"}
-  cilium: {version: null, status: "not-required-before-phase-3"}
+  cilium:
+    version: "v0.19.7"
+    status: "phase-4-live-bootstrap-verified"
+    source: "https://github.com/cilium/cilium-cli/releases/tag/v0.19.7"
+    linux_amd64_sha256: "cd15e0983bf0acc7946cd05d453d1e58376ea92dec2642e745212df2b07d8852"
   velero: {version: null, status: "not-required-before-phase-5"}
   cosign: {version: null, status: "not-required-before-phase-6"}
   syft: {version: null, status: "not-selected"}
