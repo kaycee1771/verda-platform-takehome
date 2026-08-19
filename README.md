@@ -4,7 +4,7 @@ This repository is being built phase by phase as a reproducible, secure-by-desig
 
 ## Current status
 
-**Phases 0–4 — PASS; Phase 5 is the active authorized boundary.** Verda currently runs exactly three
+**Phases 0–5 — PASS; Phase 6 active.** Verda currently runs exactly three
 on-demand management instances with three instance-owned 80 GiB OS volumes and three protected
 100 GiB data volumes. The Phase 2 closeout proved unique public endpoints, hostname-bound SSH,
 encrypted external Terraform state and backup, guarded lifecycle behavior, reconciled cost, and
@@ -15,9 +15,13 @@ server/etcd nodes, healthy Cilium/Hubble and service networking, internal Traefi
 off-cluster snapshots, focused CIS checks on every server, a controlled one-node and primary-endpoint
 failure drill, approved-source firewall verification, a sanitized support bundle, a zero-change
 three-host replay, and a 270-second post-recovery stability window. Independent current-tree
-verification, final local quality, PR validation, and protected-main hosted CI all passed.
-Rancher, Argo CD, and Phase 5 platform components remain unimplemented until Phase 5 convergence;
-Stage B and later components remain behind their owning gates.
+verification, final local quality, PR validation, and protected-main hosted CI all passed. Phase 5
+now adds an idempotent pinned Argo CD bootstrap, one exact root/eight-child desired-state set,
+cert-manager staging and production certificate paths, authenticated Argo TLS through all three
+protected ingress addresses, and Longhorn on the three dedicated data disks. The critical 4 MiB
+storage fixture survived rescheduling with 3/3 healthy replicas. Anonymous Argo access is denied,
+and the reviewer can read without sync or action permissions. Final local and hosted closeout CI
+pass. Phase 6 is active under its own capacity and acceptance gates; Stage B remains fail closed.
 
 The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`, each with an 80 GiB
 root volume and a 100 GiB Longhorn data volume, using Ubuntu 24.04 Minimal. The seven-day envelope
@@ -52,10 +56,10 @@ make ci
 ```
 
 `make ci` is the local equivalent of the validation job in `.github/workflows/validate.yml`.
-The canonical 18-phase target map is `config/phase-map.json`. Phase 4 exposes only the explicit
-completed-phase preflight/convergence targets plus `make cluster-bootstrap CLUSTER=management` and
-`make verify-cluster CLUSTER=management`. Phase 2 cloud mutation, GitOps, platform services, Stage A
-verification, Stage B, and teardown remain fail closed with their owning phase.
+The canonical 18-phase target map is `config/phase-map.json`. It remains active at Phase 5 and
+exposes the explicit completed-phase convergence targets plus `make bootstrap-gitops`. Phase 2 cloud
+mutation, Phase 6 platform expansion, Stage A verification, Stage B, and teardown remain fail closed
+with their owning phase until Phase 5 closeout is merged.
 
 ## Safe Phase 0 discovery
 

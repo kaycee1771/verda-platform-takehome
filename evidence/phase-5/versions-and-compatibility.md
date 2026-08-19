@@ -1,6 +1,7 @@
 # Phase 5 Versions and Compatibility
 
-Status: PASS for source selection; live compatibility remains a separate gate.
+Status: PASS — source selection, immutable archives, rendering, admission, and live
+compatibility are verified.
 
 The Phase 5 candidates were rechecked on 2026-08-19 against version-specific
 official sources and exact downloaded chart archives:
@@ -26,6 +27,9 @@ Longhorn `Volume`, `Node`, and `Setting` are pinned to exact upstream release
 sources and materialized into the offline schema cache. The current RKE2/Kubernetes
 version remains v1.35.7+rke2r1 / v1.35.7.
 
-This evidence does not claim that the charts are installed or healthy. Exact
-render, admission, webhook readiness, API behavior, and rollback remain Phase 5
-live gates.
+The exact archives and pinned images were used by the protected Phase 5 path.
+Argo CD bootstrap replay reached Helm revision 5, cert-manager reported all six
+required replicas ready, and Longhorn reported three nodes and three scheduled
+dedicated disks. The live runtime verifier accepted the exact root/child topology,
+certificates, TLS, authentication, storage, and external boundary without changing
+these version selections.

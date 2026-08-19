@@ -9,15 +9,421 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import textwrap
 import unittest
 
 import yaml
 
 ROOT = Path(__file__).parents[2]
 BOOTSTRAP = ROOT / "bootstrap" / "argocd"
+EXPECTED_CRDS = (
+    "applications.argoproj.io",
+    "applicationsets.argoproj.io",
+    "appprojects.argoproj.io",
+)
+
+
+def write_executable(path: Path, content: str) -> None:
+    path.write_text(textwrap.dedent(content).lstrip(), encoding="utf-8")
+    path.chmod(0o700)
+
+
+def fixture_crd(name: str) -> dict:
+    plural = name.split(".", 1)[0]
+    kinds = {
+        "applications": "Application",
+        "applicationsets": "ApplicationSet",
+        "appprojects": "AppProject",
+    }
+    return {
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {
+            "name": name,
+            "labels": {"app.kubernetes.io/part-of": "argocd"},
+            "annotations": {"helm.sh/resource-policy": "keep"},
+        },
+        "spec": {
+            "group": "argoproj.io",
+            "scope": "Namespaced",
+            "names": {
+                "kind": kinds[plural],
+                "listKind": f"{kinds[plural]}List",
+                "plural": plural,
+                "singular": plural.removesuffix("s"),
+            },
+            "versions": [{"name": "v1alpha1", "served": True, "storage": True}],
+        },
+    }
+
+
+def fixture_render() -> list[dict]:
+    digest = "0" * 64
+    container = {
+        "name": "controller",
+        "image": f"quay.io/argoproj/argocd:v3.5.1@sha256:{digest}",
+        "securityContext": {
+            "allowPrivilegeEscalation": False,
+            "readOnlyRootFilesystem": True,
+            "capabilities": {"drop": ["ALL"]},
+        },
+        "resources": {
+            "requests": {"cpu": "10m", "memory": "16Mi"},
+            "limits": {"cpu": "100m", "memory": "64Mi"},
+        },
+    }
+    documents = [fixture_crd(name) for name in EXPECTED_CRDS]
+    for name in (
+        "argocd-application-controller",
+        "argocd-applicationset-controller",
+        "argocd-redis",
+        "argocd-repo-server",
+        "argocd-server",
+    ):
+        documents.append(
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": name, "namespace": "argocd"},
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "securityContext": {"runAsNonRoot": True},
+                            "containers": [container],
+                        }
+                    }
+                },
+            }
+        )
+    documents.extend(
+        (
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "argocd-cmd-params-cm", "namespace": "argocd"},
+                "data": {"server.insecure": "true"},
+            },
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "argocd-rbac-cm", "namespace": "argocd"},
+                "data": {
+                    "policy.csv": "\n".join(
+                        (
+                            "p, role:reviewer, applications, get, platform/*, allow",
+                            "p, role:reviewer, applications, sync, platform/*, deny",
+                            "p, role:reviewer, applications, action/*, platform/*, deny",
+                        )
+                    )
+                },
+            },
+            {
+                "apiVersion": "argoproj.io/v1alpha1",
+                "kind": "AppProject",
+                "metadata": {"name": "platform-bootstrap", "namespace": "argocd"},
+                "spec": {
+                    "sourceRepos": [
+                        "https://github.com/kaycee1771/verda-platform-takehome.git"
+                    ],
+                    "destinations": [
+                        {
+                            "namespace": "argocd",
+                            "server": "https://kubernetes.default.svc",
+                        }
+                    ],
+                    "clusterResourceWhitelist": [],
+                    "namespaceResourceWhitelist": [
+                        {"group": "argoproj.io", "kind": kind}
+                        for kind in ("Application", "ApplicationSet", "AppProject")
+                    ],
+                },
+            },
+            {
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "NetworkPolicy",
+                "metadata": {
+                    "name": "argocd-server-bootstrap-ingress",
+                    "namespace": "argocd",
+                },
+                "spec": {
+                    "podSelector": {
+                        "matchLabels": {"app.kubernetes.io/name": "argocd-server"}
+                    },
+                    "policyTypes": ["Ingress"],
+                    "ingress": [
+                        {
+                            "from": [
+                                {
+                                    "namespaceSelector": {
+                                        "matchLabels": {
+                                            "kubernetes.io/metadata.name": "kube-system"
+                                        }
+                                    },
+                                    "podSelector": {
+                                        "matchLabels": {
+                                            "app.kubernetes.io/name": "rke2-traefik"
+                                        }
+                                    },
+                                }
+                            ],
+                            "ports": [{"protocol": "TCP", "port": 8080}],
+                        }
+                    ],
+                },
+            },
+        )
+    )
+    return documents
 
 
 class Phase5ArgoBootstrapTests(unittest.TestCase):
+    def new_installer_harness(self) -> dict:
+        if os.name != "posix" or not Path("/bin/bash").exists():
+            self.skipTest(
+                "behavioral installer tests run in the pinned Linux quality image"
+            )
+
+        executable_root = ROOT / ".local" / "test-tmp"
+        executable_root.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(
+            prefix="phase5-argocd-crd-", dir=executable_root
+        )
+        self.addCleanup(temporary.cleanup)
+        kubeconfig_temporary = tempfile.TemporaryDirectory(
+            prefix="phase5-argocd-kubeconfig-"
+        )
+        self.addCleanup(kubeconfig_temporary.cleanup)
+        root = Path(temporary.name)
+        binary = root / "bin"
+        state = root / "state"
+        runtime = root / "runtime"
+        binary.mkdir()
+        state.mkdir()
+        runtime.mkdir()
+
+        render = root / "render.yaml"
+        render.write_text(
+            yaml.safe_dump_all(fixture_render(), explicit_start=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        kubeconfig = Path(kubeconfig_temporary.name) / "kubeconfig"
+        kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
+        archive = root / "argo-cd-10.3.3.tgz"
+        archive.write_bytes(b"checksummed-chart-fixture")
+        kubectl_log = root / "kubectl.jsonl"
+        helm_log = root / "helm.jsonl"
+        created_log = root / "created.txt"
+
+        write_executable(
+            binary / "helm",
+            r"""
+            #!/usr/bin/env python3
+            import json
+            import os
+            from pathlib import Path
+            import sys
+
+            args = sys.argv[1:]
+            with Path(os.environ["FAKE_HELM_LOG"]).open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(args) + "\n")
+            command = next(
+                (item for item in ("list", "show", "lint", "template", "upgrade", "history", "rollback") if item in args),
+                "",
+            )
+            release_exists = os.environ.get("FAKE_RELEASE_EXISTS", "false") == "true"
+            if command == "list":
+                if release_exists:
+                    print(json.dumps([{
+                        "name": "argocd",
+                        "namespace": "argocd",
+                        "chart": "argo-cd-10.3.3",
+                        "app_version": "v3.5.1",
+                    }]))
+                else:
+                    print("[]")
+            elif command == "show":
+                print("name: argo-cd\nversion: 10.3.3\nappVersion: v3.5.1")
+            elif command == "template":
+                print(Path(os.environ["FAKE_RENDER"]).read_text(encoding="utf-8"), end="")
+            elif command == "history":
+                print(json.dumps([{"revision": 1, "chart": "argo-cd-10.3.3"}]))
+            elif command in {"lint", "upgrade", "rollback"}:
+                pass
+            else:
+                raise SystemExit("unexpected fake helm invocation")
+            """,
+        )
+        write_executable(
+            binary / "kubectl",
+            r"""
+            #!/usr/bin/env python3
+            import copy
+            import json
+            import os
+            from pathlib import Path
+            import sys
+
+            import yaml
+
+            args = sys.argv[1:]
+            state = Path(os.environ["FAKE_STATE_DIR"])
+            with Path(os.environ["FAKE_KUBECTL_LOG"]).open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(args) + "\n")
+
+            if "config" in args and "current-context" in args:
+                print("verda-mgmt")
+                raise SystemExit(0)
+            if "config" in args and "get-contexts" in args:
+                print("verda-mgmt")
+                raise SystemExit(0)
+            if "config" in args and "view" in args:
+                print("https://192.0.2.1:6443")
+                raise SystemExit(0)
+            if "get" in args:
+                index = args.index("get")
+                resource = args[index + 1]
+                if resource == "nodes":
+                    print(json.dumps({"items": [
+                        {
+                            "metadata": {"name": f"verda-mgmt-server-{number:02d}"},
+                            "spec": {"unschedulable": False},
+                            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+                        }
+                        for number in range(1, 4)
+                    ]}))
+                    raise SystemExit(0)
+                if resource == "namespace":
+                    if os.environ.get("FAKE_RELEASE_EXISTS", "false") != "true":
+                        raise SystemExit(1)
+                    if any(item.startswith("-o") for item in args) or any("jsonpath" in item for item in args):
+                        print("Active", end="")
+                    raise SystemExit(0)
+                if resource.startswith("customresourcedefinition/"):
+                    name = resource.split("/", 1)[1]
+                    stored = state / f"{name}.json"
+                    if stored.exists():
+                        print(stored.read_text(encoding="utf-8"), end="")
+                    raise SystemExit(0)
+                if resource.startswith("--raw=/apis/argoproj.io/v1alpha1"):
+                    print(json.dumps({"resources": []}))
+                    raise SystemExit(0)
+            if any(item.startswith("--raw=/apis/argoproj.io/v1alpha1") for item in args):
+                print(json.dumps({"resources": []}))
+                raise SystemExit(0)
+            if "create" in args:
+                filename = Path(args[args.index("--filename") + 1])
+                documents = [item for item in yaml.safe_load_all(filename.read_text(encoding="utf-8")) if item]
+                fail_after = int(os.environ.get("FAKE_CREATE_FAIL_AFTER", "0"))
+                failure_marker = state / ".create-failed-once"
+                for count, document in enumerate(documents, start=1):
+                    retained = copy.deepcopy(document)
+                    retained.setdefault("spec", {})["conversion"] = {"strategy": "None"}
+                    name = retained["metadata"]["name"]
+                    (state / f"{name}.json").write_text(json.dumps(retained), encoding="utf-8")
+                    with Path(os.environ["FAKE_CREATED_LOG"]).open("a", encoding="utf-8") as stream:
+                        stream.write(name + "\n")
+                    if fail_after and count >= fail_after and not failure_marker.exists():
+                        failure_marker.touch()
+                        raise SystemExit(42)
+                raise SystemExit(0)
+            if "wait" in args:
+                resource = next(item for item in args if item.startswith("customresourcedefinition/"))
+                name = resource.split("/", 1)[1]
+                raise SystemExit(0 if (state / f"{name}.json").exists() else 1)
+            raise SystemExit("unexpected fake kubectl invocation: " + " ".join(args))
+            """,
+        )
+        write_executable(binary / "kubeconform", "#!/usr/bin/env sh\nexit 0\n")
+        write_executable(binary / "sha256sum", "#!/usr/bin/env sh\nexit 0\n")
+
+        inventory = (
+            ROOT / ".local" / "reports" / "phase5" / f"argocd-crd-test-{root.name}.txt"
+        )
+
+        def cleanup_inventory() -> None:
+            inventory.unlink(missing_ok=True)
+            try:
+                inventory.parent.rmdir()
+            except OSError:
+                # Preserve a pre-existing directory or unrelated reports.
+                pass
+
+        self.addCleanup(cleanup_inventory)
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PATH": f"{binary}{os.pathsep}{environment['PATH']}",
+                "KUBECONFIG": str(kubeconfig),
+                "PHASE5_KUBE_CONTEXT": "verda-mgmt",
+                "PHASE5_CONFIRM_CLUSTER": "verda-mgmt",
+                "ARGOCD_CHART_ARCHIVE": str(archive),
+                "ARGOCD_INVENTORY_OUTPUT": str(inventory),
+                "TMPDIR": str(runtime),
+                "FAKE_RENDER": str(render),
+                "FAKE_STATE_DIR": str(state),
+                "FAKE_KUBECTL_LOG": str(kubectl_log),
+                "FAKE_HELM_LOG": str(helm_log),
+                "FAKE_CREATED_LOG": str(created_log),
+                "FAKE_RELEASE_EXISTS": "false",
+            }
+        )
+        return {
+            "root": root,
+            "state": state,
+            "kubectl_log": kubectl_log,
+            "helm_log": helm_log,
+            "created_log": created_log,
+            "environment": environment,
+        }
+
+    def run_installer(
+        self, harness: dict, *arguments: str, environment: dict | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        effective = harness["environment"].copy()
+        if environment:
+            effective.update(environment)
+        return subprocess.run(
+            ["bash", str(BOOTSTRAP / "install.sh"), *arguments],
+            cwd=ROOT,
+            env=effective,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    @staticmethod
+    def command_log(path: Path) -> list[list[str]]:
+        if not path.exists():
+            return []
+        return [
+            json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+        ]
+
+    @staticmethod
+    def created_names(harness: dict) -> list[str]:
+        path = harness["created_log"]
+        return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+    @staticmethod
+    def retain_crd(harness: dict, name: str, *, foreign=False, drift=False) -> None:
+        document = fixture_crd(name)
+        document["metadata"]["labels"]["app.kubernetes.io/managed-by"] = "Helm"
+        document["metadata"]["annotations"].update(
+            {
+                "meta.helm.sh/release-name": "argocd",
+                "meta.helm.sh/release-namespace": "argocd",
+            }
+        )
+        document["spec"]["conversion"] = {"strategy": "None"}
+        if foreign:
+            document["metadata"]["labels"]["app.kubernetes.io/managed-by"] = "foreign"
+        if drift:
+            document["spec"]["scope"] = "Cluster"
+        (harness["state"] / f"{name}.json").write_text(
+            json.dumps(document), encoding="utf-8"
+        )
+
     def test_chart_identity_and_official_archive_are_checksum_pinned(self) -> None:
         lock = yaml.safe_load((ROOT / "versions.lock.yaml").read_text(encoding="utf-8"))
         chart = lock["helm_charts"]["argocd"]
@@ -60,7 +466,7 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
             install.index("upgrade --install"),
         )
         self.assertLess(
-            install.index('wait --for=condition=Established'),
+            install.index("wait --for=condition=Established"),
             install.index("upgrade --install"),
         )
         self.assertLess(
@@ -99,12 +505,8 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
         self.assertEqual(values["server"]["service"]["type"], "ClusterIP")
         self.assertFalse(values["dex"]["enabled"])
         policy = values["configs"]["rbac"]["policy.csv"]
-        self.assertIn(
-            "p, role:reviewer, applications, get, platform/*, allow", policy
-        )
-        self.assertIn(
-            "p, role:reviewer, applications, sync, platform/*, deny", policy
-        )
+        self.assertIn("p, role:reviewer, applications, get, platform/*, allow", policy)
+        self.assertIn("p, role:reviewer, applications, sync, platform/*, deny", policy)
         for component in ("controller", "server", "repoServer", "applicationSet"):
             self.assertTrue(values[component]["metrics"]["enabled"])
             self.assertFalse(values[component]["metrics"]["serviceMonitor"]["enabled"])
@@ -219,7 +621,7 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
         self.assertIn("phase5_assert_outside_repo", script)
         self.assertIn('create_session reviewer "${reviewer_password}"', script)
         self.assertIn('service/argocd-server "${local_port}:80"', script)
-        self.assertIn('http://127.0.0.1:${local_port}/healthz', script)
+        self.assertIn("http://127.0.0.1:${local_port}/healthz", script)
         self.assertNotIn("https://127.0.0.1:${local_port}", script)
         self.assertEqual(script.count("openssl rand -base64 24"), 2)
         self.assertEqual(script.count("[A-Za-z0-9+/=_-]{32}"), 2)
@@ -238,16 +640,12 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
         self.assertIn("PHASE5_ARGOCD_ADMIN_TOKEN_FILE", script)
         self.assertIn("PHASE5_ARGOCD_REVIEWER_TOKEN_FILE", script)
         self.assertIn("assert_token_output_target", script)
-        self.assertIn(
-            '[[ "${path}" == /* ]] || phase5_fail', script
-        )
+        self.assertIn('[[ "${path}" == /* ]] || phase5_fail', script)
         self.assertIn("phase5_assert_outside_repo", script)
-        self.assertIn("-L \"${path}\"", script)
-        self.assertIn(
-            'phase5_require_regular_file "${path}" "${label}"', script
-        )
+        self.assertIn('-L "${path}"', script)
+        self.assertIn('phase5_require_regular_file "${path}" "${label}"', script)
         self.assertIn("\"${target_mode}\" == '600'", script)
-        self.assertIn("\"${target_owner}\" == \"$(id -u)\"", script)
+        self.assertIn('"${target_owner}" == "$(id -u)"', script)
         self.assertIn("tempfile.mkstemp", script)
         self.assertIn("os.fchmod(descriptor, 0o600)", script)
         self.assertIn("os.replace(temporary, target)", script)
@@ -262,9 +660,7 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
             script,
         )
         self.assertLess(
-            script.index(
-                "assert_token_output_target \"${admin_token_path}\""
-            ),
+            script.index('assert_token_output_target "${admin_token_path}"'),
             script.index('"${repo_root}/bootstrap/argocd/install.sh"'),
         )
         self.assertLess(
@@ -275,8 +671,8 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
         )
         self.assertNotIn('>"${admin_token_path}"', script)
         self.assertNotIn('>"${reviewer_token_path}"', script)
-        self.assertNotIn('printf \'%s\\n\' "${admin_session_token}"', script)
-        self.assertNotIn('printf \'%s\\n\' "${reviewer_session_token}"', script)
+        self.assertNotIn("printf '%s\\n' \"${admin_session_token}\"", script)
+        self.assertNotIn("printf '%s\\n' \"${reviewer_session_token}\"", script)
 
     def test_render_validator_rejects_public_routes_and_repository_secrets(
         self,
@@ -353,7 +749,9 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
                         "group": "argoproj.io",
                         "scope": "Namespaced",
                         "names": {"plural": name.split(".", 1)[0], "kind": "Fixture"},
-                        "versions": [{"name": "v1alpha1", "served": True, "storage": True}],
+                        "versions": [
+                            {"name": "v1alpha1", "served": True, "storage": True}
+                        ],
                     },
                 }
             )
@@ -397,8 +795,12 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
                 cwd=ROOT,
                 check=True,
             )
-            selected = [item for item in yaml.safe_load_all(missing.read_text()) if item]
-            self.assertEqual([item["metadata"]["name"] for item in selected], [names[1]])
+            selected = [
+                item for item in yaml.safe_load_all(missing.read_text()) if item
+            ]
+            self.assertEqual(
+                [item["metadata"]["name"] for item in selected], [names[1]]
+            )
 
             foreign = json.loads(existing.read_text(encoding="utf-8"))
             foreign["metadata"]["labels"]["app.kubernetes.io/managed-by"] = "foreign"
@@ -443,6 +845,129 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
                 check=False,
             )
             self.assertNotEqual(rejected.returncode, 0)
+
+    def test_installer_creates_only_missing_crds_with_explicit_context(self) -> None:
+        harness = self.new_installer_harness()
+        self.retain_crd(harness, EXPECTED_CRDS[0])
+
+        result = self.run_installer(harness)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.created_names(harness), list(EXPECTED_CRDS[1:]))
+
+        calls = self.command_log(harness["kubectl_log"])
+        crd_calls = [
+            call
+            for call in calls
+            if "create" in call
+            or "wait" in call
+            or any("customresourcedefinition/" in item for item in call)
+            or any(item.startswith("--raw=/apis/argoproj.io") for item in call)
+        ]
+        self.assertGreaterEqual(len(crd_calls), 7)
+        for call in crd_calls:
+            self.assertIn("--kubeconfig", call)
+            self.assertIn("--context", call)
+            self.assertIn("--request-timeout=30s", call)
+        create = next(call for call in calls if "create" in call)
+        self.assertIn("--field-manager=verda-phase5-crd-bootstrap", create)
+        self.assertTrue(
+            any("upgrade" in call for call in self.command_log(harness["helm_log"]))
+        )
+
+    def test_installer_skips_create_when_all_retained_crds_match(self) -> None:
+        harness = self.new_installer_harness()
+        for name in EXPECTED_CRDS:
+            self.retain_crd(harness, name)
+
+        result = self.run_installer(harness)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.created_names(harness), [])
+        calls = self.command_log(harness["kubectl_log"])
+        self.assertFalse(any("create" in call for call in calls))
+        self.assertEqual(sum("wait" in call for call in calls), 3)
+
+    def test_installer_rejects_foreign_or_drifted_crd_before_mutation(self) -> None:
+        for condition in ("foreign", "drift"):
+            with self.subTest(condition=condition):
+                harness = self.new_installer_harness()
+                self.retain_crd(
+                    harness,
+                    EXPECTED_CRDS[0],
+                    foreign=condition == "foreign",
+                    drift=condition == "drift",
+                )
+                result = self.run_installer(harness)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.created_names(harness), [])
+                self.assertFalse(
+                    any(
+                        "create" in call
+                        for call in self.command_log(harness["kubectl_log"])
+                    )
+                )
+                self.assertFalse(
+                    any(
+                        "upgrade" in call
+                        for call in self.command_log(harness["helm_log"])
+                    )
+                )
+
+    def test_partial_create_failure_is_safely_resumed_without_recreation(self) -> None:
+        harness = self.new_installer_harness()
+        first = self.run_installer(harness, environment={"FAKE_CREATE_FAIL_AFTER": "1"})
+        self.assertNotEqual(first.returncode, 0)
+        self.assertEqual(self.created_names(harness), [EXPECTED_CRDS[0]])
+        self.assertFalse(
+            any("upgrade" in call for call in self.command_log(harness["helm_log"]))
+        )
+
+        second = self.run_installer(harness)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(self.created_names(harness), list(EXPECTED_CRDS))
+        calls = self.command_log(harness["kubectl_log"])
+        self.assertEqual(sum("create" in call for call in calls), 2)
+        self.assertTrue(
+            any("upgrade" in call for call in self.command_log(harness["helm_log"]))
+        )
+
+    def test_rollback_performs_no_crd_bootstrap_calls(self) -> None:
+        harness = self.new_installer_harness()
+        result = self.run_installer(
+            harness,
+            "--rollback",
+            "1",
+            environment={"ARGOCD_CONFIRM_ROLLBACK": "argocd:1"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        kubectl_calls = self.command_log(harness["kubectl_log"])
+        flattened = "\n".join(" ".join(call) for call in kubectl_calls)
+        self.assertNotIn("customresourcedefinition/", flattened)
+        self.assertNotIn("condition=Established", flattened)
+        self.assertNotIn("/apis/argoproj.io", flattened)
+        self.assertFalse(any("create" in call for call in kubectl_calls))
+        helm_calls = self.command_log(harness["helm_log"])
+        self.assertTrue(any("history" in call for call in helm_calls))
+        self.assertTrue(any("rollback" in call for call in helm_calls))
+        self.assertFalse(any("upgrade" in call for call in helm_calls))
+
+    def test_existing_release_missing_crd_fails_before_creation(self) -> None:
+        harness = self.new_installer_harness()
+        self.retain_crd(harness, EXPECTED_CRDS[0])
+        self.retain_crd(harness, EXPECTED_CRDS[1])
+        result = self.run_installer(
+            harness, environment={"FAKE_RELEASE_EXISTS": "true"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "existing Argo CD release is missing a required CRD", result.stderr
+        )
+        self.assertEqual(self.created_names(harness), [])
+        self.assertFalse(
+            any("create" in call for call in self.command_log(harness["kubectl_log"]))
+        )
+        self.assertFalse(
+            any("upgrade" in call for call in self.command_log(harness["helm_log"]))
+        )
 
     def test_shell_entrypoints_are_syntax_valid(self) -> None:
         for path in (

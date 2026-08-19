@@ -2,14 +2,15 @@
 
 ## Current state
 
-- Active phase: Phase 5 — AUTHORIZED / NOT YET MUTATED
-- Phase status: Phase 4 PASS — live, local, PR, and protected-main hosted gates are green
-- Stage A status: MANAGEMENT CLUSTER CORE READY — three hardened, reboot-stable, schedulable RKE2 server/etcd nodes are healthy; Phase 5+ platform services are not installed
+- Active phase: Phase 6 — STAGE A END-TO-END PLATFORM BASELINE
+- Phase status: Phase 5 PASS — bootstrap, GitOps ownership, storage resilience, TLS, authentication, endpoint-boundary, local, and hosted gates pass
+- Stage A status: PHASE 6 ACTIVE — the Phase 5 platform boundary is closed; mandatory Stage A services remain fail closed behind Phase 6 capacity and acceptance gates
 - Stage B status: NOT STARTED — prohibited until Stage A is green and the Stage B decision gate passes
-- Last successful repository verification: protected `main` commit `ab01ce8861b469936cfbf6e5b901937e6ec41a27`, hosted run `32275537006`, job `96141963292`; complete credential-free suite and report upload passed
-- Current blockers: none for Phase 4; Phase 5 must satisfy its own preflight before mutation
+- Last hosted closeout baseline: commit `d6d0e4f7fc2f69286836deed515b39d778038be6`, run `32305521901`, job `96237316122`; credential-free validation and report upload passed
+- Definitive Phase 5 live-verification source: protected `main` commit `adc0a071d69852e30659f07999aa95f50401027b`; final closeout source is the reviewed Phase 5 PR
+- Current blocker: none for Phase 5; Phase 6 must pass its own preflight, capacity, deployment, and end-to-end gates
 - Cloud mutation performed: the original seven-resource plan plus one explicitly authorized, assertion-bounded replacement of server-02 compute/OS only; `verda-mgmt-data-02` was preserved
-- Next permitted action: activate Phase 5 controls and complete its read-only prerequisite audit before live mutation
+- Next permitted action: merge the reviewed Phase 5 closure, verify protected-main CI, then execute Phase 6 under the existing continuous directive
 
 ## Phase ledger
 
@@ -20,6 +21,7 @@
 | 2 — Verda infrastructure provisioning | PASS | 2026-08-17 | 2026-08-17 | `evidence/phase-2/` | Exact resources, unique endpoints, three-host SSH, lifecycle safety, cost, encrypted state, and zero drift verified |
 | 3 — Host hardening and secure node networking | PASS | 2026-08-17 | 2026-08-17 | `evidence/phase-3/` | Hardened access, UUID mounts, peer-only WireGuard, firewall, two-pass idempotency, and three serial reboots verified |
 | 4 — Management RKE2 cluster | PASS | 2026-08-18 | 2026-08-19 | `evidence/phase-4/` | Live, local, PR, and protected-main hosted gates pass |
+| 5 — Storage, ingress, certificates, and bootstrap boundary | PASS | 2026-08-19 | 2026-08-20 | `evidence/phase-5/` | Live, local, and hosted closeout gates pass |
 
 ## Environment inventory
 
@@ -71,6 +73,21 @@
 | Independent current-tree verification | PASS | `independent-verification.md` | Retain the final recovery and Cilium acceptance corrections |
 | Final local quality | PASS | `repository-validation.md` | Retain exact current-tree CI parity |
 | Final hosted quality | PASS | `hosted-ci.md` | Retain PR and protected-main runs |
+
+## Phase 5 exit-gate ledger
+
+| Gate condition | Result | Evidence | Closure action |
+|---|---|---|---|
+| Pinned bootstrap is idempotent and bounded to Argo CD plus one root Application | PASS | `evidence/phase-5/gitops-bootstrap.md` | Preserve the day-zero/day-one ownership boundary |
+| Argo CD owns the exact root/child desired-state set | PASS | `evidence/phase-5/gitops-bootstrap.md` | Retain exact-set and Healthy/Synced verification |
+| cert-manager staging-first promotion and production TLS | PASS | `evidence/phase-5/tls-access-and-boundary.md` | Keep issuer references and certificate expiry checks exact |
+| Longhorn uses three dedicated disks and survives critical-volume rescheduling | PASS | `evidence/phase-5/longhorn-reschedule.md` | Preserve three replicas for critical data and root-disk exclusion |
+| Management ingress requires authentication and reviewer privileges are read-only | PASS | `evidence/phase-5/tls-access-and-boundary.md` | Rotate protected external sessions without widening RBAC |
+| Direct break-glass Kubernetes access remains independent of Rancher | PASS | `evidence/phase-5/preflight-cluster-health.md` | Keep kubeconfig outside Git with mode `0600` |
+| External endpoint boundary is exact on all three nodes | PASS | `evidence/phase-5/tls-access-and-boundary.md` | Retain the four allowed and 28 denied port classes |
+| Post-install capacity retains one-node-loss headroom | PASS | `evidence/phase-5/capacity-before-after.md` | Re-evaluate exact Phase 6 requests and PVCs before admission |
+| Final current-tree local CI | PASS | `evidence/phase-5/repository-validation.md` | Retain exact offline/credential-free parity |
+| Final hosted closeout CI | PASS | `evidence/phase-5/hosted-ci.md` | Retain immutable run and job identity |
 
 ## Phase 0 exit-gate ledger
 

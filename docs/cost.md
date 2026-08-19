@@ -2,10 +2,10 @@
 
 ## Status
 
-**PASS through the current Phase 4 infrastructure boundary — Stage A infrastructure remains live at
+**PASS through the current Phase 5 infrastructure boundary — Stage A infrastructure remains live at
 $0.23165/hour ($5.55948/day), excluding unrounded object-storage usage.** The three-node/six-volume
-count and provider burn rate reconcile, and RKE2 installation added no instance, volume, address, or
-SSH-key resource. Object storage is enabled through a documented manual provider-gap exception; its
+count and provider burn rate reconcile, and Phase 5 added no instance, volume, address, or SSH-key
+resource. Object storage is enabled through a documented manual provider-gap exception; its
 positive-size byte/request charge remains an explicit operational-ledger residual, is not
 represented as zero, and is bounded by the existing $5 unquoted-services allowance. Exact
 capacity/operations reconciliation belongs to Phase 14 and does not expand the Phase 4 compute or
@@ -114,3 +114,8 @@ Verda documents prepaid ten-minute billing for pay-as-you-go instances and warns
   capacity/operations reconciliation
 - Phase 4 infrastructure cost gate: PASS; the guarded bootstrap rechecked the unchanged three-node
   resource envelope before mutation, and Phase 4 created no additional compute or block volumes
+- Phase 5 resource delta: none; Argo CD, cert-manager, Longhorn, certificates, and ingress use the
+  existing three instances, six volumes, three addresses, and registered key boundary
+- Phase 5 known infrastructure run rate: unchanged at `$0.23165/hour` or `$5.55948/day`; the
+  object-storage positive-size capacity/request residual remains unmeasured, is not represented as
+  zero, and stays inside the existing `$5` allowance pending Phase 14 reconciliation

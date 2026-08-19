@@ -62,10 +62,12 @@ are exact-pinned in `versions.lock.yaml`, `aqua.yaml`, and `schemas/schema-sourc
 
 - The provider source README still contains pre-registry installation language, while Terraform Registry and current Verda documentation publish the provider. The registry and successful locked initialization govern.
 - The generic Verda Terraform instance page mentions example attributes absent from provider 1.1.2. The exported 1.1.2 schema governs.
-- Current object-storage documentation describes a project Credentials section for Object Storage Access Keys, but that section is absent from the inspected project. Entitlement is a Phase 5 gate, not an assumed feature.
+- The project initially lacked Object Storage Access Keys. Support later enabled entitlement, and
+  Phase 4 proved the manual provider-gap S3 path; provider 1.1.2 still cannot own bucket or key
+  lifecycle.
 - Longhorn's official requirements site currently publishes the 1.12.0 documentation path while the
   locked chart/CRD patch is 1.12.1. Phase 3 applies only the shared host prerequisites from 1.12.0;
-  Phase 5 must re-check the exact 1.12.1 release and compatibility before installing the chart.
+  Phase 5 rechecked the exact 1.12.1 release and verified the pinned chart live.
 - Aqua's standard registry accepts the versioned release ref, not the raw registry commit. Bootstrap
   resolves `v4.552.0` and fails unless it still maps to the locked commit; package checksums remain
   mandatory.

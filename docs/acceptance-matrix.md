@@ -7,7 +7,7 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | R01 | Verda CPU VMs with public IPs | Reusable Terraform modules with pinned IDs and protected lifecycle | Format, validate, plan, drift check | Sanitized instance inventory | PASS — 3 VMs, 3 unique endpoints, exact attachments, hostname-bound SSH, and zero drift verified | Reproducible apply and three uniquely reachable hosts |
 | R02 | Kubernetes | Three-node RKE2 cluster per implemented stage | Node, etcd, DNS, service, Cilium tests | Curated Phase 4 cluster evidence | PASS for management cluster — 3 Ready schedulable servers, healthy quorum, Cilium, DNS, service, and policy paths | Three Ready servers and healthy quorum |
 | R03 | Rancher | HA replicas on `verda-mgmt`; manage both clusters in Stage B | API/UI health and cluster-state check | Scoped reviewer view | Contracted | Intended clusters Active; direct access retained |
-| R04 | Argo CD | Pinned bootstrap, one root app, AppProjects, ApplicationSets | Sync/health and drift tests | Application inventory and drift recovery | Contracted | Git change reconciles automatically |
+| R04 | Argo CD | Pinned bootstrap, one root app, AppProjects, ApplicationSets | Sync/health and drift tests | Application inventory and drift recovery | PASS — idempotent bootstrap, exact one-root/eight-child set, and 9/9 Healthy/Synced on protected `main` | Git change reconciles automatically |
 | R05 | Registry | Self-managed Harbor with Trivy | Push, scan API, digest and artifact checks | Artifact/scan/SBOM record | Contracted | Accepted artifact visible and immutable |
 | R06 | Image security | SBOM, Cosign signature/provenance, digest admission policy | CI positive/negative policy tests | Signature, attestation, denial transcripts | Contracted | Unsigned/tag-only/external image rejected |
 | R07 | Monitoring | kube-prometheus-stack per cluster; central Grafana | Target and query checks | Dashboard screenshots plus source JSON | Contracted | Required targets up and dashboards useful |
@@ -21,10 +21,10 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | R15 | Secrets | Sealed Secrets plus CI secret store | Secret scan and in-cluster decrypt test | Sanitized controller/recovery status | Contracted | No plaintext runtime secret in Git |
 | R16 | Backup | RKE2, Velero, Longhorn and component-specific layers | Age/status/checksum checks | Off-cluster backup inventory | PARTIAL — management etcd local and off-cluster snapshots live; later data layers remain contracted | Recent recovery points exist |
 | R17 | Restore | Namespace/PVC restore with integrity fixture | Checksum and endpoint verification | Measured RTO/RPO report | Contracted | Data restored and verified |
-| R18 | Cost | Actual compute/storage/object/traffic ledger | Recalculation and inventory reconciliation | `docs/cost.md` plus cost evidence | PASS through current Phase 4 work — no infrastructure delta; 3 instances/6 volumes reconcile at $0.23165/hour | Actual/projected costs documented |
+| R18 | Cost | Actual compute/storage/object/traffic ledger | Recalculation and inventory reconciliation | `docs/cost.md` plus cost evidence | PASS through current Phase 5 work — no compute, volume, address, or key delta; known infrastructure remains $0.23165/hour | Actual/projected costs documented |
 | R19 | Kueue bonus | CPU queues first; optional GPU flavor later | Queued/admitted/priority tests | Queue status and dashboard | Core-gated | Excess job queues before pod creation |
-| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Phase 0–3 and current Phase 4 implementation, debugging, and validation recorded | Inputs, corrections, and validation recorded |
-| R21 | Access | TLS endpoints and least-privilege reviewer identities | Independent endpoint/login smoke test | Evaluator-permission transcript | PARTIAL — named key-only host administrator and source allowlist verified; application/reviewer identities await later phases | Evaluator reaches approved services |
+| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Phase 0–5 implementation, debugging, delegation, and validation recorded | Inputs, corrections, and validation recorded |
+| R21 | Access | TLS endpoints and least-privilege reviewer identities | Independent endpoint/login smoke test | Evaluator-permission transcript | PARTIAL — Argo TLS, anonymous denial, administrator login, and read-only reviewer pass on all three ingress addresses; later management UIs remain contracted | Evaluator reaches approved services |
 | R22 | One-page summary | Evidence-aligned executive summary | Rendered page-count/content check | Final PDF/Markdown | Contracted | Exactly one page and factually aligned |
 
 ## Phase 0 traceability check
@@ -98,3 +98,20 @@ platform services, Stage B, and every Phase 5+ action remain prohibited.
 Overall Phase 4 state is **PASS**. The definitive bootstrap, corrected-current-tree independent
 verification, final local quality, PR run `32275331008`, and protected-main run `32275537006` all
 passed. Phase 5 is authorized and starts with its own read-only preflight.
+
+## Phase 5 storage, TLS, and GitOps-bootstrap acceptance
+
+| ID | Gate | Automated/live proof | State |
+|---|---|---|---|
+| P01 | Minimal bootstrap boundary | Pinned Argo release plus one root Application; idempotent replay at Helm revision 5 | PASS |
+| P02 | GitOps ownership | Exact one-root/eight-child set; all nine Applications Healthy and Synced | PASS |
+| P03 | Certificate lifecycle | Staging-first admission, then production; six cert-manager replicas and two certificates/issuers Ready | PASS |
+| P04 | Durable storage | Three dedicated disks; critical 4 MiB checksum preserved across reschedule; replicas 3/3 and cleanup absent | PASS |
+| P05 | Authenticated ingress | TLS through three addresses, anonymous denied, admin authenticated, reviewer read-only | PASS |
+| P06 | Direct recovery access | Protected mode-`0600` direct kubeconfig works independently of public ingress and Rancher | PASS |
+| P07 | External boundary | HTTPS 200, non-ACME HTTP 404, four allowed and 28 denied TCP classes on each node | PASS |
+| P08 | Post-install capacity | +0.065 CPU cores and +16.830 GiB memory after equal-node loss; worst-two-node storage remains positive | PASS for Phase 5; Phase 6 not admitted |
+| P09 | Final current-tree local quality | Complete credential-free `make ci` after evidence curation | PASS |
+| P10 | Hosted closeout quality | Reviewed PR and protected workflow | PASS |
+
+Overall Phase 5 state is **PASS**. Phase 6 is active under its own fail-closed gates.

@@ -138,7 +138,8 @@ Phase 2 created exactly three `CPU.4V.16G` instances and six attached NVMe volum
 through Terraform. The immutable Ubuntu 24.04 Minimal configuration UUID remains the live catalog
 invariant; ADR 0012 documents why provider 1.1.2 receives its canonical API image type. State is
 DPAPI-sealed outside Git with an independent encrypted backup; remote S3 state remains honestly
-deferred because object-storage entitlement and locking are unproven.
+deferred because provider ownership and state locking remain unproven even though object-storage
+entitlement now exists.
 
 Phase 2 is green after an explicitly authorized, assertion-bounded replacement of server-02 compute
 and its instance-owned OS disk. Its protected data volume retained the original identity and
@@ -183,3 +184,17 @@ The default public API/registration design is still not a managed HA endpoint. D
 remain protected outside Git. The controlled non-primary and designated-primary drills plus the
 approved-source external boundary scan passed. Those tests prove one-node quorum and the documented
 direct-path recovery behavior, but do not promote the default endpoint to a managed HA service.
+
+Phase 5 established the day-zero/day-one handoff. A pinned Helm bootstrap owns only Argo CD and one
+root Application; the root owns an exact eight-child set, and all nine Applications were Healthy
+and Synced on the protected live revision. cert-manager completed staging-first issuance before the
+production certificate and Git-owned Argo ingress were admitted. Argo is served with consistent
+trusted TLS through each of the three node addresses, anonymous access is denied, and the scoped
+reviewer can read but cannot sync or invoke actions. Protected direct kubeconfig access remains the
+Rancher-independent break-glass path.
+
+Longhorn schedules only the three dedicated data disks. A three-replica critical fixture retained
+its 4 MiB checksum and storage identities through deliberate pod rescheduling, and temporary test
+resources were absent after cleanup. Post-install requests retain positive one-node-loss CPU and
+memory headroom, but the CPU margin is only 0.065 cores; Phase 6 therefore remains fail closed until
+its exact rendered capacity plan passes.
