@@ -1,0 +1,11 @@
+---
+node-name: {{ inventory_hostname | quote }}
+node-ip: {{ phase3_wireguard_addresses[inventory_hostname] | quote }}
+node-external-ip: {{ ansible_host | quote }}
+advertise-address: {{ phase3_wireguard_addresses[inventory_hostname] | quote }}
+{% if inventory_hostname != 'verda-mgmt-server-01' %}
+server: "https://{{ phase3_wireguard_addresses['verda-mgmt-server-01'] }}:9345"
+{% endif %}
+node-label:
+  - node-role.verda.com/cluster=management
+  - node-role.verda.com/server=true

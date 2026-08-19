@@ -1,5 +1,5 @@
 ---
-name: Release evidence - Phase 9 gate
+name: Release evidence - Phase 17 gate
 
 on:
   workflow_dispatch:
@@ -14,5 +14,5 @@ jobs:
       - name: Stop before unimplemented release phase
         shell: bash
         run: |
-          echo 'Release evidence publication requires Phase 9.' >&2
+          echo 'Release evidence publication requires Phase 17.' >&2
           exit 64

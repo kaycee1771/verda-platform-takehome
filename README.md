@@ -4,13 +4,20 @@ This repository is being built phase by phase as a reproducible, secure-by-desig
 
 ## Current status
 
-**Phases 0–3 — PASS; Phase 4 is not authorized.** Verda currently runs exactly three
+**Phases 0–3 — PASS; Phase 4 live core green and closeout in progress.** Verda currently runs exactly three
 on-demand management instances with three instance-owned 80 GiB OS volumes and three protected
 100 GiB data volumes. The Phase 2 closeout proved unique public endpoints, hostname-bound SSH,
 encrypted external Terraform state and backup, guarded lifecycle behavior, reconciled cost, and
 zero drift. Phase 3 added named key-only administration, fail-safe SSH/firewall transitions, a
 three-node WireGuard mesh, guarded UUID-mounted data filesystems, two-pass idempotency, public-port
-denial tests, and three serial reboot proofs. RKE2 and every later platform component remain blocked.
+denial tests, and three serial reboot proofs. Phase 4 now has three Ready schedulable RKE2
+server/etcd nodes, healthy Cilium/Hubble and service networking, internal Traefik, local plus
+off-cluster snapshots, focused CIS checks on every server, a controlled one-node and primary-endpoint
+failure drill, approved-source firewall verification, a sanitized support bundle, a zero-change
+three-host replay, and a 270-second post-recovery stability window. Phase 4 remains partial only while
+the final local quality suite passes and hosted CI is pending; the corrected current-tree independent
+verification has passed.
+Rancher, Argo CD, platform services, Stage B, and every Phase 5+ component remain blocked.
 
 The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`, each with an 80 GiB
 root volume and a 100 GiB Longhorn data volume, using Ubuntu 24.04 Minimal. The seven-day envelope
@@ -45,10 +52,10 @@ make ci
 ```
 
 `make ci` is the local equivalent of the validation job in `.github/workflows/validate.yml`.
-The canonical 18-phase target map is `config/phase-map.json`. At the completed Phase 3 gate, only
-`make configure CLUSTER=management` and `make verify-hosts CLUSTER=management` can enter the Phase 3
-host maintenance/verification orchestrator. Infrastructure mutation, RKE2, cluster verification, GitOps, platform services,
-Stage A verification, Stage B, and teardown fail closed with their owning phase.
+The canonical 18-phase target map is `config/phase-map.json`. Phase 4 exposes only the explicit
+completed-phase preflight/convergence targets plus `make cluster-bootstrap CLUSTER=management` and
+`make verify-cluster CLUSTER=management`. Phase 2 cloud mutation, GitOps, platform services, Stage A
+verification, Stage B, and teardown remain fail closed with their owning phase.
 
 ## Safe Phase 0 discovery
 

@@ -10,6 +10,10 @@ kubernetes:
     - {name: pod-v1.json, sha256: ab3eec94c85e6b166a62312ddb919fb747a53d1f5701a77befb17419361b52b0}
     - {name: secret-v1.json, sha256: de761ccb06bd1d2c641fb57397f61b68e7ff53a384f0817ce40e5ded8cee86f3}
     - {name: deployment-apps-v1.json, sha256: 46dc7cc4bec2c9a62400491e2b8057635afbfa6838999c518f7bea5c621a989b}
+    - {name: daemonset-apps-v1.json, sha256: d6adf88a0790ee7c51f240b01712aaafc897fd2212633aa76331c2a38c216789}
+    - {name: service-v1.json, sha256: 8bf019854daed511e7c174896a898173fa65d88ec5937c687a37303d4cc9351b}
+    - {name: networkpolicy-networking-v1.json, sha256: f6324cc464f62228b0418f438d167208e4f86c7e3677ba30f608e79a8b26ba79}
+    - {name: ingress-networking-v1.json, sha256: 4e0f63ad84c2bf22565e489d1f4b885ddaa9f6bf7cff1ddd562553760afe4d79}
 
 crds:
   materialized:

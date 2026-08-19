@@ -5,7 +5,7 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | ID | Requirement | Implementation contract | Automated verification | Required live evidence | Current state | Final exit condition |
 |---|---|---|---|---|---|---|
 | R01 | Verda CPU VMs with public IPs | Reusable Terraform modules with pinned IDs and protected lifecycle | Format, validate, plan, drift check | Sanitized instance inventory | PASS — 3 VMs, 3 unique endpoints, exact attachments, hostname-bound SSH, and zero drift verified | Reproducible apply and three uniquely reachable hosts |
-| R02 | Kubernetes | Three-node RKE2 cluster per implemented stage | Node, etcd, DNS, service, Cilium tests | `evidence/cluster/` transcripts | Contracted | Three Ready servers and healthy quorum |
+| R02 | Kubernetes | Three-node RKE2 cluster per implemented stage | Node, etcd, DNS, service, Cilium tests | Curated Phase 4 cluster evidence | PASS for management cluster — 3 Ready schedulable servers, healthy quorum, Cilium, DNS, service, and policy paths | Three Ready servers and healthy quorum |
 | R03 | Rancher | HA replicas on `verda-mgmt`; manage both clusters in Stage B | API/UI health and cluster-state check | Scoped reviewer view | Contracted | Intended clusters Active; direct access retained |
 | R04 | Argo CD | Pinned bootstrap, one root app, AppProjects, ApplicationSets | Sync/health and drift tests | Application inventory and drift recovery | Contracted | Git change reconciles automatically |
 | R05 | Registry | Self-managed Harbor with Trivy | Push, scan API, digest and artifact checks | Artifact/scan/SBOM record | Contracted | Accepted artifact visible and immutable |
@@ -19,11 +19,11 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | R13 | Network policy | Default deny plus explicit DNS/ingress/monitoring/app flows | Connectivity matrix | Hubble allowed/denied flows | Contracted | Cross-environment traffic blocked |
 | R14 | Pod security | PSA plus Kyverno Audit → test → Enforce | Kyverno CLI and admission tests | Rejected privileged workload | Contracted | Noncompliant application pod rejected |
 | R15 | Secrets | Sealed Secrets plus CI secret store | Secret scan and in-cluster decrypt test | Sanitized controller/recovery status | Contracted | No plaintext runtime secret in Git |
-| R16 | Backup | RKE2, Velero, Longhorn and component-specific layers | Age/status/checksum checks | Off-cluster backup inventory | Contracted | Recent recovery points exist |
+| R16 | Backup | RKE2, Velero, Longhorn and component-specific layers | Age/status/checksum checks | Off-cluster backup inventory | PARTIAL — management etcd local and off-cluster snapshots live; later data layers remain contracted | Recent recovery points exist |
 | R17 | Restore | Namespace/PVC restore with integrity fixture | Checksum and endpoint verification | Measured RTO/RPO report | Contracted | Data restored and verified |
-| R18 | Cost | Actual compute/storage/object/traffic ledger | Recalculation and inventory reconciliation | `docs/cost.md` plus cost evidence | PASS through Phase 3 — no resource delta; 3 instances/6 volumes reconcile at $0.23165/hour | Actual/projected costs documented |
+| R18 | Cost | Actual compute/storage/object/traffic ledger | Recalculation and inventory reconciliation | `docs/cost.md` plus cost evidence | PASS through current Phase 4 work — no infrastructure delta; 3 instances/6 volumes reconcile at $0.23165/hour | Actual/projected costs documented |
 | R19 | Kueue bonus | CPU queues first; optional GPU flavor later | Queued/admitted/priority tests | Queue status and dashboard | Core-gated | Excess job queues before pod creation |
-| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Phase 0–3 activity, live corrections, credential boundary, and rejected approaches recorded | Inputs, corrections, and validation recorded |
+| R20 | AI-use log | Truthful assistant attribution and validation record | Documentation structure check | `docs/ai-usage.md` | Phase 0–3 and current Phase 4 implementation, debugging, and validation recorded | Inputs, corrections, and validation recorded |
 | R21 | Access | TLS endpoints and least-privilege reviewer identities | Independent endpoint/login smoke test | Evaluator-permission transcript | PARTIAL — named key-only host administrator and source allowlist verified; application/reviewer identities await later phases | Evaluator reaches approved services |
 | R22 | One-page summary | Evidence-aligned executive summary | Rendered page-count/content check | Final PDF/Markdown | Contracted | Exactly one page and factually aligned |
 
@@ -49,7 +49,8 @@ This is the live requirement-to-proof source of truth. `Contracted` means the im
 | Q09 | Clean-clone bootstrap and validation | Fresh remote clone at `f4848cf`; zero copied `.local`; bootstrap and full CI parity passed with a clean worktree | PASS |
 | Q10 | Repository governance | Real CODEOWNERS; protected `main`; app-bound required CI; PR, linear-history, no-force-push, no-deletion, conversation-resolution, secret-scanning, and push-protection controls verified through the GitHub API | PASS |
 
-Phase 2 is complete. This does not authorize Phase 3 or any host, network, or Kubernetes mutation.
+Phase 2 is complete. Its cloud-mutation targets remain closed; Phase 4 may reuse only the explicitly
+allowlisted read-only/convergence prerequisites in `config/phase-map.json`.
 
 ## Phase 2 infrastructure acceptance
 
@@ -73,7 +74,27 @@ Phase 2 is complete. This does not authorize Phase 3 or any host, network, or Ku
 | H05 | Public firewall boundary | SSH only from approved `/32`; peer-only WireGuard; HTTP/S, API, supervisor, etcd, kubelet, metrics, and sampled NodePorts denied | PASS |
 | H06 | Idempotency | Two complete prepare/network/diagnostic passes and post-reboot convergence report `changed=0` on all hosts | PASS |
 | H07 | Reboot survival | Three serial reboots prove new boot identities, cloud-init settlement, strict access, mounts, mesh, firewall, and time | PASS |
-| H08 | Phase isolation | Zero cloud actions; RKE2 binary/config/data absent; every Phase 4+ target still fails closed | PASS |
+| H08 | Phase isolation at closure | Zero cloud actions; RKE2 binary/config/data absent; Phase 4 remained blocked until explicit authorization | PASS |
+| H09 | Final merged hosted CI | Commit `f9ce3e266845d460faa5ac93b7bba2989995f600`, run `32042890480`, job `95425241122`; bootstrap, complete suite, and report upload passed | PASS |
 
-Phase 3 is complete. This does not authorize RKE2, Kubernetes, Rancher, Argo CD, Harbor, DNS, Stage A
-platform verification, Stage B, or any Phase 4+ action.
+Phase 3 is complete and Phase 4 is explicitly authorized. Rancher, Argo CD, Harbor, DNS, Stage A
+platform services, Stage B, and every Phase 5+ action remain prohibited.
+
+## Phase 4 management-cluster acceptance
+
+| ID | Gate | Automated/live proof | State |
+|---|---|---|---|
+| K01 | Exact supported RKE2 path | Official compatibility/release evidence, immutable artifact checksums, exact role variables | PASS |
+| K02 | Immutable network design | Pairwise CIDR test plus live controller and node-route comparison before start | PASS — 30 observed routes, 9 owned resume routes, zero overlaps, no raw routes recorded |
+| K03 | Secure idempotent bootstrap | Prepare/start separation, process-only token, encrypted recovery copy, serial health gates, parity hash | PASS — definitive bootstrap and zero-change active-cluster replay on all three servers |
+| K04 | CIS and control-plane hardening | `profile: cis`, generated sysctls, audit policy, encryption, focused self-assessment | PASS — 10/10 focused checks on each server; manual identity exceptions documented |
+| K05 | Cilium and Traefik | Conservative supported configs, 1370 MTU, Hubble/metrics, internal multi-node Traefik | PASS — full connectivity and internal three-node Traefik smoke green |
+| K06 | Three-node cluster health | Nodes, API, system pods, etcd, DNS/service, Cilium, traffic, policy, MTU, cleanup | PASS — three Ready schedulable servers and all listed core checks green |
+| K07 | External firewall boundary | Approved-source API plus negative supervisor/etcd/kubelet/Cilium/metrics/NodePort scan | PASS — all three nodes; independent non-allowlisted vantage remains a limitation |
+| K08 | Local and off-cluster snapshots | Scheduled/on-demand snapshot and both local/S3 listings | PASS — compressed ready recovery point in both location classes; 6-hour schedule and 8+8 retention |
+| K09 | Single-node and endpoint failure | Non-primary stop/recovery, then primary endpoint loss/direct path/quorum/recovery | PASS — definitive bootstrap and corrected-current-tree independent verification both exercised the restart-history-preserving path |
+| K10 | Sanitized diagnostics and quality | Support-bundle exclusions plus complete local `make ci` | PARTIAL — live bundle and local quality pass; hosted CI pending |
+
+Overall Phase 4 state is **PARTIAL / IN PROGRESS**. The definitive bootstrap gates are live-green;
+the corrected current-tree independent verification and final local quality also passed. Hosted CI
+remains. No Phase 5 live mutation begins before the protected Phase 4 baseline.

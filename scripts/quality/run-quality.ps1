@@ -37,8 +37,25 @@ if (-not (Test-Path -LiteralPath $bootstrapMarker)) {
     throw "Pinned offline caches are missing. Run 'make bootstrap-tools' first."
 }
 $marker = Get-Content -LiteralPath $bootstrapMarker -Raw | ConvertFrom-StringData
+$fingerprintArgs = @(
+    'run', '--rm', '--network', 'none', '--read-only',
+    '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
+    '--volume', "${repoRoot}:/workspace:ro",
+    '--workdir', '/workspace',
+    $image, 'python', 'scripts/quality/cache_fingerprint.py', 'versions.lock.yaml'
+)
+$toolchainFingerprint = (& docker @fingerprintArgs 2>$null).Trim()
+if ($LASTEXITCODE -ne 0 -or $toolchainFingerprint -notmatch '^[0-9a-f]{64}$') {
+    throw 'Unable to calculate the pinned offline-cache fingerprint.'
+}
+if (-not $marker.ContainsKey('schema_version') -or $marker.schema_version -ne '2') {
+    throw "Offline cache marker schema is stale. Run 'make bootstrap-tools' first."
+}
+if (-not $marker.ContainsKey('toolchain_lock_sha256') -or
+    $marker.toolchain_lock_sha256 -ne $toolchainFingerprint) {
+    throw "Offline caches are stale for cache-affecting version/provider locks. Run 'make bootstrap-tools' first."
+}
 $lockedInputs = [ordered]@{
-    versions_lock_sha256 = (Join-Path $repoRoot 'versions.lock.yaml')
     aqua_config_sha256 = (Join-Path $repoRoot 'aqua.yaml')
     schema_lock_sha256 = (Join-Path $repoRoot 'schemas\schema-sources.lock.yaml')
     quality_dockerfile_sha256 = (Join-Path $repoRoot 'tooling\quality\Dockerfile')
@@ -46,6 +63,8 @@ $lockedInputs = [ordered]@{
     bootstrap_tools_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap-tools.ps1')
     bootstrap_cache_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap-cache.sh')
     bootstrap_schemas_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap_schemas.py')
+    cache_fingerprint_sha256 = (Join-Path $repoRoot 'scripts\quality\cache_fingerprint.py')
+    write_cache_marker_sha256 = (Join-Path $repoRoot 'scripts\quality\write-cache-marker.sh')
 }
 foreach ($entry in $lockedInputs.GetEnumerator()) {
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $entry.Value).Hash.ToLowerInvariant()

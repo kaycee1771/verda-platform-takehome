@@ -1,0 +1,47 @@
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    deployment:
+      kind: DaemonSet
+    ingressRoute:
+      dashboard:
+        enabled: false
+    providers:
+      kubernetesCRD:
+        allowCrossNamespace: false
+        allowExternalNameServices: false
+      kubernetesIngress:
+        allowExternalNameServices: false
+    ports:
+      web:
+        forwardedHeaders:
+          trustedIPs:
+            - {{ phase3_wireguard_subnet }}
+            - {{ phase4_management_pod_cidr }}
+          insecure: false
+        proxyProtocol:
+          trustedIPs: []
+          insecure: false
+      websecure:
+        forwardedHeaders:
+          trustedIPs:
+            - {{ phase3_wireguard_subnet }}
+            - {{ phase4_management_pod_cidr }}
+          insecure: false
+        proxyProtocol:
+          trustedIPs: []
+          insecure: false
+    metrics:
+      addInternals: true
+      prometheus:
+        service:
+          enabled: true
+        serviceMonitor:
+          enabled: false
+    service:
+      type: ClusterIP

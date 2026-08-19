@@ -34,6 +34,11 @@ table inet verda_platform {
     ip protocol icmp accept
     ip6 nexthdr ipv6-icmp accept
     ip saddr @admin_ipv4 tcp dport 22 ct state new limit rate 15/minute accept
+{% if phase4_cluster_firewall_enabled | default(false) | bool %}
+    ip saddr @admin_ipv4 tcp dport 6443 ct state new limit rate 60/minute accept
+    iifname { "cilium_host", "cilium_vxlan", "lxc*" } ip saddr {{ phase4_management_pod_cidr }} meta mark & 0x0f00 == 0x0200 accept
+    iifname { "cilium_host", "cilium_vxlan", "lxc*" } ip saddr {{ phase4_management_pod_cidr }} tcp dport { 4244, 6443, 10250 } accept
+{% endif %}
     ip saddr @public_peer_ipv4 udp dport {{ phase3_wireguard_port }} accept
     iifname "{{ phase3_wireguard_interface }}" ip saddr @overlay_peer_ipv4 accept
     limit rate 5/minute log prefix "verda-input-drop " level warn
@@ -43,8 +48,17 @@ table inet verda_platform {
   chain forward {
     type filter hook forward priority -10; policy drop;
     ct state invalid drop
+{% if phase4_cluster_firewall_enabled | default(false) | bool %}
+    ct direction original iifname != "{{ phase3_wireguard_interface }}" meta l4proto tcp ct status dnat ct original ip daddr {{ ansible_host }} ct original proto-dst { 80, 443 } drop
+{% endif %}
     ct state { established, related } accept
     iifname "{{ phase3_wireguard_interface }}" ip saddr @overlay_peer_ipv4 accept
+{% if phase4_cluster_firewall_enabled | default(false) | bool %}
+    iifname { "cilium_host", "cilium_vxlan" } ip saddr {{ phase4_management_pod_cidr }} accept
+    iifname "lxc*" ip saddr {{ phase4_management_pod_cidr }} accept
+    oifname { "cilium_host", "cilium_vxlan" } ip daddr {{ phase4_management_pod_cidr }} accept
+    oifname "lxc*" ip daddr {{ phase4_management_pod_cidr }} accept
+{% endif %}
     counter drop
   }
 

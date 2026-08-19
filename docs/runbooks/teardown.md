@@ -1,7 +1,7 @@
 # Teardown
 
-Status: operational content is deferred to the owning implementation phase. The section contract is
-present now so later work cannot omit safety, rollback, or recovery proof.
+Status: destructive platform teardown remains Phase 14 work. Phase 4 owns only guarded RKE2
+installation rollback and must never invoke infrastructure destruction.
 
 ## Impact
 
@@ -21,4 +21,4 @@ present now so later work cannot omit safety, rollback, or recovery proof.
 
 ## Related dashboards and queries
 
-_Pending implementation in the owning platform phase._
+_Pending implementation in Phase 14; Phase 4 rollback is documented with the cluster automation._

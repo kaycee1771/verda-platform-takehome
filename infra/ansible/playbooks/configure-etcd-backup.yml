@@ -1,0 +1,8 @@
+---
+- name: Configure and verify the encrypted off-cluster etcd snapshot path
+  hosts: verda-mgmt-server-01
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  roles:
+    - role: etcd_backup

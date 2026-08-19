@@ -1,0 +1,51 @@
+---
+data-dir: {{ phase4_rke2_data_dir | quote }}
+token-file: {{ phase4_rke2_token_file | quote }}
+cluster-cidr: {{ phase4_management_pod_cidr | quote }}
+service-cidr: {{ phase4_management_service_cidr | quote }}
+cluster-dns: {{ phase4_management_cluster_dns | quote }}
+cluster-domain: {{ phase4_management_cluster_domain | quote }}
+cni: cilium
+ingress-controller: traefik
+disable-kube-proxy: false
+egress-selector-mode: agent
+profile: cis
+secrets-encryption-provider: aescbc
+tls-san-security: true
+write-kubeconfig-mode: "0640"
+write-kubeconfig-group: {{ phase4_rke2_admin_group | quote }}
+audit-policy-file: /etc/rancher/rke2/audit-policy.yaml
+etcd-expose-metrics: false
+etcd-snapshot-name: verda-mgmt
+etcd-snapshot-schedule-cron: {{ phase4_snapshot_schedule | quote }}
+etcd-snapshot-retention: {{ phase4_snapshot_retention }}
+etcd-snapshot-compress: true
+etcd-s3: true
+etcd-s3-config-secret: {{ phase4_snapshot_secret_name | quote }}
+supervisor-metrics: false
+enable-pprof: false
+tls-san:
+  - {{ phase3_wireguard_addresses['verda-mgmt-server-01'] | quote }}
+  - {{ phase3_wireguard_addresses['verda-mgmt-server-02'] | quote }}
+  - {{ phase3_wireguard_addresses['verda-mgmt-server-03'] | quote }}
+{% for host in groups['management_servers'] | sort %}
+  - {{ hostvars[host].ansible_host | quote }}
+  - {{ (hostvars[host].ansible_host ~ '.sslip.io') | quote }}
+{% endfor %}
+kube-apiserver-arg:
+  - audit-log-path={{ phase4_rke2_data_dir }}/server/logs/audit.log
+  - audit-log-maxage=30
+  - audit-log-maxbackup=10
+  - audit-log-maxsize=100
+  - anonymous-auth=false
+  - profiling=false
+kube-controller-manager-arg:
+  - profiling=false
+kube-scheduler-arg:
+  - profiling=false
+kubelet-arg:
+  - kube-reserved={{ phase4_kube_reserved }}
+  - system-reserved={{ phase4_system_reserved }}
+  - eviction-hard=memory.available<500Mi,nodefs.available<10%,imagefs.available<15%
+  - streaming-connection-idle-timeout=5m
+  - rotate-certificates=true

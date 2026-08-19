@@ -61,7 +61,7 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
 - **Reproducibility correction:** Identical BuildKit layers produced different local image-index
   digests because default provenance includes timestamps. For this local validator only, automatic
   provenance attachment was disabled and source-lock/checksum provenance was recorded explicitly;
-  signed SBOM and provenance requirements for Phase 6 application artifacts remain unchanged.
+  signed SBOM and provenance requirements for Phase 8 supply-chain artifacts remain unchanged.
 - **Schema discipline:** Codex replaced future-only schema declarations with checksummed upstream
   schemas and positive fixtures for Argo CD, Kyverno, Kueue, Longhorn, Velero, Prometheus Operator,
   and Sealed Secrets. An unknown custom API remains a mandatory rejection case.
@@ -215,3 +215,71 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
 - **Verification:** The repaired pinned bootstrap passed, followed by the complete network-disabled
   37-test `make ci` chain, all negative fixtures, all pre-commit hooks, and clean working-tree and
   complete-history Gitleaks scans. No Verda resource or host was contacted or modified.
+
+## 2026-08-18 - Phase 4 authorization and Phase 3 review reconciliation
+
+- **Human authorization:** The user explicitly authorized Phase 4 management-RKE2 work while
+  prohibiting Verda resource mutation and every Phase 5+ component.
+- **Assistant activity:** Codex read the authoritative Phase 4 contract and named ADR/operations
+  sources, recorded the final Phase 3 merged CI identity, corrected stale phase ownership, and
+  refactored the dispatcher to expose only approved completed-phase prerequisites and Phase 4
+  management-cluster targets.
+- **Boundary:** This reconciliation is repository-only. No cloud API, host, Kubernetes endpoint, or
+  credential was used; RKE2 bootstrap remains fail closed until implementation and preflight pass.
+
+## 2026-08-18 - Phase 4 implementation and fail-closed preflight
+
+- **Assistant activity:** Codex verified the exact RKE2/Rancher/Ubuntu/component support path and
+  immutable artifact checksums from primary sources, selected non-overlapping management and future
+  workload CIDRs, and implemented the dedicated RKE2, snapshot, verification, firewall, failure-
+  drill, and sanitized-diagnostics automation.
+- **Security design:** The generated RKE2 token has only a DPAPI-sealed external recovery copy;
+  token and S3 values are process-only, Kubernetes secrets use standard input with logging disabled,
+  protected kubeconfigs remain outside Git, and support output removes endpoints, identifiers, and
+  secret-like lines.
+- **Quality corrections:** Adding future-phase pins exposed that the Phase 1 cache marker hashed the
+  entire version file. Codex replaced it with a canonical cache-affecting fingerprint that includes
+  Terraform provider locks and added regression tests. Full lint then identified invalid hyphenated
+  role names and unprefixed internal registers; the implementation was corrected without suppressing
+  rules. The complete network-disabled `make ci` suite passed.
+- **Live verification:** Read-only console inspection confirmed three running intended instances,
+  expected rounded burn/runway, and no Object Storage Access Keys category. The strict host gate
+  stopped because the current operator source no longer matches the Phase 3 `/32`; bounded TCP/22
+  probes confirmed all three nodes deny it. No host, cloud resource, or Kubernetes mutation occurred.
+- **Rejected approaches:** Codex did not reuse the visibly exposed prior credential, query an
+  unrelated public echo service after that egress was rejected, weaken the firewall, invent Verda
+  object-storage entitlement, create an external account, suppress lint rules, or mark an unbuilt
+  cluster PASS.
+- **Human authority retained:** The user must return to the prior source network or explicitly
+  authorize rollback-protected recovery, then provide fresh Verda and existing S3 credentials only
+  through the hidden secure prompt. Phase 5 remains prohibited.
+
+## 2026-08-19 - Phase 4 live bootstrap, debugging, and partial closeout
+
+- **Human authorization:** The user authorized exact-source allowlist recovery, manual creation and
+  rotation of the provider-gap object-storage bucket/credential, and continuation of Phase 4 only.
+- **Assistant activity:** Codex revalidated the exact three-instance/six-volume boundary, encrypted
+  state, zero drift, cost, host controls, routes, and artifact locks; installed the three RKE2
+  servers serially; and verified nodes, etcd, Cilium/Hubble, DNS/service networking, policy,
+  internal Traefik, MTU, snapshots, focused CIS controls, the external port boundary, controlled
+  node/endpoint drills, support-bundle safety, active-cluster idempotency, and stability.
+- **Corrections:** The first complete Cilium suite failed closed on L7/FQDN/TLS/SNI traffic. Codex
+  traced this to the host input hook preceding Cilium's TPROXY acceptance and added only the scoped
+  interface, pod-CIDR, and proxy-mark allowance. RKE2 also rejected a full S3 URL, so the endpoint
+  was normalized to the pinned release's authority-only schema while TLS remained enabled. Later
+  audit tightened Cilium acceptance to an unfiltered concurrency-one, Hubble-disabled functional
+  lane plus a Hubble-enabled strict canary, bounded the Hubble event buffer, scoped exact
+  per-agent/source lost-event deltas to that canary window, added live effective-config gates, and
+  changed post-drill recovery to preserve healthy pod restart history for the stability baseline.
+- **Delegation:** Codex used parallel read-only agents for live health monitoring, quality audit,
+  runtime-contract review, release readiness, and evidence curation. The root agent retained all
+  live mutations, destructive decisions, credential handling, and final gate authority.
+- **Validation:** The definitive bootstrap completed the full Cilium suite, all source-controlled
+  networking checks, local/off-cluster snapshot proof, ten focused CIS checks on every server,
+  external scan, both one-node fault scenarios, sanitized support-bundle validation, zero-change
+  active-cluster replay, and the 270-second stability window. The evidence curator consumed only
+  tracked source and sanitized scalar facts; it did not open raw reports, credentials, kubeconfigs,
+  endpoints, or the support archive.
+- **Current boundary:** Independent verification of the corrected current tree exited successfully
+  with the sanitized Phase 4 completion marker. Final local quality passed; hosted CI remains
+  pending. Phase 4 is not marked complete, and Phase 5 live mutation remains gated.

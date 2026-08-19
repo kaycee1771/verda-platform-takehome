@@ -1,0 +1,11 @@
+status=PASS
+observed_at=2026-08-19
+members=3
+healthy_endpoints=3
+leader_count=1
+database_size_sane=true
+raft_apply_state_sane=true
+alarms=0
+backend_commit_p99_bucket_seconds=0.016
+wal_fsync_p99_bucket_seconds=0.008
+raw_endpoints_recorded=false

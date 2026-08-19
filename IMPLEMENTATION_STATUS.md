@@ -2,14 +2,14 @@
 
 ## Current state
 
-- Active phase: Phase 3 — PASS / COMPLETE; Phase 4 is not authorized
-- Phase status: COMPLETE — all live host, access, storage, WireGuard, firewall, idempotency, reboot, evidence, and repository gates pass
-- Stage A status: HOST FOUNDATION READY — three hardened, reboot-stable hosts and their protected data mounts are ready; Kubernetes has not started
+- Active phase: Phase 4 — AUTHORIZED / IN PROGRESS
+- Phase status: PARTIAL — live verification and final local quality are green; hosted CI remains pending
+- Stage A status: MANAGEMENT CLUSTER CORE READY — three hardened, reboot-stable, schedulable RKE2 server/etcd nodes are healthy; Phase 5+ platform services are not installed
 - Stage B status: NOT STARTED — prohibited until Stage A is green and the Stage B decision gate passes
-- Last successful repository verification: final complete local `make ci` after Phase 3 live acceptance on 2026-08-17; Phase 3 static/runtime unit tests, Terraform tests, warning-free TFLint/Ansible, zero-finding Trivy, schemas/policies, negative gates, pre-commit, and repeated history scanning passed
-- Current blockers: no Phase 3 blocker; Phase 4 remains an authorization gate
+- Last successful repository verification: protected `main` commit `f9ce3e266845d460faa5ac93b7bba2989995f600`, hosted run `32042890480`, job `95425241122`; complete credential-free suite and report upload passed
+- Current blockers: no infrastructure or entitlement blocker remains; Phase 4 closeout waits only on hosted CI
 - Cloud mutation performed: the original seven-resource plan plus one explicitly authorized, assertion-bounded replacement of server-02 compute/OS only; `verda-mgmt-data-02` was preserved
-- Next permitted action: retain Phase 3 verification and request explicit authorization before any Phase 4 RKE2 work
+- Next permitted action: publish the reviewed Phase 4 candidate and close hosted CI; do not begin Phase 5 live mutation before the protected baseline
 
 ## Phase ledger
 
@@ -19,14 +19,15 @@
 | 1 — Repository and quality system | PASS | 2026-08-16 | 2026-08-16 | `evidence/phase-1/` | Local and hosted gates pass; protected public repository is operational |
 | 2 — Verda infrastructure provisioning | PASS | 2026-08-17 | 2026-08-17 | `evidence/phase-2/` | Exact resources, unique endpoints, three-host SSH, lifecycle safety, cost, encrypted state, and zero drift verified |
 | 3 — Host hardening and secure node networking | PASS | 2026-08-17 | 2026-08-17 | `evidence/phase-3/` | Hardened access, UUID mounts, peer-only WireGuard, firewall, two-pass idempotency, and three serial reboots verified |
+| 4 — Management RKE2 cluster | PARTIAL | 2026-08-18 | — | `evidence/phase-4/` | Live and local gates pass; hosted CI remains |
 
 ## Environment inventory
 
 | Resource | ID | Address | Role | Created | Expiry |
 |---|---|---|---|---|---|
-| `verda-mgmt-server-01` | redacted | unique/redacted | Hardened management host; key-only named admin and WireGuard PASS | 2026-08-17 | 2026-08-24 |
-| `verda-mgmt-server-02` | redacted | unique/redacted | Hardened replacement host; key-only named admin and WireGuard PASS | 2026-08-17 | 2026-08-24 |
-| `verda-mgmt-server-03` | redacted | unique/redacted | Hardened management host; key-only named admin and WireGuard PASS | 2026-08-17 | 2026-08-24 |
+| `verda-mgmt-server-01` | redacted | unique/redacted | Ready schedulable RKE2 server/etcd node | 2026-08-17 | 2026-08-24 |
+| `verda-mgmt-server-02` | redacted | unique/redacted | Ready schedulable replacement RKE2 server/etcd node | 2026-08-17 | 2026-08-24 |
+| `verda-mgmt-server-03` | redacted | unique/redacted | Ready schedulable RKE2 server/etcd node | 2026-08-17 | 2026-08-24 |
 | `verda-mgmt-data-01..03` | redacted | attached | ext4, UUID-mounted at `/var/lib/longhorn`, 100 GiB each, reboot PASS | 2026-08-17 | preserve through compute rollback |
 
 ## Phase 2 exit-gate ledger
@@ -51,7 +52,25 @@
 | Reboot preserves configuration | PASS | `evidence/phase-3/reboot-and-exit-gates.md` | Retain serial, boot-identity-verified maintenance |
 | Candidate retains safe administrative access | PASS | `evidence/phase-3/host-hardening-report.md` | Current source `/32` remains an external runtime input |
 | Complete playbook is idempotent | PASS | `evidence/phase-3/ansible-idempotency.md` | First, second, final, and post-reboot recaps are clean |
-| RKE2 remains absent | PASS | `evidence/phase-3/reboot-and-exit-gates.md` | Phase 4 hard gate remains in place |
+| RKE2 remained absent at Phase 3 closure | PASS | `evidence/phase-3/reboot-and-exit-gates.md` | Historical isolation gate; later satisfied by the authorized Phase 4 bootstrap |
+
+## Phase 4 exit-gate ledger
+
+| Gate condition | Result | Evidence | Closure action |
+|---|---|---|---|
+| Exact compatible version and immutable artifacts | PASS | `evidence/phase-4/version-selection.md` | Retain exact locks |
+| Live resource, drift, host, access, route, and cost boundary | PASS | `evidence/phase-4/live-preflight.md`; `cidr-design.md` | Repeat before later host mutation |
+| Serial three-server installation and common-config parity | PASS | `management-installation.md`; `common-config-parity.md` | Treat critical values as rebuild-only |
+| Nodes, API, system pods, etcd, Cilium, Hubble, DNS/service, policy, Traefik, and MTU | PASS | Curated management evidence under `evidence/phase-4/` | Retain source-controlled verification |
+| Scheduled local and off-cluster snapshots | PASS | `management-snapshots.md`; `manual-object-storage-exception.md` | Keep manual lifecycle explicit |
+| Focused CIS, audit, and secrets-encryption checks on all servers | PASS | `management-cis-assessment.md` | Retain manual identity exception |
+| Final external firewall scan | PASS | `management-firewall-scan.md` | Approved-source scan; second vantage remains a documented limitation |
+| Non-primary and primary-endpoint fault drills | PASS | `management-node-failure.md`; `management-endpoint-failure.md` | One-node boundary only; two-node loss deliberately excluded |
+| Stability and active-cluster idempotency | PASS | `stability-and-idempotency.md` | Current tree preserves recovered restart history before the stability baseline |
+| Sanitized support bundle | PASS | `management-support-bundle.md` | Raw archive remains ignored and outside curation |
+| Independent current-tree verification | PASS | `independent-verification.md` | Retain the final recovery and Cilium acceptance corrections |
+| Final local quality | PASS | `repository-validation.md` | Retain exact current-tree CI parity |
+| Final hosted quality | PENDING | `hosted-ci.md` | No hosted result claimed |
 
 ## Phase 0 exit-gate ledger
 
@@ -81,6 +100,7 @@
 ## Deferred gates
 
 - Phase 2: a time-bound, project-scoped Cloud API credential exists outside Git. Its values were process-only during commands and were removed when the authenticated shell terminated; they were never requested in chat, printed, persisted, or included in plans/evidence. Revoke the account credential during teardown or at expiry.
-- Phase 3 closure: the public-IP plus WireGuard path, 1420 host-overlay MTU, reserved 1370 Cilium MTU, peer routing, firewall, storage, and reboot behavior are live-verified. Kubernetes endpoint/failure behavior remains Phase 4+.
-- Phase 5: the current project Credentials page does not expose Object Storage Access Keys even though current official documentation describes them. Confirm entitlement with Verda or activate the ADR-approved external S3 fallback before relying on off-cluster backup/Loki storage.
+- Phase 3 closure: the public-IP plus WireGuard path, 1420 host-overlay MTU, 1370 Cilium MTU, peer routing, firewall, storage, and reboot behavior remain live-verified beneath the management cluster.
+- Object storage: Verda enabled the project entitlement and the authorized manual provider-gap path now proves local and off-cluster RKE2 snapshots. Bucket and credential lifecycle remain manual teardown obligations.
+- Phase 4 access recovery: the changed administrator source was reconciled through the explicitly authorized rollback-protected exact-source workflow; the dynamic `/32` model remains an accepted residual risk.
 - Security posture: no credential, token, coupon, raw UUID, endpoint value, SSH private key, or WireGuard private key is committed; GitHub secret scanning and push protection remain enabled. The operator-provided credential image must be deleted and its credential rotated after the authenticated work window.

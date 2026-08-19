@@ -228,5 +228,10 @@
       - "'policy drop' in diagnostics_firewall_report.stdout"
       - diagnostics_security_update_timer.stdout | trim == 'enabled'
       - diagnostics_automatic_reboot_policy.stdout | trim == 'Unattended-Upgrade::Automatic-Reboot "false";'
-      - diagnostics_rke2_paths.results | map(attribute='stat.exists') | select('equalto', true) | list | length == 0
+      - >-
+        not (phase3_require_rke2_absent | default(true) | bool) or
+        diagnostics_rke2_paths.results |
+        map(attribute='stat.exists') |
+        select('equalto', true) |
+        list | length == 0
     fail_msg: One or more host hardening, storage, network, firewall, or phase-boundary assertions failed.

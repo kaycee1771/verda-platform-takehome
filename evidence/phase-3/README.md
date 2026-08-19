@@ -4,6 +4,10 @@ Phase 3 converted the three live Stage A instances into hardened, reboot-stable 
 without installing RKE2 or changing any Verda Cloud resource. The acceptance run completed on
 2026-08-17 and all Phase 3 exit gates passed.
 
+The final reviewed tree was squash-merged as commit
+`f9ce3e266845d460faa5ac93b7bba2989995f600`; protected-main workflow run `32042890480`, job
+`95425241122`, passed. See `hosted-ci.md`.
+
 | Evidence | Proof |
 |---|---|
 | [preflight-and-boundary.md](preflight-and-boundary.md) | Exact live resource/state/cost boundary, zero drift, no cloud mutation |

@@ -1,8 +1,19 @@
 ---
-- name: Phase 4 gate for RKE2 installation
-  hosts: localhost
-  gather_facts: false
-  tasks:
-    - name: Stop until RKE2 installation is authorized
-      ansible.builtin.fail:
-        msg: Phase 4 RKE2 installation is not authorized or implemented.
+- name: Guarded Phase 4 RKE2 preparation and staged server lifecycle
+  hosts: management_servers
+  order: inventory
+  serial: 1
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Validate the explicitly selected Phase 4 action
+      ansible.builtin.assert:
+        that:
+          - phase4_action in ['prepare', 'start', 'verify']
+        fail_msg: A valid guarded Phase 4 action is required.
+
+  roles:
+    - role: firewall
+      when: phase4_action == 'prepare'
+    - role: rke2_server

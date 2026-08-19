@@ -1,5 +1,5 @@
 ---
-name: Build scan sign - Phase 6 gate
+name: Build scan sign - Phase 8 gate
 
 on:
   workflow_dispatch:
@@ -14,5 +14,5 @@ jobs:
       - name: Stop before unimplemented supply-chain phase
         shell: bash
         run: |
-          echo 'Image build, scan, and signing require Phase 6.' >&2
+          echo 'Image build, scan, and signing require Phase 8.' >&2
           exit 64

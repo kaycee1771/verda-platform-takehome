@@ -79,6 +79,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vars-output", required=True, type=pathlib.Path)
     parser.add_argument("--metadata-output", required=True, type=pathlib.Path)
     parser.add_argument("--admin-cidrs", required=True)
+    parser.add_argument("--enable-phase4-firewall", action="store_true")
     return parser.parse_args()
 
 
@@ -113,8 +114,11 @@ def main() -> int:
             encoding="utf-8",
             newline="\n",
         )
+    runtime_vars = {"phase3_admin_cidrs_v4": cidrs}
+    if args.enable_phase4_firewall:
+        runtime_vars["phase4_cluster_firewall_enabled"] = True
     args.vars_output.write_text(
-        json.dumps({"phase3_admin_cidrs_v4": cidrs}, indent=2) + "\n",
+        json.dumps(runtime_vars, indent=2) + "\n",
         encoding="utf-8",
         newline="\n",
     )

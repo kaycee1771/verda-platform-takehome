@@ -1,0 +1,9 @@
+status=PASS
+observed_at=2026-08-19
+server_nodes=3
+ready_nodes=3
+schedulable_nodes=3
+api_ready=true
+system_pods_healthy=true
+raw_node_addresses_recorded=false
+raw_resource_identifiers_recorded=false

@@ -45,9 +45,9 @@ required_directories:
   - infra/ansible/roles/firewall
   - infra/ansible/roles/storage_device
   - infra/ansible/roles/access_bootstrap
-  - infra/ansible/roles/rke2-server
+  - infra/ansible/roles/rke2_server
   - infra/ansible/roles/rke2-agent
-  - infra/ansible/roles/etcd-backup
+  - infra/ansible/roles/etcd_backup
   - infra/ansible/roles/diagnostics
   - infra/ansible/molecule
   - bootstrap/argocd
@@ -128,6 +128,7 @@ required_directories:
   - tests/restore
   - tests/kueue
   - tests/fixtures
+  - scripts/cluster
   - evidence/manifests
   - evidence/cluster
   - evidence/gitops
@@ -238,6 +239,30 @@ required_files:
   - evidence/phase-3/mount-uuid-report.md
   - evidence/phase-3/reboot-and-exit-gates.md
   - evidence/phase-3/repository-validation.md
+  - evidence/phase-3/hosted-ci.md
+  - evidence/phase-4/README.md
+  - evidence/phase-4/version-selection.md
+  - evidence/phase-4/cidr-design.md
+  - evidence/phase-4/repository-validation.md
+  - evidence/phase-4/live-preflight.md
+  - evidence/phase-4/object-storage-boundary.md
+  - evidence/phase-4/management-installation.md
+  - evidence/phase-4/common-config-parity.md
+  - evidence/phase-4/management-nodes.txt
+  - evidence/phase-4/management-etcd-health.txt
+  - evidence/phase-4/management-cilium-connectivity.txt
+  - evidence/phase-4/management-networking.md
+  - evidence/phase-4/management-firewall-scan.md
+  - evidence/phase-4/management-snapshots.md
+  - evidence/phase-4/management-cis-assessment.md
+  - evidence/phase-4/management-node-failure.md
+  - evidence/phase-4/management-endpoint-failure.md
+  - evidence/phase-4/management-support-bundle.md
+  - evidence/phase-4/stability-and-idempotency.md
+  - evidence/phase-4/manual-object-storage-exception.md
+  - evidence/phase-4/deviations-and-recovery.md
+  - evidence/phase-4/hosted-ci.md
+  - evidence/phase-4/exit-gates.md
   - applications/README.md
   - config/README.md
   - environments/README.md
@@ -250,6 +275,7 @@ required_files:
   - infra/ansible/playbooks/bootstrap-access.yml
   - infra/ansible/playbooks/configure-network.yml
   - infra/ansible/playbooks/install-rke2.yml
+  - infra/ansible/playbooks/configure-etcd-backup.yml
   - infra/ansible/playbooks/verify-hosts.yml
   - infra/ansible/playbooks/remove-rke2.yml
   - infra/ansible/inventories/group_vars/management_servers.yml
@@ -270,6 +296,13 @@ required_files:
   - infra/ansible/roles/firewall/templates/verda-firewall-apply.sh.j2
   - infra/ansible/roles/firewall/templates/phase3-firewall-rollback.sh.j2
   - infra/ansible/roles/firewall/templates/verda-platform-firewall.service.j2
+  - infra/ansible/roles/rke2_server/tasks/main.yml
+  - infra/ansible/roles/rke2_server/templates/rke2-common.yaml.j2
+  - infra/ansible/roles/rke2_server/templates/rke2-node.yaml.j2
+  - infra/ansible/roles/rke2_server/templates/audit-policy.yaml.j2
+  - infra/ansible/roles/rke2_server/templates/rke2-cilium-config.yaml.j2
+  - infra/ansible/roles/rke2_server/templates/rke2-traefik-config.yaml.j2
+  - infra/ansible/roles/etcd_backup/tasks/main.yml
   - infra/ansible/roles/diagnostics/tasks/main.yml
   - bootstrap/README.md
   - bootstrap/argocd/install.sh
@@ -320,6 +353,17 @@ required_files:
   - scripts/wait-for-argocd.sh
   - scripts/verify.sh
   - scripts/verify-cluster.sh
+  - scripts/cluster/phase4.ps1
+  - scripts/cluster/invoke-phase4-secure.ps1
+  - scripts/cluster/verify-management.sh
+  - scripts/cluster/network-smoke.sh
+  - scripts/cluster/cis-self-assessment.sh
+  - scripts/cluster/snapshot-evidence.sh
+  - scripts/cluster/stability-window.sh
+  - scripts/cluster/assert-cidr-plan.py
+  - scripts/collect-rke2-diagnostics.sh
+  - scripts/cluster/check_support_bundle.py
+  - tests/cluster/phase4/network-smoke.yaml
   - scripts/verify-supply-chain.sh
   - scripts/promote.sh
   - scripts/fault-inject.sh
@@ -331,6 +375,7 @@ required_files:
   - scripts/destroy.sh
   - scripts/quality/bootstrap_schemas.py
   - scripts/quality/bootstrap-cache.sh
+  - scripts/quality/cache_fingerprint.py
   - scripts/quality/bootstrap-tools.ps1
   - scripts/quality/check_structure.py
   - scripts/quality/check_action_pins.py
@@ -348,6 +393,7 @@ required_files:
   - scripts/quality/secret-scan.sh
   - scripts/quality/text_checks.py
   - scripts/quality/validate.sh
+  - scripts/quality/write-cache-marker.sh
   - tests/README.md
   - tests/fixtures/helm/valid-chart/Chart.yaml
   - tests/fixtures/helm/valid-chart/values.yaml
@@ -361,8 +407,10 @@ required_files:
   - tests/static/repository-contract.yaml
   - tests/static/test_assert_plan.py
   - tests/static/test_bootstrap_schemas.py
+  - tests/static/test_cache_fingerprint.py
   - tests/static/test_phase_map.py
   - tests/static/test_phase3_runtime.py
   - tests/static/test_phase3_contract.py
+  - tests/static/test_phase4_evidence_safety.py
   - tooling/README.md
   - tooling/quality/Dockerfile
