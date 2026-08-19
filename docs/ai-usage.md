@@ -281,5 +281,5 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
   tracked source and sanitized scalar facts; it did not open raw reports, credentials, kubeconfigs,
   endpoints, or the support archive.
 - **Current boundary:** Independent verification of the corrected current tree exited successfully
-  with the sanitized Phase 4 completion marker. Final local quality passed; hosted CI remains
-  pending. Phase 4 is not marked complete, and Phase 5 live mutation remains gated.
+  with the sanitized Phase 4 completion marker. Final local quality, PR validation, and
+  protected-main hosted CI passed. Phase 4 is complete; Phase 5 begins with its own preflight.

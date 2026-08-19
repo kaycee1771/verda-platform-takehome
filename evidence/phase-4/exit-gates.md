@@ -17,9 +17,8 @@
 | Stability and active-cluster idempotency | PASS | `stability-and-idempotency.md` |
 | Independent current-tree verification | PASS | `independent-verification.md` |
 | Final complete local quality suite | PASS | `repository-validation.md` |
-| Final hosted CI | PENDING | Requires explicit publication authorization |
+| Final hosted CI | PASS | `hosted-ci.md` |
 
-Overall Phase 4 result: **PARTIAL / IN PROGRESS**. All live gates, including the corrected
-current-tree independent verification and final local quality, are green. No overall PASS is
-claimed until hosted CI is proven. Phase 5 live mutation remains prohibited before that protected
-baseline.
+Overall Phase 4 result: **PASS**. All live gates, corrected-current-tree independent verification,
+final local quality, PR validation, and protected-main hosted CI are green. Phase 5 is authorized
+and begins with its own read-only prerequisite gate.

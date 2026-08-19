@@ -93,8 +93,8 @@ platform services, Stage B, and every Phase 5+ action remain prohibited.
 | K07 | External firewall boundary | Approved-source API plus negative supervisor/etcd/kubelet/Cilium/metrics/NodePort scan | PASS — all three nodes; independent non-allowlisted vantage remains a limitation |
 | K08 | Local and off-cluster snapshots | Scheduled/on-demand snapshot and both local/S3 listings | PASS — compressed ready recovery point in both location classes; 6-hour schedule and 8+8 retention |
 | K09 | Single-node and endpoint failure | Non-primary stop/recovery, then primary endpoint loss/direct path/quorum/recovery | PASS — definitive bootstrap and corrected-current-tree independent verification both exercised the restart-history-preserving path |
-| K10 | Sanitized diagnostics and quality | Support-bundle exclusions plus complete local `make ci` | PARTIAL — live bundle and local quality pass; hosted CI pending |
+| K10 | Sanitized diagnostics and quality | Support-bundle exclusions plus complete local `make ci` | PASS — live bundle, local quality, PR, and protected-main hosted CI pass |
 
-Overall Phase 4 state is **PARTIAL / IN PROGRESS**. The definitive bootstrap gates are live-green;
-the corrected current-tree independent verification and final local quality also passed. Hosted CI
-remains. No Phase 5 live mutation begins before the protected Phase 4 baseline.
+Overall Phase 4 state is **PASS**. The definitive bootstrap, corrected-current-tree independent
+verification, final local quality, PR run `32275331008`, and protected-main run `32275537006` all
+passed. Phase 5 is authorized and starts with its own read-only preflight.
