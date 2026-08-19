@@ -85,7 +85,7 @@ repoServer:
   replicas: 2
   pdb: {enabled: true, minAvailable: 1}
   resources:
-    requests: {cpu: 100m, memory: 256Mi}
+    requests: {cpu: 50m, memory: 256Mi}
     limits: {cpu: "1", memory: 1Gi}
   metrics:
     enabled: true
