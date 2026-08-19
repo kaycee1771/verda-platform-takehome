@@ -396,6 +396,7 @@ required_files:
   - scripts/phase5/longhorn-capacity.py
   - scripts/phase5/longhorn-storage-contract.py
   - scripts/phase5/longhorn-storage-test.sh
+  - scripts/phase5/verify-argocd-ingress.py
   - scripts/phase5/verify-runtime.sh
   - scripts/verify.sh
   - scripts/verify-cluster.sh
@@ -461,6 +462,7 @@ required_files:
   - tests/static/test_phase3_contract.py
   - tests/static/test_phase4_evidence_safety.py
   - tests/static/test_phase5_argocd_bootstrap.py
+  - tests/static/test_phase5_argocd_ingress_lifecycle.py
   - tests/static/test_phase5_capacity.py
   - tests/static/test_phase5_cert_ingress_contract.py
   - tests/static/test_phase5_firewall.py

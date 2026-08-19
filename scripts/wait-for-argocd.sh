@@ -14,6 +14,13 @@ phase5_require_command python3
 phase5_require_command realpath
 phase5_assert_cluster_runtime "${repo_root}"
 
+ingress_validator="${repo_root}/scripts/phase5/verify-argocd-ingress.py"
+ingress_values="${repo_root}/platform/management/ingress/argocd/values.yaml"
+[[ -f "${ingress_validator}" && ! -L "${ingress_validator}" ]] ||
+  phase5_fail 'The Argo CD ingress lifecycle validator is unavailable.'
+[[ -f "${ingress_values}" && ! -L "${ingress_values}" ]] ||
+  phase5_fail 'The approved Argo CD ingress values are unavailable.'
+
 timeout=${ARGOCD_WAIT_TIMEOUT:-10m}
 phase5_assert_timeout "${timeout}"
 case "${timeout}" in
@@ -111,8 +118,8 @@ for item in services:
         raise SystemExit("an Argo CD Service has an external address")
 ' <<<"${services_json}"
 
-ingress_count=$("${kubectl_base[@]}" -n argocd get ingress -o json | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("items", [])))')
-[[ "${ingress_count}" == '0' ]] || phase5_fail 'Argo CD must not have ingress during day-zero bootstrap.'
+ingress_json=$("${kubectl_base[@]}" -n argocd get ingress -o json)
+exposure=$(python3 "${ingress_validator}" --values "${ingress_values}" <<<"${ingress_json}")
 
 config_json=$("${kubectl_base[@]}" -n argocd get configmap argocd-cm -o json)
 params_json=$("${kubectl_base[@]}" -n argocd get configmap argocd-cmd-params-cm -o json)
@@ -169,4 +176,4 @@ if ready != 2:
     raise SystemExit("argocd-server does not have exactly two ready endpoints")
 '
 
-printf '[PASS] Argo CD chart=10.3.3 workloads=ready tls=enabled anonymous=disabled exposure=ClusterIP-only.\n'
+printf '[PASS] Argo CD chart=10.3.3 workloads=ready tls=enabled anonymous=disabled exposure=%s.\n' "${exposure}"
