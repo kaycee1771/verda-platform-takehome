@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -30,6 +31,7 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
             "  argo-cd-10.3.3.tgz\n",
         )
         install = (BOOTSTRAP / "install.sh").read_text(encoding="utf-8")
+        crd_state = (BOOTSTRAP / "crd-state.py").read_text(encoding="utf-8")
         self.assertIn(
             "https://github.com/argoproj/argo-helm/releases/download/"
             "argo-cd-${chart_version}/${chart_archive_name}",
@@ -46,6 +48,25 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
         self.assertIn("kubeconform", install)
         self.assertIn("--atomic", install)
         self.assertIn("--rollback", install)
+        self.assertIn("--crds-output", install)
+        self.assertIn("--field-manager=verda-phase5-crd-bootstrap", install)
+        self.assertIn('missing_crds+=("${crd}")', install)
+        self.assertIn("an existing Argo CD CRD has drifted", crd_state)
+        self.assertIn("existing Argo CD release is missing a required CRD", install)
+        self.assertIn('"${kubectl_base[@]}" create', install)
+        self.assertNotIn("apply --server-side", install)
+        self.assertLess(
+            install.index('"${kubectl_base[@]}" create'),
+            install.index("upgrade --install"),
+        )
+        self.assertLess(
+            install.index('wait --for=condition=Established'),
+            install.index("upgrade --install"),
+        )
+        self.assertLess(
+            install.index("kubeconform"),
+            install.index('"${kubectl_base[@]}" create'),
+        )
 
     def test_values_enforce_private_backend_and_explicit_rbac(self) -> None:
         values = yaml.safe_load((BOOTSTRAP / "values.yaml").read_text(encoding="utf-8"))
@@ -278,6 +299,7 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
             for index, fixture in enumerate(fixtures):
                 manifest = root / f"invalid-{index}.yaml"
                 inventory = root / f"inventory-{index}.txt"
+                crds = root / f"crds-{index}.yaml"
                 manifest.write_text(yaml.safe_dump(fixture), encoding="utf-8")
                 result = subprocess.run(
                     [
@@ -287,6 +309,8 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
                         str(manifest),
                         "--inventory",
                         str(inventory),
+                        "--crds-output",
+                        str(crds),
                     ],
                     cwd=ROOT,
                     text=True,
@@ -296,6 +320,124 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(inventory.exists())
+                self.assertFalse(crds.exists())
+
+    def test_crd_state_helper_is_create_only_and_rejects_retained_drift(self) -> None:
+        helper = BOOTSTRAP / "crd-state.py"
+        names = (
+            "applications.argoproj.io",
+            "applicationsets.argoproj.io",
+            "appprojects.argoproj.io",
+        )
+        documents = []
+        for name in names:
+            documents.append(
+                {
+                    "apiVersion": "apiextensions.k8s.io/v1",
+                    "kind": "CustomResourceDefinition",
+                    "metadata": {
+                        "name": name,
+                        "labels": {"app.kubernetes.io/managed-by": "Helm"},
+                        "annotations": {
+                            "helm.sh/resource-policy": "keep",
+                            "meta.helm.sh/release-name": "argocd",
+                            "meta.helm.sh/release-namespace": "argocd",
+                        },
+                    },
+                    "spec": {
+                        "group": "argoproj.io",
+                        "scope": "Namespaced",
+                        "names": {"plural": name.split(".", 1)[0], "kind": "Fixture"},
+                        "versions": [{"name": "v1alpha1", "served": True, "storage": True}],
+                    },
+                }
+            )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bundle = root / "bundle.yaml"
+            bundle.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
+            existing = root / "existing.json"
+            retained = dict(documents[0])
+            retained["spec"] = dict(documents[0]["spec"])
+            retained["spec"]["conversion"] = {"strategy": "None"}
+            existing.write_text(json.dumps(retained), encoding="utf-8")
+            subprocess.run(
+                [
+                    "python",
+                    str(helper),
+                    "--bundle",
+                    str(bundle),
+                    "verify",
+                    "--name",
+                    names[0],
+                    "--existing",
+                    str(existing),
+                ],
+                cwd=ROOT,
+                check=True,
+            )
+
+            missing = root / "missing.yaml"
+            subprocess.run(
+                [
+                    "python",
+                    str(helper),
+                    "--bundle",
+                    str(bundle),
+                    "select",
+                    "--output",
+                    str(missing),
+                    names[1],
+                ],
+                cwd=ROOT,
+                check=True,
+            )
+            selected = [item for item in yaml.safe_load_all(missing.read_text()) if item]
+            self.assertEqual([item["metadata"]["name"] for item in selected], [names[1]])
+
+            foreign = json.loads(existing.read_text(encoding="utf-8"))
+            foreign["metadata"]["labels"]["app.kubernetes.io/managed-by"] = "foreign"
+            existing.write_text(json.dumps(foreign), encoding="utf-8")
+            rejected = subprocess.run(
+                [
+                    "python",
+                    str(helper),
+                    "--bundle",
+                    str(bundle),
+                    "verify",
+                    "--name",
+                    names[0],
+                    "--existing",
+                    str(existing),
+                ],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+
+            drifted = json.loads(json.dumps(retained))
+            drifted["spec"]["scope"] = "Cluster"
+            existing.write_text(json.dumps(drifted), encoding="utf-8")
+            rejected = subprocess.run(
+                [
+                    "python",
+                    str(helper),
+                    "--bundle",
+                    str(bundle),
+                    "verify",
+                    "--name",
+                    names[0],
+                    "--existing",
+                    str(existing),
+                ],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
 
     def test_shell_entrypoints_are_syntax_valid(self) -> None:
         for path in (

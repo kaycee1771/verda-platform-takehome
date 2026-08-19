@@ -74,6 +74,7 @@ helm_base=(
   --kubeconfig "${KUBECONFIG}"
   --kube-context "${PHASE5_KUBE_CONTEXT}"
 )
+release_exists='false'
 kubectl_base=(
   kubectl
   --kubeconfig "${KUBECONFIG}"
@@ -122,6 +123,7 @@ if release.get("chart") != f"argo-cd-{chart_version}":
 if release.get("app_version") != app_version:
     raise SystemExit("the existing Argo CD release does not use the pinned application version")
 ' "${chart_version}" "${app_version}" <<<"${release_json}"
+  release_exists='true'
 else
   release_json=$("${helm_base[@]}" list --all-namespaces --filter '^argocd$' --output json)
   python3 -c '
@@ -174,6 +176,8 @@ if str(metadata.get("appVersion")) != expected_app:
 ' "${chart_version}" "${app_version}" <<<"${chart_metadata}"
 
 rendered="${runtime_dir}/argocd-rendered.yaml"
+crds_rendered="${runtime_dir}/argocd-crds.yaml"
+missing_crds_rendered="${runtime_dir}/argocd-missing-crds.yaml"
 "${helm_base[@]}" lint "${archive}" --strict --values "${values_file}"
 "${helm_base[@]}" template "${release_name}" "${archive}" \
   --namespace "${namespace}" \
@@ -185,7 +189,8 @@ phase5_assert_report_path "${repo_root}" "${inventory_output}"
 mkdir -p -- "$(dirname -- "${inventory_output}")"
 python3 "${script_dir}/validate-render.py" \
   --manifest "${rendered}" \
-  --inventory "${inventory_output}"
+  --inventory "${inventory_output}" \
+  --crds-output "${crds_rendered}"
 
 phase5_require_command kubeconform
 default_schema_location="${repo_root}/.local/schema-cache/{{.ResourceKind}}{{.KindSuffix}}.json"
@@ -197,6 +202,45 @@ kubeconform \
   -kubernetes-version 1.35.0 \
   -schema-location "${schema_location}" \
   "${rendered}"
+
+# Kubernetes discovery cannot map the Helm-owned AppProject until the exact
+# checksummed chart CRDs exist. Establish only missing validated CRDs first;
+# retained CRDs from an interrupted install must already match the pinned chart.
+missing_crds=()
+for crd in \
+  applications.argoproj.io \
+  applicationsets.argoproj.io \
+  appprojects.argoproj.io; do
+  existing_crd=$("${kubectl_base[@]}" get \
+    "customresourcedefinition/${crd}" --ignore-not-found --output=json)
+  if [[ -n "${existing_crd}" ]]; then
+    existing_crd_path="${runtime_dir}/${crd}.json"
+    printf '%s\n' "${existing_crd}" >"${existing_crd_path}"
+    python3 "${script_dir}/crd-state.py" \
+      --bundle "${crds_rendered}" \
+      verify --name "${crd}" --existing "${existing_crd_path}"
+  else
+    [[ "${release_exists}" == 'false' ]] ||
+      phase5_fail 'The existing Argo CD release is missing a required CRD.'
+    missing_crds+=("${crd}")
+  fi
+done
+if (( ${#missing_crds[@]} > 0 )); then
+  python3 "${script_dir}/crd-state.py" \
+    --bundle "${crds_rendered}" \
+    select --output "${missing_crds_rendered}" "${missing_crds[@]}"
+  "${kubectl_base[@]}" create \
+    --field-manager=verda-phase5-crd-bootstrap \
+    --filename "${missing_crds_rendered}" >/dev/null
+fi
+for crd in \
+  applications.argoproj.io \
+  applicationsets.argoproj.io \
+  appprojects.argoproj.io; do
+  "${kubectl_base[@]}" wait --for=condition=Established \
+    --timeout=120s "customresourcedefinition/${crd}" >/dev/null
+done
+"${kubectl_base[@]}" get --raw=/apis/argoproj.io/v1alpha1 >/dev/null
 
 "${helm_base[@]}" upgrade --install "${release_name}" "${archive}" \
   --namespace "${namespace}" \
