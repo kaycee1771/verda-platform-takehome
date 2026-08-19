@@ -1,0 +1,7 @@
+---
+hostname: ""
+tlsSecretName: argocd-ingress-tls
+gates:
+  productionCertificateVerified: false
+  argocdAuthenticationVerified: false
+  argocdInternalHttpVerified: false

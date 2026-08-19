@@ -1,0 +1,8 @@
+---
+apiVersion: v2
+name: verda-argocd-ingress
+description: Fail-closed authenticated TLS ingress boundary for the management Argo CD endpoint
+type: application
+version: 0.1.0
+appVersion: "v3.5.1"
+kubeVersion: ">=1.35.0-0 <1.36.0-0"

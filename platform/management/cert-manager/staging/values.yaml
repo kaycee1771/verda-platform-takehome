@@ -1,0 +1,5 @@
+---
+hostname: ""
+acmeEmail: ""
+ingressClassName: traefik
+certificateSecretName: argocd-staging-tls

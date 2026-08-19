@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hostname", "acmeEmail", "ingressClassName", "certificateSecretName"],
+  "properties": {
+    "hostname": {
+      "type": "string",
+      "pattern": "^argocd\\.[0-9]{1,3}(-[0-9]{1,3}){3}\\.sslip\\.io$"
+    },
+    "acmeEmail": {
+      "type": "string",
+      "format": "email",
+      "minLength": 3
+    },
+    "ingressClassName": {
+      "type": "string",
+      "const": "traefik"
+    },
+    "certificateSecretName": {
+      "type": "string",
+      "const": "argocd-staging-tls"
+    }
+  }
+}
