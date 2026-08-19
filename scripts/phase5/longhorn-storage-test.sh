@@ -231,7 +231,7 @@ esac
 
 run_id=${PHASE5_STORAGE_TEST_RUN_ID:-}
 if [[ -z "${run_id}" ]]; then
-  run_id="p5st-$(date -u +%Y%m%dt%H%M%sz)-$(openssl rand -hex 4)"
+  run_id="p5st-$(date -u +%Y%m%dt%H%M%Sz)-$(openssl rand -hex 4)"
 fi
 [[ "${run_id}" =~ ^p5st-[0-9]{8}t[0-9]{6}z-[a-f0-9]{8}$ ]] ||
   phase5_fail 'PHASE5_STORAGE_TEST_RUN_ID does not satisfy the bounded run identity format.'

@@ -52,8 +52,8 @@ def mount_report() -> dict:
 
 def longhorn_node_list() -> dict:
     return {
-        "apiVersion": "longhorn.io/v1beta2",
-        "kind": "NodeList",
+        "apiVersion": "v1",
+        "kind": "List",
         "items": [
             {
                 "apiVersion": "longhorn.io/v1beta2",
@@ -306,6 +306,13 @@ class Phase5LonghornContractTests(unittest.TestCase):
         observed = next(iter(low_headroom["items"][0]["status"]["diskStatus"].values()))
         observed["storageAvailable"] = 10_000_000_000
         self.assertNotEqual(self.run_capacity_gate(mount_report(), low_headroom).returncode, 0)
+
+        wrong_item_api = longhorn_node_list()
+        wrong_item_api["items"][0]["apiVersion"] = "longhorn.io/v1beta1"
+        self.assertNotEqual(
+            self.run_capacity_gate(mount_report(), wrong_item_api).returncode,
+            0,
+        )
 
     def test_capacity_gate_rejects_duplicate_json_keys(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
