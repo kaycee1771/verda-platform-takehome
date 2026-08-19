@@ -89,7 +89,7 @@ def longhorn_node_list() -> dict:
                             "diskName": "verda-data",
                             "diskPath": "/var/lib/longhorn",
                             "diskType": "filesystem",
-                            "filesystemType": "ext4",
+                            "filesystemType": "ext2/ext3",
                             "diskUUID": f"not-emitted-{index}",
                             "storageMaximum": MOUNT_SIZE,
                             "storageAvailable": 80_000_000_000,

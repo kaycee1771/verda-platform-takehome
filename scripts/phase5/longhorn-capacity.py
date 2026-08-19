@@ -208,7 +208,10 @@ def validate_longhorn_nodes(
         if (
             observed.get("diskName") != EXPECTED_DISK
             or observed.get("diskType") != "filesystem"
-            or observed.get("filesystemType") != "ext4"
+            # Longhorn records the ext-family superblock name returned by
+            # statfs (ext2/ext3); the independent host mount report above is
+            # still required to prove that the mounted filesystem is ext4.
+            or observed.get("filesystemType") != "ext2/ext3"
             or posixpath.normpath(str(observed.get("diskPath", ""))) != EXPECTED_MOUNT
         ):
             raise CapacityContractError(f"Longhorn observed the wrong storage device for {node}")
