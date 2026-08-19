@@ -25,4 +25,5 @@ tests prove that boundary.
 The documentation-complete corrected current tree passed the canonical network-disabled
 `make ci` target on 2026-08-19. It included all validation, six negative rejection fixtures,
 all configured pre-commit hooks, and working-tree plus 18-commit history Gitleaks scans.
-Hosted CI remains pending; no hosted result is claimed here.
+PR run `32275331008` and protected-main run `32275537006` repeated the required credential-free
+quality gate successfully; exact jobs are recorded in `hosted-ci.md`.

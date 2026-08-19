@@ -58,5 +58,6 @@ Manual console work is allowed only for credentials/billing, a provider capabili
   owns the live RKE2 configuration and snapshot schedule. The manually created object-storage bucket
   and credential are an explicit provider-gap exception with separate teardown obligations.
 - Failure drills, stability, active-cluster idempotency, and support-bundle proof passed during the
-  definitive bootstrap. Independent current-tree verification and final local quality pass; hosted
-  CI remains mandatory before Phase 4 closure. Argo CD and every Phase 5+ owner remain inactive.
+  definitive bootstrap. Independent current-tree verification, final local quality, PR validation,
+  and protected-main hosted CI passed. Phase 4 is closed; Argo CD and every Phase 5+ owner remain
+  inactive until Phase 5 convergence starts.

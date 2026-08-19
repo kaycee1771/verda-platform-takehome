@@ -9,8 +9,8 @@ and final zero drift. Phase 3 then established and live-proved the complete pre-
 security, network, and storage boundary. Phase 4 has now completed its definitive guarded bootstrap:
 the three-node RKE2 management cluster, failure drills, recovery points, hardening checks, support
 bundle, active-cluster idempotency, and stability window all passed. An independent verification
-rerun of the corrected current tree and final current-tree local quality also passed. Hosted CI
-remains open, so Phase 4 is not yet closed.
+rerun of the corrected current tree, final current-tree local quality, PR validation, and
+protected-main hosted CI also passed. Phase 4 is closed.
 
 Current verified capabilities:
 
@@ -41,6 +41,6 @@ Current verified capabilities:
 - A 270-second post-drill stability window and active-cluster convergence replay with no changes,
   failures, or unreachable hosts.
 
-Phases 0–3 are complete. Phase 4 remains PARTIAL only until hosted CI passes.
-GitOps, platform services, Stage B, and the application remain
-unimplemented and fail closed behind later blueprint phases; Phase 5 is not authorized.
+Phases 0–4 are complete. GitOps and Phase 5 platform services remain
+unimplemented until the now-authorized Phase 5 work converges. Stage B, the application, and Phase
+6+ functionality remain fail closed behind their owning gates.

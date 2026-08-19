@@ -2,7 +2,7 @@
 
 ## Status
 
-PARTIAL
+PASS
 
 ## Implemented
 
@@ -70,8 +70,8 @@ PARTIAL
   270-second stability PASS.
 - `make ci`: PASS on the final documentation-complete candidate; 90 tests,
   six negative fixtures, every pre-commit hook, and both Gitleaks scopes passed.
-- Hosted `Credential-free quality gates`: PENDING on the reviewed Phase 4
-  commit.
+- Hosted `Credential-free quality gates`: PASS on PR run `32275331008`, job
+  `96141296537`, and protected-main run `32275537006`, job `96141963292`.
 
 ## Evidence created
 
@@ -119,7 +119,8 @@ PARTIAL
 - A genuinely independent non-allowlisted external scan vantage was not
   available. All allowlisted and deny-boundary checks from the controller were
   executed and the limitation remains explicit.
-- Hosted CI is pending, so Phase 4 is not yet PASS.
+- No unresolved Phase 4 failure remains. Later restore, second-vantage, and
+  manual object-lifecycle limitations retain their owning future gates.
 
 ## Security and secrets check
 
@@ -167,14 +168,12 @@ PARTIAL
   270-second stability.
 - PASS — corrected-current-tree independent live verification.
 - PASS — final complete local `make ci` after this report edit.
-- PENDING — hosted `Credential-free quality gates` on the reviewed Phase 4
-  commit.
-- PARTIAL — overall Phase 4 until hosted quality passes and protected `main`
-  records it.
+- PASS — hosted `Credential-free quality gates` on the reviewed Phase 4 commit
+  and protected `main`.
+- PASS — overall Phase 4.
 
 ## Next phase
 
 - Phase 5 — Storage, ingress, certificates, and bootstrap boundary. The master
-  directive authorizes it, but activation remains conditioned on hosted CI and
-  a protected Phase 4 baseline. No Phase 5 live mutation occurs before those
-  prerequisites.
+  directive authorizes it; the protected Phase 4 baseline is complete. Phase 5
+  starts with its own read-only prerequisite and rollback gate.

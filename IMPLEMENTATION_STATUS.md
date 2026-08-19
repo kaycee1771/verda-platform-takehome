@@ -2,14 +2,14 @@
 
 ## Current state
 
-- Active phase: Phase 4 — AUTHORIZED / IN PROGRESS
-- Phase status: PARTIAL — live verification and final local quality are green; hosted CI remains pending
+- Active phase: Phase 5 — AUTHORIZED / NOT YET MUTATED
+- Phase status: Phase 4 PASS — live, local, PR, and protected-main hosted gates are green
 - Stage A status: MANAGEMENT CLUSTER CORE READY — three hardened, reboot-stable, schedulable RKE2 server/etcd nodes are healthy; Phase 5+ platform services are not installed
 - Stage B status: NOT STARTED — prohibited until Stage A is green and the Stage B decision gate passes
-- Last successful repository verification: protected `main` commit `f9ce3e266845d460faa5ac93b7bba2989995f600`, hosted run `32042890480`, job `95425241122`; complete credential-free suite and report upload passed
-- Current blockers: no infrastructure or entitlement blocker remains; Phase 4 closeout waits only on hosted CI
+- Last successful repository verification: protected `main` commit `ab01ce8861b469936cfbf6e5b901937e6ec41a27`, hosted run `32275537006`, job `96141963292`; complete credential-free suite and report upload passed
+- Current blockers: none for Phase 4; Phase 5 must satisfy its own preflight before mutation
 - Cloud mutation performed: the original seven-resource plan plus one explicitly authorized, assertion-bounded replacement of server-02 compute/OS only; `verda-mgmt-data-02` was preserved
-- Next permitted action: publish the reviewed Phase 4 candidate and close hosted CI; do not begin Phase 5 live mutation before the protected baseline
+- Next permitted action: activate Phase 5 controls and complete its read-only prerequisite audit before live mutation
 
 ## Phase ledger
 
@@ -19,7 +19,7 @@
 | 1 — Repository and quality system | PASS | 2026-08-16 | 2026-08-16 | `evidence/phase-1/` | Local and hosted gates pass; protected public repository is operational |
 | 2 — Verda infrastructure provisioning | PASS | 2026-08-17 | 2026-08-17 | `evidence/phase-2/` | Exact resources, unique endpoints, three-host SSH, lifecycle safety, cost, encrypted state, and zero drift verified |
 | 3 — Host hardening and secure node networking | PASS | 2026-08-17 | 2026-08-17 | `evidence/phase-3/` | Hardened access, UUID mounts, peer-only WireGuard, firewall, two-pass idempotency, and three serial reboots verified |
-| 4 — Management RKE2 cluster | PARTIAL | 2026-08-18 | — | `evidence/phase-4/` | Live and local gates pass; hosted CI remains |
+| 4 — Management RKE2 cluster | PASS | 2026-08-18 | 2026-08-19 | `evidence/phase-4/` | Live, local, PR, and protected-main hosted gates pass |
 
 ## Environment inventory
 
@@ -70,7 +70,7 @@
 | Sanitized support bundle | PASS | `management-support-bundle.md` | Raw archive remains ignored and outside curation |
 | Independent current-tree verification | PASS | `independent-verification.md` | Retain the final recovery and Cilium acceptance corrections |
 | Final local quality | PASS | `repository-validation.md` | Retain exact current-tree CI parity |
-| Final hosted quality | PENDING | `hosted-ci.md` | No hosted result claimed |
+| Final hosted quality | PASS | `hosted-ci.md` | Retain PR and protected-main runs |
 
 ## Phase 0 exit-gate ledger
 

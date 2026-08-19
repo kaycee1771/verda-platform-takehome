@@ -40,5 +40,5 @@ window then captures and holds the recovered identity/restart baseline.
 
 No Verda instance, volume, public address, or SSH-key resource changed. The definitive bootstrap's
 drills, stability, idempotency, and support-bundle gates pass. The corrected current-tree independent
-verification and final local quality also pass. Hosted CI remains pending. Phase 5 live mutation is
-gated on the protected Phase 4 baseline.
+verification, final local quality, PR validation, and protected-main hosted CI also pass. Phase 4
+is complete; Phase 5 remains subject to its own prerequisite and mutation gates.

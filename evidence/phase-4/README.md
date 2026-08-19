@@ -1,10 +1,10 @@
 # Phase 4 Evidence
 
-Status: PARTIAL. The definitive guarded bootstrap passed the three-node RKE2 cluster, networking,
+Status: PASS. The definitive guarded bootstrap passed the three-node RKE2 cluster, networking,
 snapshot, all-node CIS, external firewall, controlled failure, support-bundle, active-cluster
 idempotency, and 270-second stability gates. The corrected current tree also passed its independent
-end-to-end verification cycle and final local `make ci`. Hosted CI remains pending, so Phase 4 is
-not yet complete.
+end-to-end verification cycle and final local `make ci`. PR and protected-main hosted CI also
+passed, so Phase 4 is complete.
 
 ## Completed evidence
 
@@ -29,9 +29,9 @@ not yet complete.
 - `repository-validation.md`: credential-free implementation and evidence-safety proof.
 - `exit-gates.md`: current gate-by-gate Phase 4 result.
 
-## Required before closure
+## Closure
 
-- hosted CI from the reviewed commit
+- `hosted-ci.md`: reviewed-commit PR and protected-main hosted validation proof.
 
 Raw logs, kubeconfigs, endpoints, credentials, token material, state, and support archives remain in
 ignored or external protected storage. Curated evidence must not contain those values.

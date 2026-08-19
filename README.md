@@ -4,7 +4,7 @@ This repository is being built phase by phase as a reproducible, secure-by-desig
 
 ## Current status
 
-**Phases 0–3 — PASS; Phase 4 live core green and closeout in progress.** Verda currently runs exactly three
+**Phases 0–4 — PASS; Phase 5 is the active authorized boundary.** Verda currently runs exactly three
 on-demand management instances with three instance-owned 80 GiB OS volumes and three protected
 100 GiB data volumes. The Phase 2 closeout proved unique public endpoints, hostname-bound SSH,
 encrypted external Terraform state and backup, guarded lifecycle behavior, reconciled cost, and
@@ -14,10 +14,10 @@ denial tests, and three serial reboot proofs. Phase 4 now has three Ready schedu
 server/etcd nodes, healthy Cilium/Hubble and service networking, internal Traefik, local plus
 off-cluster snapshots, focused CIS checks on every server, a controlled one-node and primary-endpoint
 failure drill, approved-source firewall verification, a sanitized support bundle, a zero-change
-three-host replay, and a 270-second post-recovery stability window. Phase 4 remains partial only while
-the final local quality suite passes and hosted CI is pending; the corrected current-tree independent
-verification has passed.
-Rancher, Argo CD, platform services, Stage B, and every Phase 5+ component remain blocked.
+three-host replay, and a 270-second post-recovery stability window. Independent current-tree
+verification, final local quality, PR validation, and protected-main hosted CI all passed.
+Rancher, Argo CD, and Phase 5 platform components remain unimplemented until Phase 5 convergence;
+Stage B and later components remain behind their owning gates.
 
 The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`, each with an 80 GiB
 root volume and a 100 GiB Longhorn data volume, using Ubuntu 24.04 Minimal. The seven-day envelope
