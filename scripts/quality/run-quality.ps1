@@ -63,6 +63,7 @@ $lockedInputs = [ordered]@{
     bootstrap_tools_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap-tools.ps1')
     bootstrap_cache_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap-cache.sh')
     bootstrap_schemas_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap_schemas.py')
+    bootstrap_charts_sha256 = (Join-Path $repoRoot 'scripts\quality\bootstrap_charts.py')
     cache_fingerprint_sha256 = (Join-Path $repoRoot 'scripts\quality\cache_fingerprint.py')
     write_cache_marker_sha256 = (Join-Path $repoRoot 'scripts\quality\write-cache-marker.sh')
 }

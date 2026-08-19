@@ -49,7 +49,11 @@ table inet verda_platform {
     type filter hook forward priority -10; policy drop;
     ct state invalid drop
 {% if phase4_cluster_firewall_enabled | default(false) | bool %}
+{% if phase5_public_ingress_enabled | default(false) | bool %}
+    ct direction original iifname != "{{ phase3_wireguard_interface }}" meta l4proto tcp ct status dnat ct original ip daddr {{ ansible_host }} ct original proto-dst { 80, 443 } ip daddr {{ phase4_management_pod_cidr }} tcp dport { 8000, 8443 } accept
+{% else %}
     ct direction original iifname != "{{ phase3_wireguard_interface }}" meta l4proto tcp ct status dnat ct original ip daddr {{ ansible_host }} ct original proto-dst { 80, 443 } drop
+{% endif %}
 {% endif %}
     ct state { established, related } accept
     iifname "{{ phase3_wireguard_interface }}" ip saddr @overlay_peer_ipv4 accept

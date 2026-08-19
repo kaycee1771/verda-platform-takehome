@@ -29,30 +29,27 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail 'dependency'
 }
 
-normalize_permission() {
-  tr -d '\r\n[:space:]' | tr '[:upper:]' '[:lower:]'
-}
-
-require_permission() {
-  local token="$1"
-  local expected="$2"
-  local action="$3"
-  local result
-  if ! result=$(
-    ARGOCD_AUTH_TOKEN="${token}" "${argocd_base[@]}" \
-      account can-i "${action}" applications '*' 2>/dev/null | normalize_permission
-  ); then
-    fail 'argocd-rbac'
-  fi
-  [[ "${result}" == "${expected}" ]] || fail 'argocd-rbac'
-}
-
 tcp_open() {
   local address="$1"
   local port="$2"
   "${timeout_bin}" 4s "${nc_bin}" -z -w 2 "${address}" "${port}" \
     >/dev/null 2>&1
 }
+
+readonly argocd_root_app='platform-root'
+readonly -a argocd_child_apps=(
+  'platform-project'
+  'cert-manager-controller'
+  'argocd-certificate-staging'
+  'longhorn-prerequisites'
+  'longhorn-controller'
+  'longhorn-resources'
+  'argocd-certificate-production'
+  'argocd-public-ingress'
+)
+readonly argocd_admin_subject='admin'
+readonly argocd_reviewer_subject='reviewer'
+readonly phase5_http_mode='acme-only'
 
 cleanup() {
   if [[ -n "${runtime_dir:-}" && -d "${runtime_dir}" && \
@@ -65,19 +62,13 @@ for name in \
   PHASE5_KUBECONFIG \
   PHASE5_KUBE_CONTEXT \
   PHASE5_PUBLIC_HOST \
-  PHASE5_ARGO_ROOT_APP \
-  PHASE5_ARGO_EXPECTED_CHILDREN \
   PHASE5_ARGOCD_ADMIN_TOKEN_FILE \
   PHASE5_ARGOCD_REVIEWER_TOKEN_FILE \
-  PHASE5_ARGOCD_ADMIN_SUBJECT \
-  PHASE5_ARGOCD_REVIEWER_SUBJECT \
-  PHASE5_EXTERNAL_ENDPOINTS_FILE \
-  PHASE5_HTTP_MODE; do
+  PHASE5_EXTERNAL_ENDPOINTS_FILE; do
   require_value "${name}"
 done
 
 kubectl_bin=${PHASE5_KUBECTL_BIN:-kubectl}
-argocd_bin=${PHASE5_ARGOCD_BIN:-argocd}
 curl_bin=${PHASE5_CURL_BIN:-curl}
 openssl_bin=${PHASE5_OPENSSL_BIN:-openssl}
 nc_bin=${PHASE5_NC_BIN:-nc}
@@ -86,7 +77,7 @@ python_bin=${PHASE5_PYTHON_BIN:-python3}
 date_bin=${PHASE5_DATE_BIN:-date}
 
 for binary in \
-  "${kubectl_bin}" "${argocd_bin}" "${curl_bin}" "${openssl_bin}" \
+  "${kubectl_bin}" "${curl_bin}" "${openssl_bin}" \
   "${nc_bin}" "${timeout_bin}" "${python_bin}" "${date_bin}" stat id; do
   require_command "${binary}"
 done
@@ -99,17 +90,6 @@ require_protected_file "${PHASE5_EXTERNAL_ENDPOINTS_FILE}"
 [[ "${PHASE5_KUBE_CONTEXT}" =~ ^[A-Za-z0-9._@:/-]+$ ]] || fail 'kube-context'
 [[ "${PHASE5_PUBLIC_HOST}" =~ ^argocd\.[0-9]{1,3}(-[0-9]{1,3}){3}\.sslip\.io$ ]] || \
   fail 'public-hostname'
-[[ "${PHASE5_ARGO_ROOT_APP}" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]] || \
-  fail 'argocd-application-input'
-[[ "${PHASE5_ARGO_EXPECTED_CHILDREN}" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?(,[a-z0-9]([-a-z0-9.]*[a-z0-9])?)*$ ]] || \
-  fail 'argocd-application-input'
-[[ "${PHASE5_HTTP_MODE}" == 'acme-only' ]] || fail 'http-mode'
-[[ ${#PHASE5_ARGOCD_ADMIN_SUBJECT} -le 128 && \
-   "${PHASE5_ARGOCD_ADMIN_SUBJECT}" != *[[:space:]]* ]] || fail 'argocd-subject'
-[[ ${#PHASE5_ARGOCD_REVIEWER_SUBJECT} -le 128 && \
-   "${PHASE5_ARGOCD_REVIEWER_SUBJECT}" != *[[:space:]]* && \
-   "${PHASE5_ARGOCD_REVIEWER_SUBJECT}" != "${PHASE5_ARGOCD_ADMIN_SUBJECT}" ]] || \
-  fail 'argocd-subject'
 
 if ! "${python_bin}" -c '
 import ipaddress, re, sys
@@ -153,19 +133,19 @@ if ! application_counts=$(
   "${python_bin}" -c '
 import json, sys
 root = sys.argv[1]
-children = sys.argv[2].split(",")
+children = sys.argv[2:]
 assert len(children) == len(set(children)) and root not in children
 items = json.load(sys.stdin).get("items", [])
 by_name = {item.get("metadata", {}).get("name"): item for item in items}
 assert len(by_name) == len(items)
 expected = [root, *children]
-assert all(name in by_name for name in expected)
+assert set(by_name) == set(expected) and len(items) == len(expected)
 for name in expected:
     status = by_name[name].get("status", {})
     assert status.get("health", {}).get("status") == "Healthy"
     assert status.get("sync", {}).get("status") == "Synced"
 print(len(expected), len(children))
-' "${PHASE5_ARGO_ROOT_APP}" "${PHASE5_ARGO_EXPECTED_CHILDREN}" \
+' "${argocd_root_app}" "${argocd_child_apps[@]}" \
     <<<"${applications_json}" 2>/dev/null
 ); then
   fail 'argocd-applications'
@@ -298,163 +278,6 @@ assert [rule.get("host") for rule in spec.get("rules", [])] == [host]
   fail 'http-route-boundary'
 fi
 
-certificate_file="${runtime_dir}/public-leaf.pem"
-if ! "${timeout_bin}" 20s "${openssl_bin}" s_client \
-  -connect "${PHASE5_PUBLIC_HOST}:443" \
-  -servername "${PHASE5_PUBLIC_HOST}" \
-  -verify_hostname "${PHASE5_PUBLIC_HOST}" \
-  -verify_return_error -showcerts </dev/null 2>/dev/null | \
-  "${openssl_bin}" x509 -outform PEM >"${certificate_file}" 2>/dev/null; then
-  fail 'tls-inspection'
-fi
-chmod 600 "${certificate_file}" || fail 'tls-inspection'
-if ! hostname_check=$(
-  "${openssl_bin}" x509 -in "${certificate_file}" -noout \
-    -checkhost "${PHASE5_PUBLIC_HOST}" 2>/dev/null
-); then
-  fail 'tls-inspection'
-fi
-[[ "${hostname_check}" == *'does match certificate'* ]] || fail 'tls-inspection'
-if ! issuer_line=$(
-  "${openssl_bin}" x509 -in "${certificate_file}" -noout -issuer 2>/dev/null
-); then
-  fail 'tls-inspection'
-fi
-[[ "${issuer_line}" =~ O[[:space:]]*=[[:space:]]*Let.s[[:space:]]Encrypt ]] || \
-  fail 'tls-inspection'
-if ! "${openssl_bin}" x509 -in "${certificate_file}" -noout \
-  -checkend 604800 >/dev/null 2>&1; then
-  fail 'tls-inspection'
-fi
-if ! end_date_line=$(
-  "${openssl_bin}" x509 -in "${certificate_file}" -noout -enddate 2>/dev/null
-); then
-  fail 'tls-inspection'
-fi
-[[ "${end_date_line}" == notAfter=* ]] || fail 'tls-inspection'
-if ! expiry_epoch=$(
-  "${date_bin}" -u -d "${end_date_line#notAfter=}" +%s 2>/dev/null
-); then
-  fail 'tls-inspection'
-fi
-if ! now_epoch=$("${date_bin}" -u +%s 2>/dev/null); then
-  fail 'tls-inspection'
-fi
-[[ "${expiry_epoch}" =~ ^[0-9]+$ && "${now_epoch}" =~ ^[0-9]+$ ]] || fail 'tls-inspection'
-(( expiry_epoch > now_epoch )) || fail 'tls-inspection'
-validity_days=$(( (expiry_epoch - now_epoch) / 86400 ))
-(( validity_days >= 7 )) || fail 'tls-inspection'
-printf '[PASS] tls-hostname-match=true tls-issuer=letsencrypt tls-validity-days=%s\n' \
-  "${validity_days}"
-
-curl_common=(
-  "${curl_bin}"
-  --silent
-  --show-error
-  --noproxy '*'
-  --connect-timeout 5
-  --max-time 20
-  --max-redirs 0
-  --output /dev/null
-  --write-out '%{http_code}'
-)
-if ! anonymous_code=$(
-  "${curl_common[@]}" --proto '=https' \
-    "https://${PHASE5_PUBLIC_HOST}/api/v1/applications" 2>/dev/null
-); then
-  fail 'argocd-anonymous'
-fi
-[[ "${anonymous_code}" == '401' || "${anonymous_code}" == '403' ]] || \
-  fail 'argocd-anonymous'
-printf '[PASS] argocd-anonymous=denied\n'
-
-admin_token=$(<"${PHASE5_ARGOCD_ADMIN_TOKEN_FILE}")
-reviewer_token=$(<"${PHASE5_ARGOCD_REVIEWER_TOKEN_FILE}")
-[[ ${#admin_token} -ge 20 && ${#admin_token} -le 16384 && \
-   "${admin_token}" != *[[:space:]]* ]] || fail 'argocd-auth-file'
-[[ ${#reviewer_token} -ge 20 && ${#reviewer_token} -le 16384 && \
-   "${reviewer_token}" != *[[:space:]]* && "${reviewer_token}" != "${admin_token}" ]] || \
-  fail 'argocd-auth-file'
-
-argocd_base=(
-  "${argocd_bin}"
-  --server "${PHASE5_PUBLIC_HOST}"
-  --grpc-web
-  --http-retry-max 1
-  --loglevel error
-  --config "${runtime_dir}/argocd-config"
-  --prompts-enabled=false
-)
-
-if ! admin_info=$(
-  ARGOCD_AUTH_TOKEN="${admin_token}" "${argocd_base[@]}" \
-    account get-user-info -o json 2>/dev/null
-); then
-  fail 'argocd-admin-authentication'
-fi
-if ! reviewer_info=$(
-  ARGOCD_AUTH_TOKEN="${reviewer_token}" "${argocd_base[@]}" \
-    account get-user-info -o json 2>/dev/null
-); then
-  fail 'argocd-reviewer-authentication'
-fi
-if ! "${python_bin}" -c '
-import json, sys
-info = json.load(sys.stdin)
-assert info.get("loggedIn") is True
-assert info.get("username") == sys.argv[1]
-' "${PHASE5_ARGOCD_ADMIN_SUBJECT}" <<<"${admin_info}" 2>/dev/null; then
-  fail 'argocd-admin-authentication'
-fi
-if ! "${python_bin}" -c '
-import json, sys
-info = json.load(sys.stdin)
-assert info.get("loggedIn") is True
-assert info.get("username") == sys.argv[1]
-' "${PHASE5_ARGOCD_REVIEWER_SUBJECT}" <<<"${reviewer_info}" 2>/dev/null; then
-  fail 'argocd-reviewer-authentication'
-fi
-
-if ! reviewer_apps=$(
-  ARGOCD_AUTH_TOKEN="${reviewer_token}" "${argocd_base[@]}" \
-    app list -o json 2>/dev/null
-); then
-  fail 'argocd-reviewer-read'
-fi
-if ! "${python_bin}" -c '
-import json, sys
-root = sys.argv[1]
-items = json.load(sys.stdin)
-assert isinstance(items, list) and items
-assert root in {item.get("metadata", {}).get("name") for item in items}
-' "${PHASE5_ARGO_ROOT_APP}" <<<"${reviewer_apps}" 2>/dev/null; then
-  fail 'argocd-reviewer-read'
-fi
-
-require_permission "${admin_token}" yes get
-require_permission "${admin_token}" yes sync
-require_permission "${reviewer_token}" yes get
-require_permission "${reviewer_token}" no sync
-require_permission "${reviewer_token}" no action
-require_permission "${reviewer_token}" no override
-unset admin_token reviewer_token admin_info reviewer_info reviewer_apps
-printf '[PASS] argocd-admin=authenticated reviewer=authenticated reviewer-read=true reviewer-sync=false reviewer-action=false\n'
-
-if ! https_code=$(
-  "${curl_common[@]}" --proto '=https' "https://${PHASE5_PUBLIC_HOST}/" 2>/dev/null
-); then
-  fail 'public-https'
-fi
-[[ "${https_code}" == '200' ]] || fail 'public-https'
-if ! http_code=$(
-  "${curl_common[@]}" --proto '=http' "http://${PHASE5_PUBLIC_HOST}/" 2>/dev/null
-); then
-  fail 'public-http'
-fi
-[[ "${http_code}" == '404' ]] || fail 'public-http'
-printf '[PASS] public-https=%s http-mode=acme-only http-status=%s\n' \
-  "${https_code}" "${http_code}"
-
 if ! endpoint_lines=$(
   "${python_bin}" -c '
 import ipaddress, pathlib, sys
@@ -471,6 +294,224 @@ print("\n".join(addresses))
 fi
 mapfile -t external_endpoints <<<"${endpoint_lines}"
 [[ ${#external_endpoints[@]} -eq 3 ]] || fail 'external-endpoints'
+
+curl_resolve_files=()
+for index in "${!external_endpoints[@]}"; do
+  resolve_file="${runtime_dir}/endpoint-${index}.curl"
+  printf 'resolve = "%s:443:%s"\nresolve = "%s:80:%s"\n' \
+    "${PHASE5_PUBLIC_HOST}" "${external_endpoints[index]}" \
+    "${PHASE5_PUBLIC_HOST}" "${external_endpoints[index]}" >"${resolve_file}"
+  chmod 600 "${resolve_file}" || fail 'external-endpoints'
+  curl_resolve_files+=("${resolve_file}")
+done
+
+minimum_validity_days=''
+certificate_fingerprint=''
+for index in "${!external_endpoints[@]}"; do
+  certificate_file="${runtime_dir}/public-leaf-${index}.pem"
+  if ! "${timeout_bin}" 20s "${openssl_bin}" s_client \
+    -connect "${external_endpoints[index]}:443" \
+    -servername "${PHASE5_PUBLIC_HOST}" \
+    -verify_hostname "${PHASE5_PUBLIC_HOST}" \
+    -verify_return_error -showcerts </dev/null 2>/dev/null | \
+    "${openssl_bin}" x509 -outform PEM >"${certificate_file}" 2>/dev/null; then
+    fail 'tls-inspection'
+  fi
+  chmod 600 "${certificate_file}" || fail 'tls-inspection'
+  if ! hostname_check=$(
+    "${openssl_bin}" x509 -in "${certificate_file}" -noout \
+      -checkhost "${PHASE5_PUBLIC_HOST}" 2>/dev/null
+  ); then
+    fail 'tls-inspection'
+  fi
+  [[ "${hostname_check}" == *'does match certificate'* ]] || fail 'tls-inspection'
+  if ! issuer_line=$(
+    "${openssl_bin}" x509 -in "${certificate_file}" -noout -issuer 2>/dev/null
+  ); then
+    fail 'tls-inspection'
+  fi
+  [[ "${issuer_line}" =~ O[[:space:]]*=[[:space:]]*Let.s[[:space:]]Encrypt ]] || \
+    fail 'tls-inspection'
+  if ! fingerprint_line=$(
+    "${openssl_bin}" x509 -in "${certificate_file}" -noout \
+      -fingerprint -sha256 2>/dev/null
+  ); then
+    fail 'tls-inspection'
+  fi
+  fingerprint=${fingerprint_line#*=}
+  [[ "${fingerprint}" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]] || fail 'tls-inspection'
+  if [[ -z "${certificate_fingerprint}" ]]; then
+    certificate_fingerprint="${fingerprint}"
+  else
+    [[ "${fingerprint}" == "${certificate_fingerprint}" ]] || fail 'tls-inspection'
+  fi
+  if ! "${openssl_bin}" x509 -in "${certificate_file}" -noout \
+    -checkend 604800 >/dev/null 2>&1; then
+    fail 'tls-inspection'
+  fi
+  if ! end_date_line=$(
+    "${openssl_bin}" x509 -in "${certificate_file}" -noout -enddate 2>/dev/null
+  ); then
+    fail 'tls-inspection'
+  fi
+  [[ "${end_date_line}" == notAfter=* ]] || fail 'tls-inspection'
+  if ! expiry_epoch=$(
+    "${date_bin}" -u -d "${end_date_line#notAfter=}" +%s 2>/dev/null
+  ); then
+    fail 'tls-inspection'
+  fi
+  if ! now_epoch=$("${date_bin}" -u +%s 2>/dev/null); then
+    fail 'tls-inspection'
+  fi
+  [[ "${expiry_epoch}" =~ ^[0-9]+$ && "${now_epoch}" =~ ^[0-9]+$ ]] || \
+    fail 'tls-inspection'
+  (( expiry_epoch > now_epoch )) || fail 'tls-inspection'
+  validity_days=$(( (expiry_epoch - now_epoch) / 86400 ))
+  (( validity_days >= 7 )) || fail 'tls-inspection'
+  if [[ -z "${minimum_validity_days}" || validity_days -lt minimum_validity_days ]]; then
+    minimum_validity_days=${validity_days}
+  fi
+done
+unset certificate_fingerprint fingerprint fingerprint_line issuer_line hostname_check
+printf '[PASS] tls-endpoints=3 hostname-match=true issuer=letsencrypt certificate-consistent=true minimum-validity-days=%s\n' \
+  "${minimum_validity_days}"
+
+curl_common=(
+  "${curl_bin}"
+  --silent
+  --show-error
+  --noproxy '*'
+  --connect-timeout 5
+  --max-time 20
+  --max-redirs 0
+)
+
+curl_status() {
+  local resolve_file=$1
+  local protocol=$2
+  local url=$3
+  "${curl_common[@]}" --config "${resolve_file}" --proto "${protocol}" \
+    --output /dev/null --write-out '%{http_code}' "${url}" 2>/dev/null
+}
+
+argocd_api_capture() {
+  local authorization_file=$1
+  local url=$2
+  "${curl_common[@]}" --fail --config "${curl_resolve_files[0]}" \
+    --proto '=https' --header "@${authorization_file}" --output - "${url}" 2>/dev/null
+}
+
+require_api_permission() {
+  local authorization_file=$1
+  local expected=$2
+  local action=$3
+  local response value
+  if ! response=$(argocd_api_capture "${authorization_file}" \
+    "https://${PHASE5_PUBLIC_HOST}/api/v1/account/can-i/applications/${action}/%2A"); then
+    fail 'argocd-rbac'
+  fi
+  if ! value=$(
+    "${python_bin}" -c '
+import json, sys
+value = json.load(sys.stdin).get("value")
+assert value in {"yes", "no"}
+print(value)
+' <<<"${response}" 2>/dev/null
+  ); then
+    fail 'argocd-rbac'
+  fi
+  [[ "${value}" == "${expected}" ]] || fail 'argocd-rbac'
+}
+
+for resolve_file in "${curl_resolve_files[@]}"; do
+  if ! anonymous_code=$(curl_status "${resolve_file}" '=https' \
+    "https://${PHASE5_PUBLIC_HOST}/api/v1/applications"); then
+    fail 'argocd-anonymous'
+  fi
+  [[ "${anonymous_code}" == '401' || "${anonymous_code}" == '403' ]] || \
+    fail 'argocd-anonymous'
+done
+printf '[PASS] argocd-anonymous=denied endpoints=3\n'
+
+admin_token=$(<"${PHASE5_ARGOCD_ADMIN_TOKEN_FILE}")
+reviewer_token=$(<"${PHASE5_ARGOCD_REVIEWER_TOKEN_FILE}")
+[[ ${#admin_token} -le 16384 && \
+   "${admin_token}" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]] || \
+  fail 'argocd-auth-file'
+[[ ${#reviewer_token} -le 16384 && \
+   "${reviewer_token}" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ && \
+   "${reviewer_token}" != "${admin_token}" ]] || fail 'argocd-auth-file'
+
+admin_header="${runtime_dir}/admin.authorization.header"
+reviewer_header="${runtime_dir}/reviewer.authorization.header"
+printf 'Authorization: Bearer %s\n' "${admin_token}" >"${admin_header}"
+printf 'Authorization: Bearer %s\n' "${reviewer_token}" >"${reviewer_header}"
+chmod 600 "${admin_header}" "${reviewer_header}" || fail 'argocd-auth-file'
+unset admin_token reviewer_token
+
+if ! admin_info=$(argocd_api_capture "${admin_header}" \
+  "https://${PHASE5_PUBLIC_HOST}/api/v1/session/userinfo"); then
+  fail 'argocd-admin-authentication'
+fi
+if ! reviewer_info=$(argocd_api_capture "${reviewer_header}" \
+  "https://${PHASE5_PUBLIC_HOST}/api/v1/session/userinfo"); then
+  fail 'argocd-reviewer-authentication'
+fi
+if ! "${python_bin}" -c '
+import json, sys
+info = json.load(sys.stdin)
+assert info.get("loggedIn") is True
+assert info.get("username") == sys.argv[1]
+' "${argocd_admin_subject}" <<<"${admin_info}" 2>/dev/null; then
+  fail 'argocd-admin-authentication'
+fi
+if ! "${python_bin}" -c '
+import json, sys
+info = json.load(sys.stdin)
+assert info.get("loggedIn") is True
+assert info.get("username") == sys.argv[1]
+' "${argocd_reviewer_subject}" <<<"${reviewer_info}" 2>/dev/null; then
+  fail 'argocd-reviewer-authentication'
+fi
+
+if ! reviewer_apps=$(argocd_api_capture "${reviewer_header}" \
+  "https://${PHASE5_PUBLIC_HOST}/api/v1/applications"); then
+  fail 'argocd-reviewer-read'
+fi
+if ! "${python_bin}" -c '
+import json, sys
+root = sys.argv[1]
+expected = {root, *sys.argv[2:]}
+items = json.load(sys.stdin).get("items", [])
+assert len(items) == len(expected)
+assert {item.get("metadata", {}).get("name") for item in items} == expected
+' "${argocd_root_app}" "${argocd_child_apps[@]}" <<<"${reviewer_apps}" 2>/dev/null; then
+  fail 'argocd-reviewer-read'
+fi
+
+require_api_permission "${admin_header}" yes get
+require_api_permission "${admin_header}" yes sync
+require_api_permission "${reviewer_header}" yes get
+require_api_permission "${reviewer_header}" no sync
+require_api_permission "${reviewer_header}" no action
+require_api_permission "${reviewer_header}" no override
+unset admin_info reviewer_info reviewer_apps
+printf '[PASS] argocd-admin=authenticated reviewer=authenticated reviewer-read=true reviewer-sync=false reviewer-action=false\n'
+
+for resolve_file in "${curl_resolve_files[@]}"; do
+  if ! https_code=$(curl_status "${resolve_file}" '=https' \
+    "https://${PHASE5_PUBLIC_HOST}/"); then
+    fail 'public-https'
+  fi
+  [[ "${https_code}" == '200' ]] || fail 'public-https'
+  if ! http_code=$(curl_status "${resolve_file}" '=http' \
+    "http://${PHASE5_PUBLIC_HOST}/"); then
+    fail 'public-http'
+  fi
+  [[ "${http_code}" == '404' ]] || fail 'public-http'
+done
+printf '[PASS] public-endpoints=3 https=200 http-mode=%s http-status=404\n' \
+  "${phase5_http_mode}"
 
 allowed_tcp=(22 80 443 6443)
 denied_tcp=(

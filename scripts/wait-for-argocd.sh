@@ -4,6 +4,8 @@ set -Eeuo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repo_root=$(cd -- "${script_dir}/.." && pwd -P)
 # shellcheck source=bootstrap/argocd/runtime-lib.sh
+# Resolved from the validated repository root.
+# shellcheck disable=SC1091
 source "${repo_root}/bootstrap/argocd/runtime-lib.sh"
 
 phase5_require_command helm
@@ -129,13 +131,18 @@ health_lua = data.get("resource.customizations.health.argoproj.io_Application", 
 for required in ("obj.status.health.status", "obj.status.health.message", "return health"):
     if required not in health_lua:
         raise SystemExit("Application health does not deterministically mirror child health")
-if params.get("data", {}).get("server.insecure") != "false":
-    raise SystemExit("Argo CD server TLS is not explicitly enabled")
+if params.get("data", {}).get("server.insecure") != "true":
+    raise SystemExit("Argo CD internal HTTP is not enabled for Traefik TLS termination")
 rbac_data = rbac.get("data", {})
 if rbac_data.get("policy.default") != "role:authenticated":
     raise SystemExit("Argo CD does not use the explicit no-permission default role")
 policy = rbac_data.get("policy.csv", "")
-for required in ("platform-admin, role:admin", "reviewer, role:reviewer"):
+for required in (
+    "platform-admin, role:admin",
+    "reviewer, role:reviewer",
+    "role:reviewer, applications, get, platform/*, allow",
+    "role:reviewer, applications, sync, platform/*, deny",
+):
     if required not in policy:
         raise SystemExit("required Argo CD RBAC binding is absent")
 ' "${config_json}" "${params_json}" "${rbac_json}"

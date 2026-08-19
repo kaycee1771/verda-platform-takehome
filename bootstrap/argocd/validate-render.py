@@ -84,6 +84,9 @@ def main() -> int:
     crds: set[str] = set()
     inventory: list[str] = []
     bootstrap_projects = 0
+    server_policies: list[dict] = []
+    internal_http_verified = False
+    reviewer_rbac_verified = False
 
     for document in documents:
         if not isinstance(document, dict):
@@ -117,6 +120,24 @@ def main() -> int:
                 )
         if kind == "CustomResourceDefinition":
             crds.add(name)
+        if kind == "ConfigMap" and name == "argocd-cmd-params-cm":
+            internal_http_verified = document.get("data", {}).get("server.insecure") == "true"
+        if kind == "ConfigMap" and name == "argocd-rbac-cm":
+            policy = document.get("data", {}).get("policy.csv", "")
+            reviewer_rbac_verified = all(
+                line in policy
+                for line in (
+                    "p, role:reviewer, applications, get, platform/*, allow",
+                    "p, role:reviewer, applications, sync, platform/*, deny",
+                    "p, role:reviewer, applications, action/*, platform/*, deny",
+                )
+            )
+        if kind == "NetworkPolicy":
+            selector = document.get("spec", {}).get("podSelector", {}).get(
+                "matchLabels", {}
+            )
+            if selector.get("app.kubernetes.io/name") == "argocd-server":
+                server_policies.append(document)
         if kind == "AppProject" and name == "platform-bootstrap":
             bootstrap_projects += 1
             spec = document.get("spec", {})
@@ -171,6 +192,34 @@ def main() -> int:
         fail("the render is missing a required Argo CD CRD")
     if bootstrap_projects != 1:
         fail("the render must contain exactly one platform-bootstrap AppProject")
+    if not internal_http_verified:
+        fail("the Argo CD backend protocol does not match Traefik TLS termination")
+    if not reviewer_rbac_verified:
+        fail("the platform reviewer read-only RBAC contract is incomplete")
+    if len(server_policies) != 1:
+        fail("the render must contain exactly one Argo CD server NetworkPolicy")
+    ingress = server_policies[0].get("spec", {}).get("ingress")
+    expected_ingress = [
+        {
+            "from": [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {
+                            "kubernetes.io/metadata.name": "kube-system"
+                        }
+                    },
+                    "podSelector": {
+                        "matchLabels": {
+                            "app.kubernetes.io/name": "rke2-traefik"
+                        }
+                    },
+                }
+            ],
+            "ports": [{"protocol": "TCP", "port": 8080}],
+        }
+    ]
+    if ingress != expected_ingress:
+        fail("the Argo CD server ingress policy is not Traefik-only on TCP 8080")
 
     args.inventory.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(args.inventory, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

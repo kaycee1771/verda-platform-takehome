@@ -67,3 +67,4 @@ phase4_snapshot_folder: verda-takehome-etcd/mgmt
 phase4_kube_reserved: cpu=500m,memory=1Gi,ephemeral-storage=1Gi
 phase4_system_reserved: cpu=500m,memory=1Gi,ephemeral-storage=1Gi
 phase4_cluster_firewall_enabled: false
+phase5_public_ingress_enabled: true

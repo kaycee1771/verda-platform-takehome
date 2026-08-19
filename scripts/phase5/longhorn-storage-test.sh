@@ -8,14 +8,39 @@ set -Eeuo pipefail
 
 umask 077
 
-if (($# != 0)); then
-  printf 'Usage: scripts/phase5/longhorn-storage-test.sh\n' >&2
-  exit 64
-fi
+usage() {
+  printf '%s\n' \
+    'Usage: CONFIRM_DESTRUCTIVE_ACTION=yes scripts/phase5/longhorn-storage-test.sh --confirm' \
+    'Requires: KUBECONFIG, PHASE5_KUBE_CONTEXT, PHASE5_CONFIRM_CLUSTER=verda-mgmt,' \
+    '          PHASE5_CONFIRM_STORAGE_TEST=longhorn-critical-reschedule-and-cleanup'
+}
+
+case "${1:-}" in
+  --help)
+    (($# == 1)) || {
+      usage >&2
+      exit 64
+    }
+    usage
+    exit 0
+    ;;
+  --confirm)
+    (($# == 1)) || {
+      usage >&2
+      exit 64
+    }
+    ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
+esac
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repo_root=$(cd -- "${script_dir}/../.." && pwd -P)
 # shellcheck source=bootstrap/argocd/runtime-lib.sh
+# Resolved from the validated repository root.
+# shellcheck disable=SC1091
 source "${repo_root}/bootstrap/argocd/runtime-lib.sh"
 
 readonly storage_class='longhorn-critical'
@@ -33,6 +58,21 @@ run_id=''
 test_namespace=''
 
 kubectl_base=()
+
+assert_destructive_kubeconfig() {
+  local mode owner
+
+  [[ -n ${KUBECONFIG:-} && "${KUBECONFIG}" == /* ]] ||
+    phase5_fail 'KUBECONFIG must be an absolute protected path.'
+  [[ -f "${KUBECONFIG}" && ! -L "${KUBECONFIG}" ]] ||
+    phase5_fail 'KUBECONFIG must be a regular, non-symlink file.'
+  mode=$(stat -c '%a' -- "${KUBECONFIG}") ||
+    phase5_fail 'Unable to verify KUBECONFIG permissions.'
+  owner=$(stat -c '%u' -- "${KUBECONFIG}") ||
+    phase5_fail 'Unable to verify KUBECONFIG ownership.'
+  [[ "${mode}" == '600' && "${owner}" == "$(id -u)" ]] ||
+    phase5_fail 'KUBECONFIG must be owned by the current user with mode 0600.'
+}
 
 capture_cluster_lists() {
   local prefix=$1
@@ -168,16 +208,19 @@ trap on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for command in kubectl python3 realpath openssl date mktemp; do
+[[ ${CONFIRM_DESTRUCTIVE_ACTION:-} == 'yes' ]] ||
+  phase5_fail 'CONFIRM_DESTRUCTIVE_ACTION must equal yes.'
+[[ ${PHASE5_CONFIRM_STORAGE_TEST:-} == 'longhorn-critical-reschedule-and-cleanup' ]] ||
+  phase5_fail 'PHASE5_CONFIRM_STORAGE_TEST must equal longhorn-critical-reschedule-and-cleanup.'
+
+for command in kubectl python3 realpath openssl date mktemp stat id; do
   phase5_require_command "${command}"
 done
 for helper in "${contract_helper}" "${capacity_helper}" "${longhorn_capacity_helper}"; do
   phase5_require_regular_file "${helper}" 'Phase 5 storage helper'
 done
+assert_destructive_kubeconfig
 phase5_assert_cluster_runtime "${repo_root}"
-
-[[ ${PHASE5_CONFIRM_STORAGE_TEST:-} == 'longhorn-critical-reschedule-and-cleanup' ]] ||
-  phase5_fail 'PHASE5_CONFIRM_STORAGE_TEST must equal longhorn-critical-reschedule-and-cleanup.'
 
 timeout=${PHASE5_STORAGE_TEST_TIMEOUT:-10m}
 phase5_assert_timeout "${timeout}"

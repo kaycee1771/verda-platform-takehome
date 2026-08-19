@@ -5,6 +5,7 @@ metadata:
   name: longhorn-system
   annotations:
     argocd.argoproj.io/sync-wave: "-20"
+    argocd.argoproj.io/sync-options: Prune=confirm,Delete=confirm
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/part-of: verda-management-platform

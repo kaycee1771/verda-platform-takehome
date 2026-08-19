@@ -9,6 +9,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
     verda.platform/authentication-boundary: argocd-rbac
     verda.platform/cli-mode: grpc-web
+    verda.platform/network-policy-owner: {{ .Values.networkPolicyOwner | quote }}
     verda.platform/exposure-gates: '{{ include "verdaArgocdIngress.assertGates" . }}verified'
 spec:
   ingressClassName: traefik

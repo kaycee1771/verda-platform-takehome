@@ -156,6 +156,16 @@ def main() -> int:
             if replacements < 1:
                 raise RuntimeError("locked Longhorn normalization marker is absent")
             parse_payload = parse_payload.replace(marker, b"  labels:\n")
+        elif item.get("normalization") == "cert-manager-helm-template-v1":
+            template_lines = [line for line in parse_payload.splitlines() if b"{{" in line]
+            if len(template_lines) != 5:
+                raise RuntimeError("locked cert-manager normalization shape changed")
+            parse_payload = (
+                b"\n".join(
+                    line for line in parse_payload.splitlines() if b"{{" not in line
+                )
+                + b"\n"
+            )
         documents = list(yaml.safe_load_all(parse_payload))
         selected = None
         for document in documents:

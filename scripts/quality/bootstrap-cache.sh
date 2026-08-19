@@ -6,6 +6,7 @@ mkdir -p .local/terraform-plugin-cache .local/trivy .local/reports .local/logs
 export TF_PLUGIN_CACHE_DIR="${PWD}/.local/terraform-plugin-cache"
 
 python scripts/quality/bootstrap_schemas.py
+python scripts/quality/bootstrap_charts.py
 
 mapfile -t terraform_roots < <(
   find infra/terraform -type f -name '.terraform-root' -printf '%h\n' | sort -u

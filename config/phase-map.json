@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "active_phase": 4,
+  "active_phase": 5,
   "phases": [
     {"id": 0, "name": "Engineering contract and discovery"},
     {"id": 1, "name": "Repository and quality system"},
@@ -26,9 +26,11 @@
     "infra-lifecycle-check",
     "inventory",
     "configure",
-    "verify-hosts"
+    "verify-hosts",
+    "cluster-bootstrap",
+    "verify-cluster"
   ],
-  "enabled_phase_targets": ["cluster-bootstrap", "verify-cluster"],
+  "enabled_phase_targets": ["bootstrap-gitops"],
   "target_owners": {
     "help": {"default": 1},
     "bootstrap-tools": {"default": 1},

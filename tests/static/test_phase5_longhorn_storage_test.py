@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -121,6 +124,8 @@ class Phase5LonghornStorageTest(unittest.TestCase):
     def test_script_is_mutation_bounded_and_uses_protected_runtime(self) -> None:
         script = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("phase5_assert_cluster_runtime", script)
+        self.assertIn("assert_destructive_kubeconfig", script)
+        self.assertIn("CONFIRM_DESTRUCTIVE_ACTION", script)
         self.assertIn("PHASE5_CONFIRM_STORAGE_TEST", script)
         self.assertIn("longhorn-critical-reschedule-and-cleanup", script)
         self.assertIn("^p5st-[0-9]{8}t[0-9]{6}z-[a-f0-9]{8}$", script)
@@ -137,6 +142,113 @@ class Phase5LonghornStorageTest(unittest.TestCase):
             "delete namespace longhorn-system",
         ):
             self.assertNotIn(forbidden, script.lower())
+
+    def test_both_destructive_guards_are_mandatory_before_dependency_use(self) -> None:
+        without_literal = subprocess.run(
+            ["bash", str(SCRIPT)],
+            cwd=ROOT,
+            env={**os.environ, "CONFIRM_DESTRUCTIVE_ACTION": "yes"},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(without_literal.returncode, 64)
+        self.assertEqual(
+            without_literal.stderr,
+            "Usage: CONFIRM_DESTRUCTIVE_ACTION=yes "
+            "scripts/phase5/longhorn-storage-test.sh --confirm\n"
+            "Requires: KUBECONFIG, PHASE5_KUBE_CONTEXT, "
+            "PHASE5_CONFIRM_CLUSTER=verda-mgmt,\n"
+            "          PHASE5_CONFIRM_STORAGE_TEST="
+            "longhorn-critical-reschedule-and-cleanup\n",
+        )
+
+        without_environment = subprocess.run(
+            ["bash", str(SCRIPT), "--confirm"],
+            cwd=ROOT,
+            env={
+                key: value
+                for key, value in os.environ.items()
+                if key != "CONFIRM_DESTRUCTIVE_ACTION"
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(without_environment.returncode, 1)
+        self.assertEqual(
+            without_environment.stderr,
+            "[FAIL] CONFIRM_DESTRUCTIVE_ACTION must equal yes.\n",
+        )
+
+    def test_help_is_non_mutating_and_documents_literal_confirmation(self) -> None:
+        result = subprocess.run(
+            ["bash", str(SCRIPT), "--help"],
+            cwd=ROOT,
+            env={},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            result.stdout,
+            "Usage: CONFIRM_DESTRUCTIVE_ACTION=yes "
+            "scripts/phase5/longhorn-storage-test.sh --confirm\n"
+            "Requires: KUBECONFIG, PHASE5_KUBE_CONTEXT, "
+            "PHASE5_CONFIRM_CLUSTER=verda-mgmt,\n"
+            "          PHASE5_CONFIRM_STORAGE_TEST="
+            "longhorn-critical-reschedule-and-cleanup\n",
+        )
+        self.assertEqual(result.stderr, "")
+
+    def test_insecure_kubeconfig_is_rejected_before_cluster_access(self) -> None:
+        if os.name != "posix" or shutil.which("bash") is None:
+            self.skipTest("permission behavior is enforced by the pinned Linux image")
+
+        executable_temp = ROOT / ".local" / "test-tmp"
+        executable_temp.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=executable_temp) as directory:
+            temporary = Path(directory)
+            kubeconfig = temporary / "kubeconfig"
+            kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
+            kubeconfig.chmod(0o644)
+            kubectl_log = temporary / "kubectl.log"
+            kubectl = temporary / "kubectl"
+            kubectl.write_text(
+                "#!/usr/bin/env bash\nprintf 'called\\n' >>\"${MOCK_KUBECTL_LOG}\"\nexit 99\n",
+                encoding="utf-8",
+            )
+            kubectl.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{temporary}{os.pathsep}{environment.get('PATH', '')}",
+                    "KUBECONFIG": str(kubeconfig),
+                    "PHASE5_KUBE_CONTEXT": "verda-management",
+                    "PHASE5_CONFIRM_CLUSTER": "verda-mgmt",
+                    "PHASE5_CONFIRM_STORAGE_TEST": "longhorn-critical-reschedule-and-cleanup",
+                    "CONFIRM_DESTRUCTIVE_ACTION": "yes",
+                    "MOCK_KUBECTL_LOG": str(kubectl_log),
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(SCRIPT), "--confirm"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            kubectl_was_called = kubectl_log.exists()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(
+            result.stderr,
+            "[FAIL] KUBECONFIG must be owned by the current user with mode 0600.\n",
+        )
+        self.assertFalse(kubectl_was_called)
 
     def test_script_uses_pinned_fixture_and_deterministic_checksum(self) -> None:
         script = SCRIPT.read_text(encoding="utf-8")

@@ -43,7 +43,7 @@ $completedPrerequisiteTarget = $requiredPhase -lt $activePhase -and $Target -in 
 
 if ($currentPhaseTarget -or $completedPrerequisiteTarget) {
     if ($cluster -ne 'management') {
-        throw "Phase 4 authorizes only CLUSTER=management; Stage B is prohibited."
+        throw "Phase $activePhase authorizes only CLUSTER=management; Stage B is prohibited."
     }
 
     $scriptPath = $null
@@ -77,15 +77,22 @@ if ($currentPhaseTarget -or $completedPrerequisiteTarget) {
             $scriptPath = Join-Path $repoRoot 'scripts\cluster\phase4.ps1'
             $scriptArguments = @('-Target', 'verify', '-Cluster', $cluster)
         }
+        'bootstrap-gitops' {
+            $scriptPath = Join-Path $repoRoot 'scripts\bootstrap-gitops.sh'
+        }
         default {
-            throw "Target '$Target' has no approved Phase 4 dispatcher route; no action was taken."
+            throw "Target '$Target' has no approved Phase $activePhase dispatcher route; no action was taken."
         }
     }
 
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
         throw "The approved orchestrator for '$Target' is absent; no action was taken."
     }
-    & pwsh -NoLogo -NoProfile -NonInteractive -File $scriptPath @scriptArguments
+    if ([IO.Path]::GetExtension($scriptPath) -eq '.sh') {
+        & bash $scriptPath @scriptArguments
+    } else {
+        & pwsh -NoLogo -NoProfile -NonInteractive -File $scriptPath @scriptArguments
+    }
     exit $LASTEXITCODE
 }
 

@@ -62,11 +62,27 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $buildLog = Join-Path $logRoot 'bootstrap-image.log'
-& docker build --pull --provenance=false --tag $image `
-    --file (Join-Path $repoRoot 'tooling\quality\Dockerfile') $repoRoot 2>&1 |
-    Tee-Object -FilePath $buildLog
-if ($LASTEXITCODE -ne 0) {
-    throw "Quality image build failed. See $buildLog"
+$dockerfilePath = Join-Path $repoRoot 'tooling\quality\Dockerfile'
+$dockerfileSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $dockerfilePath).Hash.ToLowerInvariant()
+$bootstrapMarkerPath = Join-Path $localRoot 'bootstrap.complete'
+$reuseQualityImage = $false
+& docker image inspect $image 2>$null | Out-Null
+if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $bootstrapMarkerPath -PathType Leaf)) {
+    $previousMarker = Get-Content -LiteralPath $bootstrapMarkerPath -Raw | ConvertFrom-StringData
+    $reuseQualityImage = (
+        $previousMarker.ContainsKey('quality_dockerfile_sha256') -and
+        $previousMarker.quality_dockerfile_sha256 -eq $dockerfileSha256
+    )
+}
+if ($reuseQualityImage) {
+    Write-Host '[PASS] Existing pinned quality image matches the unchanged Dockerfile input.'
+} else {
+    & docker build --pull --provenance=false --tag $image `
+        --file $dockerfilePath $repoRoot 2>&1 |
+        Tee-Object -FilePath $buildLog
+    if ($LASTEXITCODE -ne 0) {
+        throw "Quality image build failed. See $buildLog"
+    }
 }
 
 Write-Host '[INFO] Warming version-pinned provider, schema, and Trivy caches. No cloud API is contacted.'

@@ -16,6 +16,8 @@ import yaml
 
 ROOT = pathlib.Path(__file__).parents[2]
 LONGHORN = ROOT / "platform" / "management" / "longhorn"
+PREREQUISITES = LONGHORN / "prerequisites"
+RESOURCES = LONGHORN / "resources"
 CAPACITY_GATE = ROOT / "scripts" / "phase5" / "longhorn-capacity.py"
 EXPECTED_NODES = [f"verda-mgmt-server-{index:02d}" for index in range(1, 4)]
 MOUNT_SIZE = 103_000_000_000
@@ -108,6 +110,10 @@ class Phase5LonghornContractTests(unittest.TestCase):
         self.assertEqual(lock["helm_charts"]["longhorn"]["app_version"], "v1.12.1")
 
         values = yaml.safe_load((LONGHORN / "values.yaml").read_text())
+        for family in ("longhorn", "csi"):
+            for name, image in values["image"][family].items():
+                with self.subTest(image=f"{family}.{name}"):
+                    self.assertRegex(image["tag"], r"^[^@]+@sha256:[0-9a-f]{64}$")
         self.assertEqual(values["namespaceOverride"], "longhorn-system")
         self.assertEqual(values["global"]["nodeSelector"], {"kubernetes.io/os": "linux"})
         self.assertEqual(values["service"]["ui"]["type"], "ClusterIP")
@@ -118,6 +124,7 @@ class Phase5LonghornContractTests(unittest.TestCase):
         self.assertFalse(values["persistence"]["defaultClass"])
         self.assertFalse(values["preUpgradeChecker"]["jobEnabled"])
         self.assertTrue(values["networkPolicies"]["restrictInternalTraffic"])
+        self.assertTrue(values["networkPolicies"]["enabled"])
         self.assertEqual(values["networkPolicies"]["type"], "rke2")
         self.assertFalse(values["metrics"]["serviceMonitor"]["enabled"])
 
@@ -145,29 +152,50 @@ class Phase5LonghornContractTests(unittest.TestCase):
             1,
         )
 
-    def test_resources_are_exactly_wired_for_the_longhorn_application(self) -> None:
-        kustomization = yaml.safe_load(
-            (LONGHORN / "resources" / "kustomization.yaml").read_text()
-        )
+    def test_prerequisites_own_namespace_and_ui_security(self) -> None:
+        kustomization = yaml.safe_load((PREREQUISITES / "kustomization.yaml").read_text())
         self.assertEqual(
             kustomization["resources"],
-            ["namespace.yaml", "nodes.yaml", "storageclasses.yaml"],
+            ["namespace.yaml", "ui-network-policy.yaml"],
         )
-        namespace = yaml.safe_load((LONGHORN / "resources" / "namespace.yaml").read_text())
+        namespace = yaml.safe_load((PREREQUISITES / "namespace.yaml").read_text())
         self.assertEqual(namespace["metadata"]["name"], "longhorn-system")
         labels = namespace["metadata"]["labels"]
+        self.assertEqual(
+            namespace["metadata"]["annotations"]["argocd.argoproj.io/sync-options"],
+            "Prune=confirm,Delete=confirm",
+        )
         for mode in ("enforce", "audit", "warn"):
             self.assertEqual(labels[f"pod-security.kubernetes.io/{mode}"], "privileged")
             self.assertEqual(labels[f"pod-security.kubernetes.io/{mode}-version"], "v1.35")
 
+        policy = yaml.safe_load((PREREQUISITES / "ui-network-policy.yaml").read_text())
+        self.assertEqual(policy["kind"], "NetworkPolicy")
+        self.assertEqual(policy["metadata"]["namespace"], "longhorn-system")
+        self.assertEqual(
+            policy["spec"]["podSelector"]["matchLabels"], {"app": "longhorn-ui"}
+        )
+        self.assertEqual(policy["spec"]["policyTypes"], ["Ingress"])
+        self.assertEqual(policy["spec"]["ingress"], [])
+
+    def test_resources_application_only_owns_nodes_and_storage_classes(self) -> None:
+        kustomization = yaml.safe_load((RESOURCES / "kustomization.yaml").read_text())
+        self.assertEqual(kustomization["resources"], ["nodes.yaml", "storageclasses.yaml"])
+        self.assertFalse((RESOURCES / "namespace.yaml").exists())
+        self.assertFalse((RESOURCES / "ui-network-policy.yaml").exists())
+
     def test_longhorn_nodes_own_only_the_three_dedicated_mounts(self) -> None:
-        nodes = yaml_documents(LONGHORN / "resources" / "nodes.yaml")
+        nodes = yaml_documents(RESOURCES / "nodes.yaml")
         self.assertEqual(len(nodes), 3)
         self.assertEqual(sorted(node["metadata"]["name"] for node in nodes), EXPECTED_NODES)
         for node in nodes:
             self.assertEqual(node["apiVersion"], "longhorn.io/v1beta2")
             self.assertEqual(node["kind"], "Node")
             self.assertEqual(node["metadata"]["namespace"], "longhorn-system")
+            self.assertEqual(
+                node["metadata"]["annotations"]["argocd.argoproj.io/sync-options"],
+                "Prune=confirm,Delete=confirm",
+            )
             self.assertEqual(node["metadata"]["name"], node["spec"]["name"])
             self.assertTrue(node["spec"]["allowScheduling"])
             self.assertFalse(node["spec"]["evictionRequested"])
@@ -181,7 +209,7 @@ class Phase5LonghornContractTests(unittest.TestCase):
             self.assertEqual(disk["tags"], ["dedicated"])
 
     def test_storage_classes_make_critical_the_only_default(self) -> None:
-        classes = yaml_documents(LONGHORN / "resources" / "storageclasses.yaml")
+        classes = yaml_documents(RESOURCES / "storageclasses.yaml")
         self.assertEqual({item["metadata"]["name"] for item in classes}, {
             "longhorn-critical",
             "longhorn-standard",

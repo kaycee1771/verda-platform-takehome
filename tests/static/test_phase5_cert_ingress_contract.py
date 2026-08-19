@@ -125,6 +125,13 @@ class Phase5CertIngressContractTests(unittest.TestCase):
                 schema["properties"]["ingressClassName"]["const"], "traefik"
             )
 
+        ingress_schema = json.loads(read_text(INGRESS / "values.schema.json"))
+        self.assertIn("networkPolicyOwner", ingress_schema["required"])
+        self.assertEqual(
+            ingress_schema["properties"]["networkPolicyOwner"]["const"],
+            "bootstrap-helm",
+        )
+
     def test_staging_is_namespaced_http01_and_contains_no_secret_or_ingress(self) -> None:
         result = helm_template(
             CERT / "staging",
@@ -209,6 +216,18 @@ class Phase5CertIngressContractTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(expected, result.stderr)
 
+    def test_ingress_rejects_any_network_policy_owner_other_than_bootstrap_helm(self) -> None:
+        result = helm_template(
+            INGRESS,
+            f"hostname={SAFE_HOSTNAME}",
+            "networkPolicyOwner=public-ingress-chart",
+            "gates.productionCertificateVerified=true",
+            "gates.argocdAuthenticationVerified=true",
+            "gates.argocdInternalHttpVerified=true",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("networkPolicyOwner", result.stderr)
+
     def test_ingress_uses_rke2_traefik_tls_and_grpc_web_compatible_http(self) -> None:
         result = helm_template(
             INGRESS,
@@ -219,7 +238,7 @@ class Phase5CertIngressContractTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         objects = rendered_objects(result.stdout)
-        self.assertEqual({item["kind"] for item in objects}, {"Ingress", "NetworkPolicy"})
+        self.assertEqual([item["kind"] for item in objects], ["Ingress"])
 
         ingress = next(item for item in objects if item["kind"] == "Ingress")
         self.assertEqual(ingress["spec"]["ingressClassName"], "traefik")
@@ -241,6 +260,9 @@ class Phase5CertIngressContractTests(unittest.TestCase):
             annotations["verda.platform/authentication-boundary"], "argocd-rbac"
         )
         self.assertEqual(annotations["verda.platform/cli-mode"], "grpc-web")
+        self.assertEqual(
+            annotations["verda.platform/network-policy-owner"], "bootstrap-helm"
+        )
 
         rendered = result.stdout.lower()
         for forbidden in (
@@ -253,7 +275,7 @@ class Phase5CertIngressContractTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, rendered)
 
-    def test_network_policy_only_allows_rke2_traefik_to_argocd_http(self) -> None:
+    def test_bootstrap_helm_is_the_only_argocd_server_network_policy_owner(self) -> None:
         result = helm_template(
             INGRESS,
             f"hostname={SAFE_HOSTNAME}",
@@ -262,9 +284,18 @@ class Phase5CertIngressContractTests(unittest.TestCase):
             "gates.argocdInternalHttpVerified=true",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        policy = next(
-            item for item in rendered_objects(result.stdout) if item["kind"] == "NetworkPolicy"
+        self.assertFalse((INGRESS / "templates" / "network-policy.yaml").exists())
+        self.assertFalse(
+            any(item["kind"] == "NetworkPolicy" for item in rendered_objects(result.stdout))
         )
+
+        bootstrap = load_yaml(ROOT / "bootstrap" / "argocd" / "values.yaml")
+        policies = [
+            item for item in bootstrap["extraObjects"] if item["kind"] == "NetworkPolicy"
+        ]
+        self.assertEqual(len(policies), 1)
+        policy = policies[0]
+        self.assertEqual(policy["metadata"]["name"], "argocd-server-bootstrap-ingress")
         self.assertEqual(
             policy["spec"]["podSelector"]["matchLabels"],
             {"app.kubernetes.io/name": "argocd-server"},

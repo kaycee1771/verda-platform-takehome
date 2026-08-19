@@ -36,7 +36,7 @@ class FakeResponse:
 
 
 class BootstrapSchemaTests(unittest.TestCase):
-    def test_phase_four_network_smoke_has_complete_locked_schema_coverage(self) -> None:
+    def test_cluster_fixtures_have_complete_locked_core_schema_coverage(self) -> None:
         lock = RUNTIME.yaml.safe_load(RUNTIME.LOCK.read_text(encoding="utf-8"))
         locked_core = {
             item["name"]: item["sha256"] for item in lock["kubernetes"]["files"]
@@ -46,6 +46,7 @@ class BootstrapSchemaTests(unittest.TestCase):
             "service-v1.json",
             "networkpolicy-networking-v1.json",
             "ingress-networking-v1.json",
+            "storageclass-storage-v1.json",
         }
         self.assertTrue(required.issubset(locked_core))
         for name in required:
@@ -66,6 +67,25 @@ class BootstrapSchemaTests(unittest.TestCase):
         lock = RUNTIME.yaml.safe_load(RUNTIME.LOCK.read_text(encoding="utf-8"))
         for item in lock["crds"]["materialized"]:
             with self.subTest(item=item["name"]):
+                self.assertRegex(item["output_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_phase_five_custom_resources_have_exact_locked_schemas(self) -> None:
+        lock = RUNTIME.yaml.safe_load(RUNTIME.LOCK.read_text(encoding="utf-8"))
+        materialized = {item["name"]: item for item in lock["crds"]["materialized"]}
+        required = {
+            "argocd-appproject": None,
+            "cert-manager-certificate": "cert-manager-helm-template-v1",
+            "cert-manager-clusterissuer": "cert-manager-helm-template-v1",
+            "cert-manager-issuer": "cert-manager-helm-template-v1",
+            "longhorn-node": "longhorn-helm-labels-v1",
+            "longhorn-setting": "longhorn-helm-labels-v1",
+        }
+        self.assertTrue(required.keys() <= materialized.keys())
+        for name, normalization in required.items():
+            with self.subTest(schema=name):
+                item = materialized[name]
+                self.assertEqual(item.get("normalization"), normalization)
+                self.assertRegex(item["source_sha256"], r"^[0-9a-f]{64}$")
                 self.assertRegex(item["output_sha256"], r"^[0-9a-f]{64}$")
 
     def test_cache_is_used_only_when_checksum_matches(self) -> None:

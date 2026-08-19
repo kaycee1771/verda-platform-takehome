@@ -17,6 +17,7 @@ CACHE_AFFECTING_VERSION_SECTIONS = (
     "providers",
     "quality_tools",
     "tool_delivery",
+    "helm_charts",
 )
 
 

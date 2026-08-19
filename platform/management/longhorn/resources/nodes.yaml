@@ -6,6 +6,7 @@ metadata:
   namespace: longhorn-system
   annotations:
     argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-options: Prune=confirm,Delete=confirm
 spec:
   allowScheduling: true
   evictionRequested: false
@@ -30,6 +31,7 @@ metadata:
   namespace: longhorn-system
   annotations:
     argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-options: Prune=confirm,Delete=confirm
 spec:
   allowScheduling: true
   evictionRequested: false
@@ -54,6 +56,7 @@ metadata:
   namespace: longhorn-system
   annotations:
     argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-options: Prune=confirm,Delete=confirm
 spec:
   allowScheduling: true
   evictionRequested: false

@@ -1,7 +1,7 @@
 ---
 schema_version: 2
 as_of: "2026-08-19"
-compatibility_review_status: "phase-4-live-bootstrap-verified"
+compatibility_review_status: "phase-5-official-sources-reviewed-live-pending"
 
 platform:
   project: "verda-platform-takehome"
@@ -71,13 +71,103 @@ helm:
     Helm 4 is excluded from this compatibility path.
 
 helm_charts:
-  argocd: {version: "10.3.3", app_version: "v3.5.1", source: "https://argoproj.github.io/argo-helm/index.yaml"}
-  cert_manager: {version: "v1.21.1", app_version: "v1.21.1", source: "https://charts.jetstack.io/index.yaml"}
+  argocd:
+    version: "10.3.3"
+    app_version: "v3.5.1"
+    source: "https://argoproj.github.io/argo-helm/index.yaml"
+    archive_url: >-
+      https://github.com/argoproj/argo-helm/releases/download/argo-cd-10.3.3/argo-cd-10.3.3.tgz
+    archive_sha256: "ce254920357b323aad981e79ab8b1879c33835ef8efd4a1c91743f75e61d8007"
+    kube_version_constraint: ">=1.25.0-0"
+    compatibility_source: >-
+      https://argo-cd.readthedocs.io/en/stable/operator-manual/installation/
+    selection_status: "phase-5-source-reviewed-live-pending"
+    images:
+      argocd:
+        reference: quay.io/argoproj/argocd:v3.5.1
+        digest: sha256:0deb1a1c917629b960ead995ae3b6069450a866992676599658687ef9a641ee8
+      redis:
+        reference: docker.io/library/redis:8.6.4-alpine
+        digest: sha256:2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763
+  cert_manager:
+    version: "v1.21.1"
+    app_version: "v1.21.1"
+    source: "https://charts.jetstack.io/index.yaml"
+    archive_url: "https://charts.jetstack.io/charts/cert-manager-v1.21.1.tgz"
+    archive_sha256: "c27101f3f3e2349fb4a9e704316105bf7b52ad73b8c8257d3498ef7f2f6a4adc"
+    kube_version_constraint: ">=1.22.0-0"
+    compatibility_source: "https://cert-manager.io/docs/releases/"
+    selection_status: "phase-5-source-reviewed-live-pending"
+    images:
+      controller:
+        repository: quay.io/jetstack/cert-manager-controller
+        digest: sha256:416a2d76870d996460e62bd7f521bf14fa017be9e3e904aab92163a331fcb61a
+      webhook:
+        repository: quay.io/jetstack/cert-manager-webhook
+        digest: sha256:d8b3961b51c8c7320633f8208dc46bf88aa13804d0f7cbe48a096b2c523cee42
+      cainjector:
+        repository: quay.io/jetstack/cert-manager-cainjector
+        digest: sha256:ccf6b919ec0500745a47a910118f834f9636d0aac1ff221245cd2557ed8c7c98
+      startupapicheck:
+        repository: quay.io/jetstack/cert-manager-startupapicheck
+        digest: sha256:d8ab6416e6e7303a86fa0a8daa82c94a8001f21c9d78eb2e7db20534e5d07ae8
+      acmesolver:
+        repository: quay.io/jetstack/cert-manager-acmesolver
+        digest: sha256:dbc7cc1354f603918e7c5af7f55a0a620537394452c93a565bde75c6f48e8837
   rancher:
     version: "2.14.3"
     app_version: "v2.14.3"
     source: "https://releases.rancher.com/server-charts/stable/index.yaml"
-  longhorn: {version: "1.12.1", app_version: "v1.12.1", source: "https://charts.longhorn.io/index.yaml"}
+  longhorn:
+    version: "1.12.1"
+    app_version: "v1.12.1"
+    source: "https://charts.longhorn.io/index.yaml"
+    archive_url: >-
+      https://github.com/longhorn/charts/releases/download/longhorn-1.12.1/longhorn-1.12.1.tgz
+    archive_sha256: "d70764e2d6cce673482da4d91da5b44a9791cda842c1914f77e7806ad1cd94bb"
+    kube_version_constraint: ">=1.25.0-0"
+    compatibility_source: "https://longhorn.io/docs/1.12.0/best-practices/"
+    selection_status: "phase-5-source-reviewed-live-pending"
+    images:
+      engine:
+        reference: longhornio/longhorn-engine:v1.12.1
+        digest: sha256:9b1b720b56df6612c9589cbc156acbca6419fa61de818d05db7226b0722f2868
+      manager:
+        reference: longhornio/longhorn-manager:v1.12.1
+        digest: sha256:83b79f57043fe1405e68bc0d4c7987accbc6bb512def3e0db12b31966c070801
+      ui:
+        reference: longhornio/longhorn-ui:v1.12.1
+        digest: sha256:03a3ce6673df6e948c261fe978a695adaa8fb190d68bfe5c358af8ee3d3fbef5
+      instance_manager:
+        reference: longhornio/longhorn-instance-manager:v1.12.1
+        digest: sha256:b255f3279dd9d830ea153e9369928646dee519fd853036388926dddb5c66094b
+      share_manager:
+        reference: longhornio/longhorn-share-manager:v1.12.1
+        digest: sha256:efaf47aeb4e8615e312f0880df860bf2e5b9fa53006fe075f057c6dd4089f47d
+      backing_image_manager:
+        reference: longhornio/backing-image-manager:v1.12.1
+        digest: sha256:dfb9452e4190fb80e39c7976a0036ac0ca314c05328b67952f8c165cbb4dabf3
+      support_bundle_kit:
+        reference: longhornio/support-bundle-kit:v0.0.92
+        digest: sha256:02baa824d9a4174747ab9db2635ae000b1198d2d5ed3a4c69caf28724224e783
+      csi_attacher:
+        reference: longhornio/csi-attacher:v4.12.0
+        digest: sha256:a814aa4784197116983ea13e376fc691e000a390de9d0b9fca2bc4a2fb7c4a1f
+      csi_provisioner:
+        reference: longhornio/csi-provisioner:v5.3.0
+        digest: sha256:1bbb7b11d8087130e722e3249f364d0ab49ee3545e847c2f299e87b7e1ce5c4f
+      csi_node_driver_registrar:
+        reference: longhornio/csi-node-driver-registrar:v2.17.0
+        digest: sha256:29f7cfd519008fe8f8dff5e79db43f70d65c43a89c08f1bafbb199ca90df79f0
+      csi_resizer:
+        reference: longhornio/csi-resizer:v2.2.1
+        digest: sha256:63d0aef25114d4a682b25afa6d9623a3cfcc19aca910269124408476bbe2c6fd
+      csi_snapshotter:
+        reference: longhornio/csi-snapshotter:v8.6.0
+        digest: sha256:2bca9ac55170efa61dc50e5cc8d9550373db2e3e5161d82d3fdaac5c25150360
+      liveness_probe:
+        reference: longhornio/livenessprobe:v2.19.0
+        digest: sha256:d0cb76b565ba9d36da0dc2b38e2b6a49a0ae4fe067b03086110682f32c600318
   harbor:
     version: "1.19.2"
     app_version: "2.15.2"
@@ -131,7 +221,7 @@ tool_delivery:
   validation_network: "none"
 
 future_phase_clis:
-  argocd: {version: null, status: "not-required-before-phase-5"}
+  argocd: {version: null, status: "not-used-by-phase-5-bootstrap-or-verification"}
   rancher: {version: null, status: "not-selected-no-rancher-cli-architecture-decision"}
   cilium:
     version: "v0.19.7"

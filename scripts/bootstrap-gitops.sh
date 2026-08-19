@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+set +x
 
 umask 077
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repo_root=$(cd -- "${script_dir}/.." && pwd -P)
 # shellcheck source=bootstrap/argocd/runtime-lib.sh
+# Resolved from the validated repository root.
+# shellcheck disable=SC1091
 source "${repo_root}/bootstrap/argocd/runtime-lib.sh"
 
 runtime_dir=''
@@ -24,6 +27,90 @@ cleanup() {
 }
 trap cleanup EXIT
 
+assert_token_output_target() {
+  local path=$1
+  local label=$2
+  local parent parent_mode parent_owner target_mode target_owner
+
+  [[ "${path}" == /* ]] || phase5_fail "${label} must be an absolute external path."
+  phase5_assert_outside_repo "${repo_root}" "${path}" "${label}"
+  parent=$(dirname -- "${path}")
+  [[ -d "${parent}" && ! -L "${parent}" ]] ||
+    phase5_fail "${label} parent must be an existing, non-symlink directory."
+  parent_mode=$(stat -c '%a' -- "${parent}")
+  parent_owner=$(stat -c '%u' -- "${parent}")
+  [[ "${parent_owner}" == "$(id -u)" ]] ||
+    phase5_fail "${label} parent must be owned by the current user."
+  (( (8#${parent_mode} & 022) == 0 )) ||
+    phase5_fail "${label} parent must not be writable by group or other users."
+
+  if [[ -e "${path}" || -L "${path}" ]]; then
+    phase5_require_regular_file "${path}" "${label}"
+    target_mode=$(stat -c '%a' -- "${path}")
+    target_owner=$(stat -c '%u' -- "${path}")
+    [[ "${target_mode}" == '600' && "${target_owner}" == "$(id -u)" ]] ||
+      phase5_fail "${label} must be owned by the current user with mode 0600."
+  fi
+}
+
+atomic_write_token() {
+  local path=$1
+  local token=$2
+
+  if ! printf '%s' "${token}" | python3 -c '
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import tempfile
+
+target = Path(sys.argv[1])
+token = sys.stdin.read()
+if not (32 <= len(token) <= 16384):
+    raise SystemExit(1)
+if re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", token) is None:
+    raise SystemExit(1)
+
+descriptor = -1
+temporary = ""
+try:
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{target.name}.tmp.", dir=target.parent
+    )
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as stream:
+        descriptor = -1
+        stream.write(token)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, target)
+    temporary = ""
+    directory = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+finally:
+    if descriptor >= 0:
+        os.close(descriptor)
+    if temporary:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+metadata = target.lstat()
+if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+    raise SystemExit(1)
+if metadata.st_uid != os.getuid():
+    raise SystemExit(1)
+' "${path}" 2>/dev/null; then
+    phase5_fail 'A protected Argo CD session-token file could not be written atomically.'
+  fi
+}
+
 phase5_require_command kubectl
 phase5_require_command python3
 phase5_require_command realpath
@@ -33,6 +120,47 @@ phase5_assert_cluster_runtime "${repo_root}"
 
 root_application="${repo_root}/bootstrap/argocd/root-application.yaml"
 phase5_require_regular_file "${root_application}" 'root Application manifest'
+
+admin_password_path=${ARGOCD_ADMIN_PASSWORD_FILE:-}
+[[ -n "${admin_password_path}" ]] ||
+  phase5_fail 'ARGOCD_ADMIN_PASSWORD_FILE is required for protected administrator rotation.'
+reviewer_password_path=${ARGOCD_REVIEWER_PASSWORD_FILE:-}
+[[ -n "${reviewer_password_path}" ]] ||
+  phase5_fail 'ARGOCD_REVIEWER_PASSWORD_FILE is required for the read-only reviewer account.'
+admin_token_path=${PHASE5_ARGOCD_ADMIN_TOKEN_FILE:-}
+[[ -n "${admin_token_path}" ]] ||
+  phase5_fail 'PHASE5_ARGOCD_ADMIN_TOKEN_FILE is required for the protected administrator session token.'
+reviewer_token_path=${PHASE5_ARGOCD_REVIEWER_TOKEN_FILE:-}
+[[ -n "${reviewer_token_path}" ]] ||
+  phase5_fail 'PHASE5_ARGOCD_REVIEWER_TOKEN_FILE is required for the protected reviewer session token.'
+
+for credential_path in "${admin_password_path}" "${reviewer_password_path}"; do
+  phase5_assert_outside_repo "${repo_root}" "${credential_path}" 'Argo CD password file'
+  credential_parent=$(dirname -- "${credential_path}")
+  [[ -d "${credential_parent}" ]] ||
+    phase5_fail 'External Argo CD password directories must already exist.'
+done
+assert_token_output_target "${admin_token_path}" 'PHASE5_ARGOCD_ADMIN_TOKEN_FILE'
+assert_token_output_target "${reviewer_token_path}" 'PHASE5_ARGOCD_REVIEWER_TOKEN_FILE'
+
+admin_password_real=$(realpath -m -- "${admin_password_path}")
+reviewer_password_real=$(realpath -m -- "${reviewer_password_path}")
+admin_token_real=$(realpath -m -- "${admin_token_path}")
+reviewer_token_real=$(realpath -m -- "${reviewer_token_path}")
+credential_paths=(
+  "${admin_password_real}"
+  "${reviewer_password_real}"
+  "${admin_token_real}"
+  "${reviewer_token_real}"
+)
+for ((left = 0; left < ${#credential_paths[@]}; left++)); do
+  for ((right = left + 1; right < ${#credential_paths[@]}; right++)); do
+    [[ "${credential_paths[left]}" != "${credential_paths[right]}" ]] ||
+      phase5_fail 'Argo CD password and token files must use four distinct external paths.'
+  done
+done
+unset credential_parent credential_path credential_paths
+unset admin_password_real reviewer_password_real admin_token_real reviewer_token_real
 
 root_wait_timeout=${ARGOCD_ROOT_WAIT_TIMEOUT:-15m}
 phase5_assert_timeout "${root_wait_timeout}"
@@ -50,12 +178,6 @@ kubectl_base=(
 
 "${repo_root}/bootstrap/argocd/install.sh"
 "${repo_root}/scripts/wait-for-argocd.sh"
-
-admin_password_path=${ARGOCD_ADMIN_PASSWORD_FILE:-}
-[[ -n "${admin_password_path}" ]] || phase5_fail 'ARGOCD_ADMIN_PASSWORD_FILE is required for protected administrator rotation.'
-phase5_assert_outside_repo "${repo_root}" "${admin_password_path}" 'ARGOCD_ADMIN_PASSWORD_FILE'
-admin_password_parent=$(dirname -- "${admin_password_path}")
-[[ -d "${admin_password_parent}" ]] || phase5_fail 'The external administrator-password directory must already exist.'
 
 initial_secret_exists='false'
 if "${kubectl_base[@]}" -n argocd get secret argocd-initial-admin-secret >/dev/null 2>&1; then
@@ -86,38 +208,66 @@ local_port=${ARGOCD_LOCAL_PORT:-18080}
 (( local_port >= 1024 && local_port <= 65535 )) || phase5_fail 'ARGOCD_LOCAL_PORT is outside the unprivileged TCP range.'
 
 "${kubectl_base[@]}" -n argocd port-forward --address 127.0.0.1 \
-  service/argocd-server "${local_port}:443" >"${runtime_dir}/port-forward.log" 2>&1 &
+  service/argocd-server "${local_port}:80" >"${runtime_dir}/port-forward.log" 2>&1 &
 port_forward_pid=$!
 for _ in $(seq 1 60); do
   if ! kill -0 "${port_forward_pid}" 2>/dev/null; then
     phase5_fail 'The protected Argo CD port-forward terminated unexpectedly.'
   fi
-  if curl --fail --silent --show-error --insecure \
-    "https://127.0.0.1:${local_port}/healthz" >/dev/null 2>&1; then
+  if curl --fail --silent --show-error \
+    "http://127.0.0.1:${local_port}/healthz" >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-curl --fail --silent --show-error --insecure \
-  "https://127.0.0.1:${local_port}/healthz" >/dev/null
+curl --fail --silent --show-error \
+  "http://127.0.0.1:${local_port}/healthz" >/dev/null
 
 create_session() {
-  local password=$1
+  local username=$1
+  local password=$2
   local response
   response=$(printf '%s' "${password}" | python3 -c '
 import json, sys
-json.dump({"username": "admin", "password": sys.stdin.read()}, sys.stdout)
-' | curl --fail --silent --show-error --insecure \
+json.dump({"username": sys.argv[1], "password": sys.stdin.read()}, sys.stdout)
+' "${username}" | curl --fail --silent --show-error \
     --header 'Content-Type: application/json' \
     --data-binary @- \
-    "https://127.0.0.1:${local_port}/api/v1/session")
+    "http://127.0.0.1:${local_port}/api/v1/session")
   printf '%s' "${response}" | python3 -c '
 import json, sys
 token = json.load(sys.stdin).get("token", "")
-if len(token) < 32:
+import re
+if not (32 <= len(token) <= 16384):
+    raise SystemExit("Argo CD did not return a valid session token")
+if re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", token) is None:
     raise SystemExit("Argo CD did not return a valid session token")
 sys.stdout.write(token)
 '
+}
+
+verify_session() {
+  local username=$1
+  local token=$2
+  local header_path response
+  header_path="${runtime_dir}/${username}.verification.header"
+  printf 'Authorization: Bearer %s\n' "${token}" >"${header_path}"
+  chmod 600 -- "${header_path}"
+  if ! response=$(curl --fail --silent --show-error \
+    --header "@${header_path}" \
+    "http://127.0.0.1:${local_port}/api/v1/session/userinfo" 2>/dev/null); then
+    phase5_fail 'A fresh Argo CD session token could not be verified.'
+  fi
+  if ! printf '%s' "${response}" | python3 -c '
+import json, sys
+expected = sys.argv[1]
+payload = json.load(sys.stdin)
+if payload.get("loggedIn") is not True or payload.get("username") != expected:
+    raise SystemExit(1)
+' "${username}" >/dev/null 2>&1; then
+    phase5_fail 'A fresh Argo CD session token has the wrong authenticated identity.'
+  fi
+  rm -f -- "${header_path}"
 }
 
 if [[ "${initial_secret_exists}" == 'true' ]]; then
@@ -129,7 +279,7 @@ if not password:
     raise SystemExit("the Argo CD initial administrator credential is empty")
 sys.stdout.write(password)
 ')
-  session_token=$(create_session "${initial_password}")
+  session_token=$(create_session admin "${initial_password}")
   printf 'Authorization: Bearer %s\n' "${session_token}" >"${runtime_dir}/authorization.header"
   printf '%s\0%s' "${initial_password}" "${desired_password}" | python3 -c '
 import json, sys
@@ -141,20 +291,59 @@ json.dump({
     "currentPassword": parts[0].decode("utf-8"),
     "newPassword": parts[1].decode("utf-8"),
 }, sys.stdout)
-' | curl --fail --silent --show-error --insecure \
+' | curl --fail --silent --show-error \
     --request PUT \
     --header 'Content-Type: application/json' \
     --header "@${runtime_dir}/authorization.header" \
     --data-binary @- \
-    "https://127.0.0.1:${local_port}/api/v1/account/password" >/dev/null
+    "http://127.0.0.1:${local_port}/api/v1/account/password" >/dev/null
   unset initial_password session_token
   "${kubectl_base[@]}" -n argocd delete secret argocd-initial-admin-secret \
     --ignore-not-found=true --wait=true >/dev/null
 fi
 
-create_session "${desired_password}" >/dev/null
-unset desired_password
+admin_session_token=$(create_session admin "${desired_password}")
+verify_session admin "${admin_session_token}"
+
+if [[ ! -e "${reviewer_password_path}" ]]; then
+  generated_reviewer_password=$(openssl rand -base64 36 | tr -d '\r\n')
+  printf '%s\n' "${generated_reviewer_password}" >"${reviewer_password_path}"
+  chmod 600 -- "${reviewer_password_path}"
+  unset generated_reviewer_password
+fi
+phase5_require_regular_file "${reviewer_password_path}" 'ARGOCD_REVIEWER_PASSWORD_FILE'
+reviewer_password_mode=$(stat -c '%a' -- "${reviewer_password_path}")
+(( (8#${reviewer_password_mode} & 077) == 0 )) ||
+  phase5_fail 'ARGOCD_REVIEWER_PASSWORD_FILE must not be accessible by group or other users.'
+IFS= read -r reviewer_password <"${reviewer_password_path}"
+[[ "${reviewer_password}" =~ ^[A-Za-z0-9+/=_-]{32,128}$ ]] ||
+  phase5_fail 'The external Argo CD reviewer credential does not satisfy the protected format contract.'
+
+printf 'Authorization: Bearer %s\n' "${admin_session_token}" >"${runtime_dir}/authorization.header"
+printf '%s\0%s' "${desired_password}" "${reviewer_password}" | python3 -c '
+import json, sys
+parts = sys.stdin.buffer.read().split(b"\0")
+if len(parts) != 2:
+    raise SystemExit("invalid protected reviewer-password payload")
+json.dump({
+    "name": "reviewer",
+    "currentPassword": parts[0].decode("utf-8"),
+    "newPassword": parts[1].decode("utf-8"),
+}, sys.stdout)
+' | curl --fail --silent --show-error \
+    --request PUT \
+    --header 'Content-Type: application/json' \
+    --header "@${runtime_dir}/authorization.header" \
+    --data-binary @- \
+    "http://127.0.0.1:${local_port}/api/v1/account/password" >/dev/null
+reviewer_session_token=$(create_session reviewer "${reviewer_password}")
+verify_session reviewer "${reviewer_session_token}"
+atomic_write_token "${admin_token_path}" "${admin_session_token}"
+atomic_write_token "${reviewer_token_path}" "${reviewer_session_token}"
+unset admin_session_token reviewer_session_token desired_password reviewer_password
 printf '[PASS] Argo CD initial administrator credential rotated; plaintext retained only in the protected external file.\n'
+printf '[PASS] Argo CD reviewer credential verified; plaintext retained only in the protected external file.\n'
+printf '[PASS] Fresh administrator and reviewer session tokens were verified and written atomically to protected external files.\n'
 
 root_inventory=${ARGOCD_ROOT_INVENTORY_OUTPUT:-${repo_root}/.local/reports/phase5/root-application-inventory.txt}
 phase5_assert_report_path "${repo_root}" "${root_inventory}"

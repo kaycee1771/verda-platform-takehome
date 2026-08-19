@@ -1,5 +1,5 @@
 ---
-hostname: ""
-acmeEmail: ""
+hostname: argocd.95-133-252-214.sslip.io
+acmeEmail: kelechi.okpala13@yahoo.com
 ingressClassName: traefik
 certificateSecretName: argocd-staging-tls

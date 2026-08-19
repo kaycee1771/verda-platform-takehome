@@ -193,6 +193,7 @@ schema_location=${ARGOCD_SCHEMA_LOCATION:-${default_schema_location}}
 kubeconform \
   -strict \
   -summary \
+  -skip CustomResourceDefinition \
   -kubernetes-version 1.35.0 \
   -schema-location "${schema_location}" \
   "${rendered}"

@@ -1,11 +1,14 @@
 ---
 # Day-zero only. Day-one platform services and exposure are reconciled from Git.
 global:
+  image:
+    repository: quay.io/argoproj/argocd
+    tag: v3.5.1@sha256:0deb1a1c917629b960ead995ae3b6069450a866992676599658687ef9a641ee8
   logging:
     format: json
     level: info
   networkPolicy:
-    create: true
+    create: false
     defaultDenyIngress: false
 
 crds:
@@ -32,7 +35,9 @@ configs:
       end
       return health
   params:
-    server.insecure: false
+    # TLS terminates at RKE2-owned Traefik; access to this cleartext backend is
+    # constrained by the exact NetworkPolicy below.
+    server.insecure: true
   rbac:
     policy.default: role:authenticated
     policy.matchMode: glob
@@ -44,6 +49,10 @@ configs:
       p, role:reviewer, applications, sync, platform-bootstrap/*, deny
       p, role:reviewer, applications, action/*, platform-bootstrap/*, deny
       p, role:reviewer, logs, get, platform-bootstrap/*, allow
+      p, role:reviewer, applications, get, platform/*, allow
+      p, role:reviewer, applications, sync, platform/*, deny
+      p, role:reviewer, applications, action/*, platform/*, deny
+      p, role:reviewer, logs, get, platform/*, allow
 
 dex:
   enabled: false
@@ -96,6 +105,9 @@ notifications:
   enabled: false
 
 redis:
+  image:
+    repository: docker.io/library/redis
+    tag: 8.6.4-alpine@sha256:2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 256Mi}
@@ -130,3 +142,28 @@ extraObjects:
         - {group: argoproj.io, kind: AppProject}
       orphanedResources:
         warn: true
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: argocd-server-bootstrap-ingress
+      namespace: argocd
+      labels:
+        app.kubernetes.io/managed-by: Helm
+        platform.verda-demo.io/ownership: day-zero
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: argocd-server
+      policyTypes:
+        - Ingress
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: kube-system
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: rke2-traefik
+          ports:
+            - protocol: TCP
+              port: 8080
