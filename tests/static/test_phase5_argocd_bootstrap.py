@@ -220,6 +220,10 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
         self.assertIn('service/argocd-server "${local_port}:80"', script)
         self.assertIn('http://127.0.0.1:${local_port}/healthz', script)
         self.assertNotIn("https://127.0.0.1:${local_port}", script)
+        self.assertEqual(script.count("openssl rand -base64 24"), 2)
+        self.assertEqual(script.count("[A-Za-z0-9+/=_-]{32}"), 2)
+        self.assertNotIn("openssl rand -base64 36", script)
+        self.assertNotIn("{32,128}", script)
         for forbidden in (
             "--password",
             "--current-password",
