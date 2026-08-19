@@ -339,7 +339,16 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
         inventory = (
             ROOT / ".local" / "reports" / "phase5" / f"argocd-crd-test-{root.name}.txt"
         )
-        self.addCleanup(lambda: inventory.unlink(missing_ok=True))
+
+        def cleanup_inventory() -> None:
+            inventory.unlink(missing_ok=True)
+            try:
+                inventory.parent.rmdir()
+            except OSError:
+                # Preserve a pre-existing directory or unrelated reports.
+                pass
+
+        self.addCleanup(cleanup_inventory)
         environment = os.environ.copy()
         environment.update(
             {
