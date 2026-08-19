@@ -129,6 +129,8 @@ class Phase5LonghornStorageTest(unittest.TestCase):
         self.assertIn("PHASE5_CONFIRM_STORAGE_TEST", script)
         self.assertIn("longhorn-critical-reschedule-and-cleanup", script)
         self.assertIn("^p5st-[0-9]{8}t[0-9]{6}z-[a-f0-9]{8}$", script)
+        self.assertIn("date -u +%Y%m%dt%H%M%Sz", script)
+        self.assertNotIn("date -u +%Y%m%dt%H%M%sz", script)
         self.assertIn('test_namespace="longhorn-test-${run_id}"', script)
         self.assertIn("platform.verda-demo.io/run-id", script)
         self.assertIn("cleanup_ownership", CONTRACT.read_text(encoding="utf-8"))

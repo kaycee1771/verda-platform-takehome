@@ -155,8 +155,8 @@ def validate_longhorn_nodes(
     node_list: Any, mount_capacities: dict[str, dict[str, int]]
 ) -> dict[str, int]:
     document = _mapping(node_list, "Longhorn NodeList")
-    if document.get("apiVersion") != "longhorn.io/v1beta2" or document.get("kind") != "NodeList":
-        raise CapacityContractError("Longhorn capture must be a v1beta2 NodeList")
+    if document.get("apiVersion") != "v1" or document.get("kind") != "List":
+        raise CapacityContractError("Longhorn capture must be a Kubernetes v1 List")
     items = [
         _mapping(item, "Longhorn node")
         for item in _list(document.get("items"), "Longhorn nodes")
@@ -169,6 +169,10 @@ def validate_longhorn_nodes(
     scheduled_values: list[int] = []
     for item, metadata in zip(items, metadata_rows, strict=True):
         node = metadata["name"]
+        if item.get("apiVersion") != "longhorn.io/v1beta2" or item.get("kind") != "Node":
+            raise CapacityContractError(
+                f"Longhorn item {node} must be a longhorn.io/v1beta2 Node"
+            )
         if metadata.get("namespace") != "longhorn-system":
             raise CapacityContractError(f"Longhorn node {node} is outside longhorn-system")
         spec = _mapping(item.get("spec"), f"{node} spec")
