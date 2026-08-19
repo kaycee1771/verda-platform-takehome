@@ -486,7 +486,12 @@ class Phase5RuntimeVerifierContractTests(unittest.TestCase):
         self.assertIn("readonly argocd_admin_subject='admin'", source)
         self.assertIn("readonly argocd_reviewer_subject='reviewer'", source)
         self.assertIn('--header "@${authorization_file}"', source)
-        self.assertIn('/api/v1/account/can-i/applications/${action}/%2A', source)
+        self.assertIn(
+            '/api/v1/account/can-i/applications/${action}/${object}', source
+        )
+        self.assertIn("'%2A%2F%2A'", source)
+        self.assertIn("'platform%2F%2A'", source)
+        self.assertIn("'platform-bootstrap%2F%2A'", source)
         self.assertIn('-connect "${external_endpoints[index]}:443"', source)
         self.assertIn('curl_resolve_files+=("${resolve_file}")', source)
         self.assertIn("[[ \"${mode}\" == '600'", source)
