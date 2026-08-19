@@ -405,9 +405,14 @@ require_api_permission() {
   local authorization_file=$1
   local expected=$2
   local action=$3
+  local object=$4
   local response value
+  case "${object}" in
+    '%2A%2F%2A'|'platform%2F%2A'|'platform-bootstrap%2F%2A') ;;
+    *) fail 'argocd-rbac' ;;
+  esac
   if ! response=$(argocd_api_capture "${authorization_file}" \
-    "https://${PHASE5_PUBLIC_HOST}/api/v1/account/can-i/applications/${action}/%2A"); then
+    "https://${PHASE5_PUBLIC_HOST}/api/v1/account/can-i/applications/${action}/${object}"); then
     fail 'argocd-rbac'
   fi
   if ! value=$(
@@ -489,12 +494,15 @@ assert {item.get("metadata", {}).get("name") for item in items} == expected
   fail 'argocd-reviewer-read'
 fi
 
-require_api_permission "${admin_header}" yes get
-require_api_permission "${admin_header}" yes sync
-require_api_permission "${reviewer_header}" yes get
-require_api_permission "${reviewer_header}" no sync
-require_api_permission "${reviewer_header}" no action
-require_api_permission "${reviewer_header}" no override
+require_api_permission "${admin_header}" yes get '%2A%2F%2A'
+require_api_permission "${admin_header}" yes sync '%2A%2F%2A'
+for reviewer_scope in 'platform%2F%2A' 'platform-bootstrap%2F%2A'; do
+  require_api_permission "${reviewer_header}" yes get "${reviewer_scope}"
+  require_api_permission "${reviewer_header}" no sync "${reviewer_scope}"
+  require_api_permission "${reviewer_header}" no action "${reviewer_scope}"
+  require_api_permission "${reviewer_header}" no override "${reviewer_scope}"
+done
+unset reviewer_scope
 unset admin_info reviewer_info reviewer_apps
 printf '[PASS] argocd-admin=authenticated reviewer=authenticated reviewer-read=true reviewer-sync=false reviewer-action=false\n'
 
