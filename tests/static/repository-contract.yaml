@@ -268,6 +268,13 @@ required_files:
   - evidence/phase-5/versions-and-compatibility.md
   - evidence/phase-5/preflight-cluster-health.md
   - evidence/phase-5/capacity-before-after.md
+  - evidence/phase-5/gitops-bootstrap.md
+  - evidence/phase-5/longhorn-reschedule.md
+  - evidence/phase-5/tls-access-and-boundary.md
+  - evidence/phase-5/repository-validation.md
+  - evidence/phase-5/hosted-ci.md
+  - evidence/phase-5/exit-gates.md
+  - evidence/phase-5/completion-report.md
   - applications/README.md
   - config/README.md
   - environments/README.md
@@ -470,5 +477,6 @@ required_files:
   - tests/static/test_phase5_longhorn_contract.py
   - tests/static/test_phase5_longhorn_storage_test.py
   - tests/static/test_phase5_runtime_verifier_contract.py
+  - tests/static/test_phase5_evidence_safety.py
   - tooling/README.md
   - tooling/quality/Dockerfile

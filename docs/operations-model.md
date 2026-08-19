@@ -59,5 +59,20 @@ Manual console work is allowed only for credentials/billing, a provider capabili
   and credential are an explicit provider-gap exception with separate teardown obligations.
 - Failure drills, stability, active-cluster idempotency, and support-bundle proof passed during the
   definitive bootstrap. Independent current-tree verification, final local quality, PR validation,
-  and protected-main hosted CI passed. Phase 4 is closed; Argo CD and every Phase 5+ owner remain
-  inactive until Phase 5 convergence starts.
+  and protected-main hosted CI passed. Phase 4 is closed.
+
+## Phase 5 GitOps ownership boundary
+
+- The pinned bootstrap installed only Argo CD and applied one root Application. Its replay reached
+  Helm revision 5 without ownership conflict and refreshed protected external account sessions.
+- The root owns an exact eight-child Application set. All nine Applications are Healthy and Synced;
+  no manual Helm release owns cert-manager, Longhorn, certificates, or ingress desired state.
+- Git admitted the production certificate and public Argo ingress only after staging issuance
+  passed. Argo's external surface is trusted TLS plus authenticated access; plain HTTP is limited to
+  ACME solver behavior and otherwise returns 404.
+- Longhorn owns only the dedicated data disks. The critical three-replica checksum fixture survived
+  rescheduling, and the test cleanup left no temporary workload or volume artifact.
+- Protected direct kubeconfig access remains independent of Argo ingress and future Rancher. All
+  kubeconfigs, account sessions, endpoints, and raw live reports remain outside Git.
+- Phase 5 is not closed until hosted closeout CI passes and merges. Phase 6 and
+  every broader Stage A component remain inactive until that gate is recorded.

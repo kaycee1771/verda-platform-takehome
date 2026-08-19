@@ -7,6 +7,14 @@ are under active development.
 
 ### Added
 
+- Phase 5 pinned Argo CD bootstrap, exact root/child GitOps ownership, cert-manager staging-to-
+  production TLS path, authenticated public Argo boundary, three-node Longhorn desired state, and
+  protected runtime verification.
+- Definitive live Phase 5 proof for idempotent bootstrap, 9/9 Healthy/Synced Applications, six ready
+  cert-manager replicas, three-address TLS, least-privilege Argo access, critical-volume reschedule,
+  post-install capacity, and the exact external port boundary.
+- Sanitized Phase 5 closeout evidence with local CI PASS and an explicit hosted CI placeholder; no raw live
+  payload, address, credential, kubeconfig, certificate, checksum, or storage identity is tracked.
 - Phase 4 management-RKE2 role and guarded orchestrator with exact artifact verification,
   preparation/start separation, external DPAPI token recovery, parity-controlled configuration,
   serial joins, CIS profile/sysctls/audit, Cilium, Traefik, S3 snapshot, live verification, failure
@@ -48,6 +56,10 @@ are under active development.
 
 ### Changed
 
+- Activated Argo CD as the day-one owner after its minimal imperative bootstrap and kept RKE2-owned
+  Traefik as the single ingress controller.
+- Recorded positive but narrow Phase 5 one-node-loss CPU headroom and retained Phase 6 as fail closed
+  until exact requests, surge capacity, replica counts, and PVCs fit.
 - Bounded the complete unfiltered Cilium functional suite to concurrency one with Hubble and flow
   validation disabled, retained a separate Hubble-enabled strict flow canary, scoped exact
   per-agent/source lost-event deltas to that canary window, raised the pinned Hubble event buffer by
@@ -99,6 +111,9 @@ are under active development.
 
 ### Security
 
+- Denied anonymous Argo access, proved reviewer read without sync/action, kept all account sessions
+  in protected external files, and verified TLS plus the four-allowed/28-denied port-class boundary
+  through every management address.
 - Stopped Phase 4 before host mutation when the prior exact administrator `/32` denied all three
   nodes; no broad SSH rule, public supervisor port, console power action, or RKE2 start was used.
 - Kept the RKE2 token, kubeconfigs, S3 values, and recovery material outside Git by design; complete

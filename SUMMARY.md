@@ -10,7 +10,10 @@ security, network, and storage boundary. Phase 4 has now completed its definitiv
 the three-node RKE2 management cluster, failure drills, recovery points, hardening checks, support
 bundle, active-cluster idempotency, and stability window all passed. An independent verification
 rerun of the corrected current tree, final current-tree local quality, PR validation, and
-protected-main hosted CI also passed. Phase 4 is closed.
+protected-main hosted CI also passed. Phase 4 is closed. Phase 5 has now passed its protected live
+bootstrap, GitOps ownership, Longhorn resilience, certificate, authenticated ingress, direct-access,
+and external-boundary gates. Its final current-tree local CI passes; closeout remains partial only
+until hosted CI is recorded and merged.
 
 Current verified capabilities:
 
@@ -40,7 +43,17 @@ Current verified capabilities:
   public-port proof, one-node and primary-endpoint drills, and sanitized diagnostic collection.
 - A 270-second post-drill stability window and active-cluster convergence replay with no changes,
   failures, or unreachable hosts.
+- A pinned, idempotent Argo CD bootstrap whose one root Application owns an exact eight-child
+  desired-state set; all nine Applications are Healthy and Synced.
+- cert-manager with six ready controller replicas, staging-first and production certificate paths,
+  and consistent trusted TLS served through all three protected ingress addresses.
+- Three-node Longhorn on dedicated data disks, with three healthy critical replicas and a verified
+  4 MiB checksum fixture preserved through cross-node rescheduling and cleanup.
+- Authenticated Argo CD access with anonymous denial, a verified administrator, and a reviewer that
+  can read but cannot sync or invoke actions; public HTTP remains ACME-only while HTTPS is healthy.
+- Positive post-install one-node-loss scheduling headroom and an exact public boundary of four
+  allowed and 28 denied TCP port classes on each of three nodes.
 
-Phases 0–4 are complete. GitOps and Phase 5 platform services remain
-unimplemented until the now-authorized Phase 5 work converges. Stage B, the application, and Phase
-6+ functionality remain fail closed behind their owning gates.
+Phases 0–4 are complete. Phase 5 live gates and final local CI pass, but Phase 5 remains PARTIAL
+until hosted closeout CI passes and merges. Stage B, the application, and Phase 6+
+functionality remain fail closed behind their owning gates.

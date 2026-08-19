@@ -1,7 +1,7 @@
 # Phase 5 Capacity Before and After
 
-Status: PARTIAL — pre-change baseline PASS; post-change and Phase 6 admission are
-pending.
+Status: PASS for Phase 5 — pre-change and post-change reducers retain positive
+one-node-loss scheduling and storage headroom. Phase 6 admission is still pending.
 
 The identity-free pre-change reducer produced:
 
@@ -18,7 +18,19 @@ The identity-free pre-change reducer produced:
 | Dedicated data capacity available | 293.57 GiB |
 | Root capacity available | 168.83 GiB |
 
-Longhorn may use only the dedicated filesystems. A post-install sample using the
-same scheduling-aware reducer must record platform overhead, Longhorn reserved and
-available capacity, root-disk exclusion, and one-node-loss margin. Phase 6 remains
-blocked until its exact rendered requests and PVC plan fit that measured result.
+The definitive post-install reducer produced:
+
+| Scalar | Value |
+|---|---:|
+| Nodes Ready/schedulable | 3/3 |
+| Requested CPU | 5.935 cores |
+| One-node-loss CPU request headroom | 0.065 cores |
+| Requested memory | 9.428 GiB |
+| One-node-loss memory request headroom | 16.830 GiB |
+| Longhorn nodes / schedulable dedicated disks | 3/3 |
+| Longhorn available capacity | 314887372800 bytes |
+| Worst-two-node available capacity | 209924915200 bytes |
+
+Longhorn uses only the dedicated filesystems; root disks remain excluded. The CPU
+margin is positive but narrow. Phase 6 remains blocked until its exact rendered
+requests, surge allowance, replica counts, and PVC plan fit this measured result.

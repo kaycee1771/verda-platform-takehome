@@ -3,13 +3,16 @@
 - **Status:** Proposed
 - **Date:** 2026-08-16
 - **Owners:** Storage architecture
-- **Blocking gates:** Phase 2 attachment lifecycle evidence and GATE-008 before Phase 5
+- **Blocking gates:** Phase 2 attachment lifecycle and GATE-008 closed; Phase 13 backup/restore remains
 
 ## Context
 
 Harbor and other platform services require persistent storage and node-loss recovery. Provider 1.1.2 supports NVMe volume and attachment resources. The current console confirms single-instance NVMe volumes in FIN-01/02/03 at $0.20/GiB-month. Stage A selects one 100 GiB data volume plus an 80 GiB root volume per node.
 
-Current official docs describe S3-compatible object storage with separate credentials, default endpoint `https://objects.fin-03.verda.storage`, and region `us-east-1`. However, this project's Credentials page does not expose Object Storage Access Keys and local S3 status is unconfigured. Verda object-storage entitlement is therefore not assumed.
+Current official docs describe S3-compatible object storage with separate credentials. The project
+initially did not expose Object Storage Access Keys, so entitlement was not assumed. Support later
+enabled it, and Phase 4 proved the manual provider-gap path for RKE2 snapshots. Provider 1.1.2 still
+cannot own bucket or credential lifecycle.
 
 ## Decision
 
@@ -35,7 +38,8 @@ Use a genuinely off-cluster S3-compatible target for recovery data and Loki obje
 - Longhorn requires narrow privileged/system exceptions.
 - Replication and snapshots are not application-consistent off-cluster backups.
 - The selected lean 300 GiB raw Stage A data tier provides roughly 100 GiB critical usable capacity before overhead; retention and the 60% cut line are operational requirements.
-- Off-cluster storage configuration cannot begin until GATE-008 closes.
+- Each later application's off-cluster use requires its own compatibility, credential-scope,
+  lifecycle, restore, and cost proof even though GATE-008 is closed.
 
 ## Validation evidence
 
@@ -45,8 +49,11 @@ Phase 2 proved protected attachment lifecycle and compute replacement without da
 Phase 3 then proved exact stable attachment identity, complete zero-media inspection before first
 format, ext4 creation only when absent, UUID-based `/var/lib/longhorn` persistence, ownership/free
 space, iSCSI/NFS/crypt prerequisites, idempotency, and survival across all three serial reboots.
-ADR status remains Proposed because Longhorn, replica failure/rebuild, off-cluster S3, backup, and
-restore are Phase 5/13 work and have not been implemented.
+Phase 5 installed Longhorn on exactly three dedicated disks and proved a three-replica critical
+fixture across pod rescheduling: the 4 MiB checksum and storage identities were preserved, all
+three replicas were healthy, and temporary resources were absent after cleanup. ADR status remains
+Proposed because Longhorn off-cluster backup and application-consistent restore remain Phase 13
+work; replication alone is not accepted as recovery-domain proof.
 
 ## Production evolution
 

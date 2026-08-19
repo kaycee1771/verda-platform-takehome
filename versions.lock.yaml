@@ -1,7 +1,7 @@
 ---
 schema_version: 2
 as_of: "2026-08-19"
-compatibility_review_status: "phase-5-official-sources-reviewed-live-pending"
+compatibility_review_status: "phase-5-live-verified"
 
 platform:
   project: "verda-platform-takehome"
@@ -81,7 +81,7 @@ helm_charts:
     kube_version_constraint: ">=1.25.0-0"
     compatibility_source: >-
       https://argo-cd.readthedocs.io/en/stable/operator-manual/installation/
-    selection_status: "phase-5-source-reviewed-live-pending"
+    selection_status: "phase-5-live-verified"
     images:
       argocd:
         reference: quay.io/argoproj/argocd:v3.5.1
@@ -97,7 +97,7 @@ helm_charts:
     archive_sha256: "c27101f3f3e2349fb4a9e704316105bf7b52ad73b8c8257d3498ef7f2f6a4adc"
     kube_version_constraint: ">=1.22.0-0"
     compatibility_source: "https://cert-manager.io/docs/releases/"
-    selection_status: "phase-5-source-reviewed-live-pending"
+    selection_status: "phase-5-live-verified"
     images:
       controller:
         repository: quay.io/jetstack/cert-manager-controller
@@ -127,7 +127,7 @@ helm_charts:
     archive_sha256: "d70764e2d6cce673482da4d91da5b44a9791cda842c1914f77e7806ad1cd94bb"
     kube_version_constraint: ">=1.25.0-0"
     compatibility_source: "https://longhorn.io/docs/1.12.0/best-practices/"
-    selection_status: "phase-5-source-reviewed-live-pending"
+    selection_status: "phase-5-live-verified"
     images:
       engine:
         reference: longhornio/longhorn-engine:v1.12.1

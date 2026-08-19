@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-16
 - **Owners:** GitOps architecture
-- **Blocking gates:** Exact Argo CD version remains pending Phase 1 lock review
+- **Blocking gates:** Phase 5 live and final local gates closed; hosted closeout CI remains
 
 ## Context
 
@@ -27,7 +27,15 @@ Bootstrap only a pinned Argo CD release and one root Application. Use restricted
 
 ## Validation evidence
 
-A clean cluster must converge from the two bootstrap actions; Application inventory must be Healthy/Synced; manual drift self-heals; bad desired state is visible; Git revert restores the prior digest.
+Phase 5 used the two-action boundary with Argo CD chart 10.3.3 / application v3.5.1. The idempotent
+replay reached Helm revision 5 and retained exactly one root Application. The root owns an exact
+eight-child set, and all nine Applications were Healthy and Synced. Git admitted the staging
+certificate, then production certificate, then authenticated TLS ingress in separate protected
+changes. The converged-ingress lifecycle verifier rejects extra, foreign, or mutated ingress
+resources while retaining the zero-ingress day-zero state.
+
+Application release drift, bad-digest rollback, and promotion reversal remain later-phase proofs;
+they are not inferred from the Phase 5 platform-bootstrap result.
 
 ## Production evolution
 

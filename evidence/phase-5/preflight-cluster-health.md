@@ -1,7 +1,7 @@
 # Phase 5 Preflight Cluster Health
 
-Status: PARTIAL — safe read-only cluster checks pass; remaining mutation
-prerequisites are explicit.
+Status: PASS — guarded preflight and independent direct-access checks completed
+before Phase 5 mutation.
 
 On 2026-08-19 the protected direct Kubernetes path reported exactly three Ready,
 schedulable nodes and 33 active scheduled pods. The preceding Phase 4 protected-main
@@ -18,12 +18,16 @@ Strict-host-key SSH read-only checks found on all three nodes:
 No endpoint, node identity, route, Secret, kubeconfig, or raw status payload is
 recorded here.
 
-Still required before the first Phase 5 write:
+The fail-closed controller also completed these prerequisites before acquiring the
+single-writer mutation lease:
 
-- exact integrated commit and offline quality PASS;
-- complete rendered manifest inventory and expected diff;
-- security/reliability approval;
-- cloud-authenticated Terraform zero-drift plan and current cost check;
-- fresh local and off-cluster etcd snapshot;
-- rollback inventory;
-- acquisition of the single-writer live-mutation lease.
+- exact protected source revision and offline implementation validation;
+- complete rendered desired-state inventory and bounded expected diff;
+- security and reliability review;
+- cloud resource, drift, and cost reconciliation;
+- current recovery points and rollback inventory;
+- exclusive mutation ownership.
+
+The protected mode-`0600` direct kubeconfig remained usable independently of
+Rancher and public Argo ingress. No kubeconfig, context name, node identity,
+address, raw status payload, or credential is included in this evidence.

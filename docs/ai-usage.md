@@ -283,3 +283,28 @@ Not yet performed. A later bounded review must record the Claude prompt, output,
 - **Current boundary:** Independent verification of the corrected current tree exited successfully
   with the sanitized Phase 4 completion marker. Final local quality, PR validation, and
   protected-main hosted CI passed. Phase 4 is complete; Phase 5 begins with its own preflight.
+
+## 2026-08-19 - Phase 5 GitOps, storage, TLS, and access boundary
+
+- **Human authorization:** The user authorized continuous Phases 5–17 subject to every phase's
+  fail-closed exit gates; Phase 6 cannot begin before Phase 5 closeout is merged.
+- **Assistant activity:** Codex implemented and reviewed the minimal pinned Argo CD bootstrap, exact
+  root/child desired-state topology, cert-manager staging and production flows, RKE2-owned Traefik
+  ingress, three-node Longhorn configuration, protected account bootstrap, capacity reducers,
+  storage reschedule drill, and sanitized runtime verifier.
+- **Corrections:** Review added an explicit Longhorn prerequisite wave, exact Application-set
+  equality, external protected session files, direct REST-based Argo RBAC verification, per-address
+  TLS/SNI checks, noexec-safe verifier mocks, one-node-loss resource accounting, critical-volume
+  cleanup assertions, and staging-first admission before production ingress.
+- **Delegation:** Parallel agents owned bounded repository areas and read-only review. The root agent
+  retained live mutation, credentials, sequencing, destructive authority, final runtime execution,
+  and phase-gate decisions.
+- **Live verification:** Protected `main` commit `adc0a071` passed bootstrap idempotency, exact GitOps
+  ownership, Longhorn checksum rescheduling, post-install capacity, three-address TLS, anonymous
+  denial, administrator/reviewer RBAC, HTTPS/ACME-only HTTP behavior, and the three-node external
+  port boundary.
+- **Evidence safety:** Curation used only sanitized aggregate scalars supplied by the guarded
+  verifiers. Raw logs, addresses, object identities, certificate bodies, kubeconfigs, account
+  sessions, and credentials were not opened or copied into Git.
+- **Current boundary:** All Phase 5 live and final local gates pass. Phase 5 remains PARTIAL until
+  hosted closeout CI passes and merges; Phase 6 remains fail closed until then.
