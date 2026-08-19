@@ -110,6 +110,7 @@ class Phase5ArgoBootstrapTests(unittest.TestCase):
             self.assertFalse(values[component]["metrics"]["serviceMonitor"]["enabled"])
             self.assertTrue(values[component]["resources"]["requests"])
             self.assertTrue(values[component]["resources"]["limits"])
+        self.assertEqual(values["repoServer"]["resources"]["requests"]["cpu"], "50m")
 
     def test_bootstrap_project_is_the_restricted_fixed_point(self) -> None:
         values = yaml.safe_load((BOOTSTRAP / "values.yaml").read_text(encoding="utf-8"))
