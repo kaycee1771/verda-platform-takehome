@@ -28,12 +28,12 @@ class Phase5GitOpsRootTests(unittest.TestCase):
                 "cert-manager-controller.yaml",
                 "cert-manager-staging.yaml",
                 "cert-manager-production.yaml",
+                "argocd-ingress.yaml",
                 "longhorn-prerequisites.yaml",
                 "longhorn-controller.yaml",
                 "longhorn-resources.yaml",
             ],
         )
-        self.assertFalse((GITOPS_ROOT / "argocd-ingress.yaml").exists())
 
     def test_project_fixed_point_precedes_children(self) -> None:
         bootstrap = load(GITOPS_ROOT / "platform-project.yaml")
@@ -65,6 +65,7 @@ class Phase5GitOpsRootTests(unittest.TestCase):
             "cert-manager-controller.yaml": ("cert-manager-controller", "-15", "cert-manager"),
             "cert-manager-staging.yaml": ("argocd-certificate-staging", "-12", "argocd"),
             "cert-manager-production.yaml": ("argocd-certificate-production", "-8", "argocd"),
+            "argocd-ingress.yaml": ("argocd-public-ingress", "-7", "argocd"),
             "longhorn-prerequisites.yaml": ("longhorn-prerequisites", "-11", "longhorn-system"),
             "longhorn-controller.yaml": ("longhorn-controller", "-10", "longhorn-system"),
             "longhorn-resources.yaml": ("longhorn-resources", "-9", "longhorn-system"),
@@ -182,7 +183,7 @@ class Phase5GitOpsRootTests(unittest.TestCase):
         self.assertEqual(production["acmeEmail"], staging["acmeEmail"])
         self.assertTrue(production["stagingIssuerVerified"])
         self.assertEqual(ingress["hostname"], staging["hostname"])
-        self.assertTrue(all(value is False for value in ingress["gates"].values()))
+        self.assertTrue(all(value is True for value in ingress["gates"].values()))
 
 
 if __name__ == "__main__":

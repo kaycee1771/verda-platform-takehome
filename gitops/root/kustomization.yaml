@@ -6,6 +6,7 @@ resources:
   - cert-manager-controller.yaml
   - cert-manager-staging.yaml
   - cert-manager-production.yaml
+  - argocd-ingress.yaml
   - longhorn-prerequisites.yaml
   - longhorn-controller.yaml
   - longhorn-resources.yaml
