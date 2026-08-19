@@ -189,7 +189,7 @@ if [[ -e "${admin_password_path}" ]]; then
 else
   [[ "${initial_secret_exists}" == 'true' ]] ||
     phase5_fail 'The initial credential is absent and no external rotated credential is available.'
-  generated_password=$(openssl rand -base64 36 | tr -d '\r\n')
+  generated_password=$(openssl rand -base64 24 | tr -d '\r\n')
   printf '%s\n' "${generated_password}" >"${admin_password_path}"
   chmod 600 -- "${admin_password_path}"
   unset generated_password
@@ -199,7 +199,7 @@ password_mode=$(stat -c '%a' -- "${admin_password_path}")
 (( (8#${password_mode} & 077) == 0 )) ||
   phase5_fail 'ARGOCD_ADMIN_PASSWORD_FILE must not be accessible by group or other users.'
 IFS= read -r desired_password <"${admin_password_path}"
-[[ "${desired_password}" =~ ^[A-Za-z0-9+/=_-]{32,128}$ ]] ||
+[[ "${desired_password}" =~ ^[A-Za-z0-9+/=_-]{32}$ ]] ||
   phase5_fail 'The external Argo CD administrator credential does not satisfy the protected format contract.'
 
 runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/verda-phase5-gitops.XXXXXXXX")
@@ -306,7 +306,7 @@ admin_session_token=$(create_session admin "${desired_password}")
 verify_session admin "${admin_session_token}"
 
 if [[ ! -e "${reviewer_password_path}" ]]; then
-  generated_reviewer_password=$(openssl rand -base64 36 | tr -d '\r\n')
+  generated_reviewer_password=$(openssl rand -base64 24 | tr -d '\r\n')
   printf '%s\n' "${generated_reviewer_password}" >"${reviewer_password_path}"
   chmod 600 -- "${reviewer_password_path}"
   unset generated_reviewer_password
@@ -316,7 +316,7 @@ reviewer_password_mode=$(stat -c '%a' -- "${reviewer_password_path}")
 (( (8#${reviewer_password_mode} & 077) == 0 )) ||
   phase5_fail 'ARGOCD_REVIEWER_PASSWORD_FILE must not be accessible by group or other users.'
 IFS= read -r reviewer_password <"${reviewer_password_path}"
-[[ "${reviewer_password}" =~ ^[A-Za-z0-9+/=_-]{32,128}$ ]] ||
+[[ "${reviewer_password}" =~ ^[A-Za-z0-9+/=_-]{32}$ ]] ||
   phase5_fail 'The external Argo CD reviewer credential does not satisfy the protected format contract.'
 
 printf 'Authorization: Bearer %s\n' "${admin_session_token}" >"${runtime_dir}/authorization.header"
