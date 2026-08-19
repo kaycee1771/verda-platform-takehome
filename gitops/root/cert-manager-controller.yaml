@@ -1,0 +1,39 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-controller
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-15"
+  labels:
+    app.kubernetes.io/part-of: verda-platform
+    platform.verda-demo.io/phase: "5"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      targetRevision: v1.21.1
+      helm:
+        releaseName: cert-manager
+        valueFiles:
+          - $values/platform/management/cert-manager/controller-values.yaml
+    - repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: {duration: 5s, factor: 2, maxDuration: 3m}

@@ -1,0 +1,8 @@
+---
+hostname: argocd.95-133-252-214.sslip.io
+tlsSecretName: argocd-ingress-tls
+networkPolicyOwner: bootstrap-helm
+gates:
+  productionCertificateVerified: false
+  argocdAuthenticationVerified: false
+  argocdInternalHttpVerified: false

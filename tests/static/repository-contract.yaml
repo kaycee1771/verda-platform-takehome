@@ -61,6 +61,7 @@ required_directories:
   - platform/base
   - platform/management/namespaces
   - platform/management/cert-manager
+  - platform/management/ingress/argocd
   - platform/management/rancher
   - platform/management/harbor
   - platform/management/longhorn
@@ -263,6 +264,10 @@ required_files:
   - evidence/phase-4/deviations-and-recovery.md
   - evidence/phase-4/hosted-ci.md
   - evidence/phase-4/exit-gates.md
+  - evidence/phase-5/README.md
+  - evidence/phase-5/versions-and-compatibility.md
+  - evidence/phase-5/preflight-cluster-health.md
+  - evidence/phase-5/capacity-before-after.md
   - applications/README.md
   - config/README.md
   - environments/README.md
@@ -308,17 +313,53 @@ required_files:
   - bootstrap/argocd/install.sh
   - bootstrap/argocd/values.yaml
   - bootstrap/argocd/root-application.yaml
+  - bootstrap/argocd/runtime-lib.sh
+  - bootstrap/argocd/validate-render.py
+  - bootstrap/argocd/argo-cd-10.3.3.tgz.sha256
   - bootstrap/cluster-registration/README.md
   - bootstrap/cluster-registration/register-rancher.sh
   - bootstrap/cluster-registration/register-argocd.sh
   - gitops/README.md
   - gitops/appprojects/platform.yaml
+  - gitops/appprojects/kustomization.yaml
+  - gitops/root/kustomization.yaml
+  - gitops/root/platform-project.yaml
+  - gitops/root/cert-manager-controller.yaml
+  - gitops/root/cert-manager-staging.yaml
+  - gitops/root/longhorn-prerequisites.yaml
+  - gitops/root/longhorn-controller.yaml
+  - gitops/root/longhorn-resources.yaml
   - gitops/appprojects/dev.yaml
   - gitops/appprojects/staging.yaml
   - gitops/appprojects/prod.yaml
   - gitops/applicationsets/cluster-addons.yaml
   - gitops/applicationsets/platform-services.yaml
   - gitops/applicationsets/environments.yaml
+  - platform/management/cert-manager/controller-values.yaml
+  - platform/management/cert-manager/staging/Chart.yaml
+  - platform/management/cert-manager/staging/values.yaml
+  - platform/management/cert-manager/staging/values.schema.json
+  - platform/management/cert-manager/staging/templates/_helpers.tpl
+  - platform/management/cert-manager/staging/templates/issuer.yaml
+  - platform/management/cert-manager/staging/templates/certificate.yaml
+  - platform/management/cert-manager/production/Chart.yaml
+  - platform/management/cert-manager/production/values.yaml
+  - platform/management/cert-manager/production/values.schema.json
+  - platform/management/cert-manager/production/templates/_helpers.tpl
+  - platform/management/cert-manager/production/templates/issuer.yaml
+  - platform/management/cert-manager/production/templates/certificate.yaml
+  - platform/management/ingress/argocd/Chart.yaml
+  - platform/management/ingress/argocd/values.yaml
+  - platform/management/ingress/argocd/values.schema.json
+  - platform/management/ingress/argocd/templates/_helpers.tpl
+  - platform/management/ingress/argocd/templates/ingress.yaml
+  - platform/management/longhorn/values.yaml
+  - platform/management/longhorn/prerequisites/kustomization.yaml
+  - platform/management/longhorn/prerequisites/namespace.yaml
+  - platform/management/longhorn/prerequisites/ui-network-policy.yaml
+  - platform/management/longhorn/resources/kustomization.yaml
+  - platform/management/longhorn/resources/nodes.yaml
+  - platform/management/longhorn/resources/storageclasses.yaml
   - applications/platform-demo/go.mod
   - applications/platform-demo/go.sum
   - applications/platform-demo/Dockerfile
@@ -351,6 +392,11 @@ required_files:
   - scripts/bootstrap-gitops.sh
   - scripts/register-clusters.sh
   - scripts/wait-for-argocd.sh
+  - scripts/phase5/capacity-report.py
+  - scripts/phase5/longhorn-capacity.py
+  - scripts/phase5/longhorn-storage-contract.py
+  - scripts/phase5/longhorn-storage-test.sh
+  - scripts/phase5/verify-runtime.sh
   - scripts/verify.sh
   - scripts/verify-cluster.sh
   - scripts/cluster/phase4.ps1
@@ -374,6 +420,7 @@ required_files:
   - scripts/cost-report.sh
   - scripts/destroy.sh
   - scripts/quality/bootstrap_schemas.py
+  - scripts/quality/bootstrap_charts.py
   - scripts/quality/bootstrap-cache.sh
   - scripts/quality/cache_fingerprint.py
   - scripts/quality/bootstrap-tools.ps1
@@ -407,10 +454,19 @@ required_files:
   - tests/static/repository-contract.yaml
   - tests/static/test_assert_plan.py
   - tests/static/test_bootstrap_schemas.py
+  - tests/static/test_bootstrap_charts.py
   - tests/static/test_cache_fingerprint.py
   - tests/static/test_phase_map.py
   - tests/static/test_phase3_runtime.py
   - tests/static/test_phase3_contract.py
   - tests/static/test_phase4_evidence_safety.py
+  - tests/static/test_phase5_argocd_bootstrap.py
+  - tests/static/test_phase5_capacity.py
+  - tests/static/test_phase5_cert_ingress_contract.py
+  - tests/static/test_phase5_firewall.py
+  - tests/static/test_phase5_gitops_root.py
+  - tests/static/test_phase5_longhorn_contract.py
+  - tests/static/test_phase5_longhorn_storage_test.py
+  - tests/static/test_phase5_runtime_verifier_contract.py
   - tooling/README.md
   - tooling/quality/Dockerfile

@@ -1,0 +1,39 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: longhorn-controller
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+  labels:
+    app.kubernetes.io/part-of: verda-platform
+    platform.verda-demo.io/phase: "5"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://charts.longhorn.io
+      chart: longhorn
+      targetRevision: 1.12.1
+      helm:
+        releaseName: longhorn
+        valueFiles:
+          - $values/platform/management/longhorn/values.yaml
+    - repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: longhorn-system
+  syncPolicy:
+    automated:
+      # CRD retirement is a reviewed manual operation once volumes exist.
+      prune: false
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - PruneLast=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: {duration: 5s, factor: 2, maxDuration: 3m}

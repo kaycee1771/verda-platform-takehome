@@ -1,0 +1,25 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: argocd-production
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-9"
+    verda.platform/staging-proof: '{{ include "verdaCertProduction.assertStaging" . }}verified'
+spec:
+  secretName: {{ .Values.certificateSecretName | quote }}
+  revisionHistoryLimit: 3
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  dnsNames:
+    - {{ include "verdaCertProduction.hostname" . | quote }}
+  usages:
+    - digital signature
+    - server auth
+  issuerRef:
+    group: cert-manager.io
+    kind: Issuer
+    name: letsencrypt-production

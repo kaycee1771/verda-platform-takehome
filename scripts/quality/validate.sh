@@ -82,13 +82,84 @@ helm_validate() {
   done
 }
 
+phase5_helm_validate() {
+  python scripts/quality/bootstrap_charts.py
+
+  helm lint .local/chart-cache/argo-cd-10.3.3.tgz --strict \
+    --kube-version 1.35.7 \
+    --values bootstrap/argocd/values.yaml
+  helm template argocd .local/chart-cache/argo-cd-10.3.3.tgz \
+    --namespace argocd --include-crds \
+    --kube-version 1.35.7 \
+    --values bootstrap/argocd/values.yaml \
+    >"${render_dir}/phase5-argocd.yaml"
+
+  helm lint .local/chart-cache/cert-manager-v1.21.1.tgz --strict \
+    --kube-version 1.35.7 \
+    --values platform/management/cert-manager/controller-values.yaml
+  helm template cert-manager .local/chart-cache/cert-manager-v1.21.1.tgz \
+    --namespace cert-manager --include-crds \
+    --kube-version 1.35.7 \
+    --values platform/management/cert-manager/controller-values.yaml \
+    >"${render_dir}/phase5-cert-manager.yaml"
+
+  helm lint .local/chart-cache/longhorn-1.12.1.tgz --strict \
+    --kube-version 1.35.7 \
+    --values platform/management/longhorn/values.yaml
+  helm template longhorn .local/chart-cache/longhorn-1.12.1.tgz \
+    --namespace longhorn-system --include-crds \
+    --kube-version 1.35.7 \
+    --values platform/management/longhorn/values.yaml \
+    >"${render_dir}/phase5-longhorn.yaml"
+
+  helm lint platform/management/cert-manager/staging --strict \
+    --kube-version 1.35.7
+  helm template argocd-staging platform/management/cert-manager/staging \
+    --namespace argocd --kube-version 1.35.7 \
+    >"${render_dir}/phase5-cert-staging.yaml"
+
+  helm lint platform/management/cert-manager/production --strict \
+    --kube-version 1.35.7 \
+    --set stagingIssuerVerified=true
+  helm template argocd-production platform/management/cert-manager/production \
+    --namespace argocd --set stagingIssuerVerified=true \
+    --kube-version 1.35.7 \
+    >"${render_dir}/phase5-cert-production-candidate.yaml"
+
+  helm lint platform/management/ingress/argocd --strict \
+    --kube-version 1.35.7 \
+    --set gates.productionCertificateVerified=true \
+    --set gates.argocdAuthenticationVerified=true \
+    --set gates.argocdInternalHttpVerified=true
+  helm template argocd-ingress platform/management/ingress/argocd \
+    --namespace argocd \
+    --kube-version 1.35.7 \
+    --set gates.productionCertificateVerified=true \
+    --set gates.argocdAuthenticationVerified=true \
+    --set gates.argocdInternalHttpVerified=true \
+    >"${render_dir}/phase5-argocd-ingress-candidate.yaml"
+}
+
 kubernetes_validate() {
   kubeconform -strict -summary -kubernetes-version 1.35.0 \
+    -skip CustomResourceDefinition \
     -schema-location "${schema_location}" \
     tests/fixtures/kubernetes/valid \
     tests/cluster/phase4/network-smoke.yaml \
     policies/kyverno/tests/policy.yaml \
     policies/kyverno/tests/resources.yaml \
+    bootstrap/argocd/root-application.yaml \
+    gitops/appprojects/platform.yaml \
+    gitops/root/platform-project.yaml \
+    gitops/root/cert-manager-controller.yaml \
+    gitops/root/cert-manager-staging.yaml \
+    gitops/root/longhorn-prerequisites.yaml \
+    gitops/root/longhorn-controller.yaml \
+    gitops/root/longhorn-resources.yaml \
+    platform/management/longhorn/prerequisites/namespace.yaml \
+    platform/management/longhorn/prerequisites/ui-network-policy.yaml \
+    platform/management/longhorn/resources/nodes.yaml \
+    platform/management/longhorn/resources/storageclasses.yaml \
     "${render_dir}"
 }
 
@@ -103,10 +174,27 @@ prometheus_validate() {
 
 trivy_validate() {
   trivy config --cache-dir .local/trivy --skip-check-update --timeout 15m --exit-code 1 \
+    --helm-kube-version 1.35.7 \
     --severity HIGH,CRITICAL \
     --skip-dirs .git --skip-dirs .local --skip-dirs tmp \
     --skip-dirs tests --skip-dirs policies/kyverno/tests \
+    --skip-dirs platform/management/cert-manager/staging \
+    --skip-dirs platform/management/cert-manager/production \
+    --skip-dirs platform/management/ingress/argocd \
     --skip-dirs '**/.terraform' .
+}
+
+phase5_owned_render_trivy_validate() {
+  local manifest
+  # These charts deliberately fail to render until their live gates are true.
+  # Scan the exact gate-satisfied candidates produced by phase5_helm_validate.
+  for manifest in \
+    "${render_dir}/phase5-cert-staging.yaml" \
+    "${render_dir}/phase5-cert-production-candidate.yaml" \
+    "${render_dir}/phase5-argocd-ingress-candidate.yaml"; do
+    trivy config --cache-dir .local/trivy --skip-check-update --timeout 5m --exit-code 1 \
+      --severity HIGH,CRITICAL "${manifest}"
+  done
 }
 
 go_format_validate() {
@@ -168,6 +256,8 @@ if find tests/fixtures/helm -name Chart.yaml -print -quit | grep -q .; then
 else
   not_applicable 'Helm lint' 'no chart exists'
 fi
+run_gate 'Phase 5 pinned Helm lint and render' phase5_helm_validate
+run_gate 'Phase 5 owned rendered-manifest security scan' phase5_owned_render_trivy_validate
   not_applicable 'application environment Helm renders' 'application chart begins in Phase 9; the Phase 1 chart fixture is validated above'
 run_gate 'Kubernetes and CRD schema validation' kubernetes_validate
 run_gate 'Kyverno passing/failing policy fixtures' kyverno test policies/kyverno/tests --detailed-results

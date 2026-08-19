@@ -1,2 +1,34 @@
 ---
-# Phase 4 will add the root Application after a cluster and Git repository endpoint exist.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-root
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: platform-root
+    app.kubernetes.io/part-of: verda-platform
+    platform.verda-demo.io/ownership: day-zero
+spec:
+  project: platform-bootstrap
+  source:
+    repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+    targetRevision: main
+    path: gitops/root
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - PruneLast=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

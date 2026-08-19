@@ -14,6 +14,21 @@ kubernetes:
     - {name: service-v1.json, sha256: 8bf019854daed511e7c174896a898173fa65d88ec5937c687a37303d4cc9351b}
     - {name: networkpolicy-networking-v1.json, sha256: f6324cc464f62228b0418f438d167208e4f86c7e3677ba30f608e79a8b26ba79}
     - {name: ingress-networking-v1.json, sha256: 4e0f63ad84c2bf22565e489d1f4b885ddaa9f6bf7cff1ddd562553760afe4d79}
+    - {name: storageclass-storage-v1.json, sha256: 9704bb88ec73ed37f8d565dbd2d2ee1e8ee61b5ec63c96a5a61926d6971ef3c9}
+    - {name: statefulset-apps-v1.json, sha256: da78ed86dce07983c3e54c565def2c2e478fd458155ac7cd56cf671e88e16ee2}
+    - {name: job-batch-v1.json, sha256: 514d04ed5540a4d6354bff1ace0bd5155c98c58bcd33a030d1500427387fa97f}
+    - name: poddisruptionbudget-policy-v1.json
+      sha256: da73f50ad0264d73f668eecaa9959da65afe2846602a7a5c8fd51f7799d6a258
+    - {name: serviceaccount-v1.json, sha256: 8193d6c3561475c6d3d5c44e1faedb1df53905373d904bc17015694326d659cf}
+    - {name: clusterrole-rbac-v1.json, sha256: 0777f91c4fa08bd3989b6db8c59dad0429a63dec8f59e883ff55c947a14d0d5f}
+    - {name: clusterrolebinding-rbac-v1.json, sha256: e2d0471b444cf7ea4fd69d7eba1b16e06215503bfbc650450c2b6ad9b40f863c}
+    - {name: role-rbac-v1.json, sha256: dfe8fb03b1642f985b57b12edd1727b6867c13ed4b6761ef81bdd51b1d236711}
+    - {name: rolebinding-rbac-v1.json, sha256: 87ab620d0adddcd2803b92357fce2854af752326df8c5408a7588aae98b3031d}
+    - name: mutatingwebhookconfiguration-admissionregistration-v1.json
+      sha256: 816c8763e72d955cbe41d3ca45ef40877e82f6e12155a7229fb29c225f5812ba
+    - name: validatingwebhookconfiguration-admissionregistration-v1.json
+      sha256: cc85149054a94bfee52315f4abbe4846023ae878b25a2cb79aa9b80dc2383479
+    - {name: priorityclass-scheduling-v1.json, sha256: e9e6a95c984a39cfed9e5b2d7d55fb0f6f5511dffe508afc27db77238bce8f7f}
 
 crds:
   materialized:
@@ -26,6 +41,45 @@ crds:
       source_sha256: 5dde0e229249b6b707beb98674c1deae3949d5c319a6c45b9f5a80c99618e40c
       output: application-argoproj-v1alpha1.json
       output_sha256: 4b9cc2cd0c7b514dc1afd0583b433a76e041b15a33e5ae0d77d31ffeaba95fb7
+    - name: argocd-appproject
+      group: argoproj.io
+      version: v1alpha1
+      kind: AppProject
+      source: >-
+        https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.1/manifests/crds/appproject-crd.yaml
+      source_sha256: ab225266944322750136f1198d93786e4a79a0e43c8d149abfba44da30a3eac8
+      output: appproject-argoproj-v1alpha1.json
+      output_sha256: a925e876d351242b61a25eb67bc20d362dea3f1e3c4592c415313cd3a7706138
+    - name: cert-manager-certificate
+      group: cert-manager.io
+      version: v1
+      kind: Certificate
+      source: >-
+        https://raw.githubusercontent.com/cert-manager/cert-manager/v1.21.1/deploy/charts/cert-manager/templates/crd-cert-manager.io_certificates.yaml
+      source_sha256: 1ff2eebd2787fe59faaba101a4578ae362e53d104f4fb101dc2068af61e5c906
+      normalization: cert-manager-helm-template-v1
+      output: certificate-cert-manager-v1.json
+      output_sha256: 4377a3e47af7ae6331dc2cec640bfe4fbed26e5bad72adb55042cdd7a9bd6f19
+    - name: cert-manager-clusterissuer
+      group: cert-manager.io
+      version: v1
+      kind: ClusterIssuer
+      source: >-
+        https://raw.githubusercontent.com/cert-manager/cert-manager/v1.21.1/deploy/charts/cert-manager/templates/crd-cert-manager.io_clusterissuers.yaml
+      source_sha256: 7a11332bcc0070db7bb94d65d5cb3afe438946510a777872817acb30301102ff
+      normalization: cert-manager-helm-template-v1
+      output: clusterissuer-cert-manager-v1.json
+      output_sha256: 46edaa68664fa04807ce7096efd4ded4eeca118e74f1091a411a41f4ec37eff4
+    - name: cert-manager-issuer
+      group: cert-manager.io
+      version: v1
+      kind: Issuer
+      source: >-
+        https://raw.githubusercontent.com/cert-manager/cert-manager/v1.21.1/deploy/charts/cert-manager/templates/crd-cert-manager.io_issuers.yaml
+      source_sha256: e3db1d63c89d7fc825054bc012cfe975af9461c59ae2fd28a71ba17ea69bcb37
+      normalization: cert-manager-helm-template-v1
+      output: issuer-cert-manager-v1.json
+      output_sha256: 731ff1978cd020d482ec18aedfbfc898c05cb941b03414f48ade05f9d1950f3d
     - name: kyverno-clusterpolicy
       group: kyverno.io
       version: v1
@@ -54,6 +108,26 @@ crds:
       normalization: longhorn-helm-labels-v1
       output: volume-longhorn-v1beta2.json
       output_sha256: e0fadf808138cb26672127f27e1a3d385de9e426075c302ef4e32b19a4ce8d35
+    - name: longhorn-node
+      group: longhorn.io
+      version: v1beta2
+      kind: Node
+      source: >-
+        https://raw.githubusercontent.com/longhorn/longhorn-manager/v1.12.1/k8s/crds.yaml
+      source_sha256: 57ca77ef3208977ccb2812d23f963ddc588509a459e85c37cfef9c83bbeb989c
+      normalization: longhorn-helm-labels-v1
+      output: node-longhorn-v1beta2.json
+      output_sha256: d19feece481d275b52ec922e8110aec782c875dc9cfc1e17cc6246cf719bcf09
+    - name: longhorn-setting
+      group: longhorn.io
+      version: v1beta2
+      kind: Setting
+      source: >-
+        https://raw.githubusercontent.com/longhorn/longhorn-manager/v1.12.1/k8s/crds.yaml
+      source_sha256: 57ca77ef3208977ccb2812d23f963ddc588509a459e85c37cfef9c83bbeb989c
+      normalization: longhorn-helm-labels-v1
+      output: setting-longhorn-v1beta2.json
+      output_sha256: 163910bbea0665b2b9fbba92f1343c8ca7f0078461b8c70fa733b942220e60d7
     - name: velero-backup
       group: velero.io
       version: v1

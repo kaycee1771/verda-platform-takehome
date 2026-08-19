@@ -1,0 +1,30 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: longhorn-prerequisites
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-11"
+  labels:
+    app.kubernetes.io/part-of: verda-platform
+    platform.verda-demo.io/phase: "5"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+    targetRevision: main
+    path: platform/management/longhorn/prerequisites
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: longhorn-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff: {duration: 5s, factor: 2, maxDuration: 3m}

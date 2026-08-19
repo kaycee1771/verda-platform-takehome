@@ -1,0 +1,30 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    verda.platform/authentication-boundary: argocd-rbac
+    verda.platform/cli-mode: grpc-web
+    verda.platform/network-policy-owner: {{ .Values.networkPolicyOwner | quote }}
+    verda.platform/exposure-gates: '{{ include "verdaArgocdIngress.assertGates" . }}verified'
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ include "verdaArgocdIngress.hostname" . | quote }}
+      secretName: {{ .Values.tlsSecretName | quote }}
+  rules:
+    - host: {{ include "verdaArgocdIngress.hostname" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  name: http

@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-active_phase: 3
+active_phase: 5
 public_ingress:
   - name: ssh-administration
     protocol: tcp
@@ -17,13 +17,15 @@ public_ingress:
     ports: "80"
     source: internet
     phase_3_action: deny
-    future_owner: 5
+    phase_5_action: allow
+    phase_5_purpose: acme-http01
   - name: https-ingress
     protocol: tcp
     ports: "443"
     source: internet
     phase_3_action: deny
-    future_owner: 5
+    phase_5_action: allow
+    phase_5_purpose: authenticated-platform-ingress
   - name: kubernetes-api
     protocol: tcp
     ports: "6443"

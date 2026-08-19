@@ -27,6 +27,7 @@ def minimal_document() -> dict:
         "providers": {"verda": {"version": "1.1.2"}},
         "quality_tools": {"terraform": {"version": "1.15.8"}},
         "tool_delivery": {"quality_image": "quality:test"},
+        "helm_charts": {"argocd": {"version": "10.3.3"}},
         "rke2": {"version": "v1.35.7+rke2r1"},
     }
 
@@ -66,6 +67,17 @@ class CacheFingerprintTests(unittest.TestCase):
             provider_lock.write_text("provider-a\n", encoding="utf-8")
             first_hash = MODULE.compute_fingerprint(root, lock)
             provider_lock.write_text("provider-b\n", encoding="utf-8")
+            self.assertNotEqual(MODULE.compute_fingerprint(root, lock), first_hash)
+
+    def test_phase_five_chart_lock_change_invalidates_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = minimal_document()
+            lock = root / "versions.lock.yaml"
+            write_lock(lock, document)
+            first_hash = MODULE.compute_fingerprint(root, lock)
+            document["helm_charts"]["argocd"]["version"] = "10.3.4"
+            write_lock(lock, document)
             self.assertNotEqual(MODULE.compute_fingerprint(root, lock), first_hash)
 
 

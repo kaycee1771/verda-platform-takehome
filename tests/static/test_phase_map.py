@@ -16,7 +16,7 @@ class PhaseMapTests(unittest.TestCase):
     def test_all_eighteen_blueprint_phases_are_present(self) -> None:
         phases = PHASE_MAP["phases"]
         self.assertEqual([phase["id"] for phase in phases], list(range(18)))
-        self.assertEqual(PHASE_MAP["active_phase"], 4)
+        self.assertEqual(PHASE_MAP["active_phase"], 5)
 
     def test_every_make_target_has_one_owner_mapping(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
@@ -24,10 +24,10 @@ class PhaseMapTests(unittest.TestCase):
         make_targets = set(phony_block.replace("\\\n", " ").split())
         self.assertEqual(make_targets, set(PHASE_MAP["target_owners"]))
 
-    def test_only_phase_four_cluster_targets_are_enabled(self) -> None:
+    def test_only_phase_five_bootstrap_and_safe_prerequisites_are_enabled(self) -> None:
         self.assertEqual(
             set(PHASE_MAP["enabled_phase_targets"]),
-            {"cluster-bootstrap", "verify-cluster"},
+            {"bootstrap-gitops"},
         )
         self.assertEqual(
             set(PHASE_MAP["enabled_completed_phase_targets"]),
@@ -37,6 +37,8 @@ class PhaseMapTests(unittest.TestCase):
                 "inventory",
                 "configure",
                 "verify-hosts",
+                "cluster-bootstrap",
+                "verify-cluster",
             },
         )
         owners = PHASE_MAP["target_owners"]
@@ -63,7 +65,6 @@ class PhaseMapTests(unittest.TestCase):
                 "infra-apply",
                 "infra-repair-node-02-plan",
                 "infra-repair-node-02-apply",
-                "bootstrap-gitops",
                 "platform-status",
                 "stage-a-verify",
                 "destroy",
