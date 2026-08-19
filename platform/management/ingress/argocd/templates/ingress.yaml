@@ -5,6 +5,7 @@ metadata:
   name: argocd-server
   namespace: argocd
   annotations:
+    argocd.argoproj.io/ignore-healthcheck: "true"
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
     verda.platform/authentication-boundary: argocd-rbac
