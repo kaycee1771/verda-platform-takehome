@@ -269,6 +269,9 @@ class Phase5CertIngressContractTests(unittest.TestCase):
         self.assertEqual(backend_port, {"name": "http"})
         annotations = ingress["metadata"]["annotations"]
         self.assertEqual(
+            annotations["argocd.argoproj.io/ignore-healthcheck"], "true"
+        )
+        self.assertEqual(
             annotations["traefik.ingress.kubernetes.io/router.entrypoints"],
             "websecure",
         )
