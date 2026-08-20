@@ -67,8 +67,11 @@ run "management_stage_a_contract" {
   }
 
   assert {
-    condition     = output.infrastructure_summary.instance_type == "CPU.4V.16G"
-    error_message = "The management root must retain CPU.4V.16G."
+    condition = alltrue([
+      for node in values(output.infrastructure_summary.node_lifecycle) :
+      node.instance_type == "CPU.4V.16G" && node.resource_expiry_utc == "2026-08-24T21:00:00Z"
+    ])
+    error_message = "The initial management lifecycle map must retain the exact per-node shape and expiry."
   }
 
   assert {

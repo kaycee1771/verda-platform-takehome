@@ -19,17 +19,6 @@ variable "location" {
   }
 }
 
-variable "instance_type" {
-  description = "Verified Verda CPU flavor."
-  type        = string
-  default     = "CPU.4V.16G"
-
-  validation {
-    condition     = var.instance_type == "CPU.4V.16G"
-    error_message = "Phase 0 selected CPU.4V.16G; a different flavor requires a reviewed decision."
-  }
-}
-
 variable "os_image_id" {
   description = "Pinned Ubuntu 24.04 Minimal configuration identifier."
   type        = string
@@ -85,16 +74,5 @@ variable "preserve_data_volumes" {
   validation {
     condition     = var.preserve_data_volumes
     error_message = "Phase 2 requires preserve_data_volumes=true."
-  }
-}
-
-variable "resource_expiry_utc" {
-  description = "Seven-day Stage A expiry recorded in instance descriptions and the cost ledger."
-  type        = string
-  default     = "2026-08-24T21:00:00Z"
-
-  validation {
-    condition     = can(formatdate("YYYY-MM-DD'T'hh:mm:ssZ", var.resource_expiry_utc))
-    error_message = "resource_expiry_utc must be RFC3339."
   }
 }

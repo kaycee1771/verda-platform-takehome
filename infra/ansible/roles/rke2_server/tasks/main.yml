@@ -13,6 +13,12 @@
       - phase4_management_pod_cidr != phase4_management_service_cidr
       - inventory_hostname in phase3_wireguard_addresses
       - groups['management_servers'] | length == 3
+      - >-
+        not (phase4_join_existing_cluster | default(false) | bool) or
+        (
+          phase4_join_server_address | default('') in phase3_wireguard_addresses.values() and
+          phase4_join_server_address != phase3_wireguard_addresses[inventory_hostname]
+        )
     fail_msg: The pinned Phase 4 operating-system, topology, version, storage, or network contract differs.
 
 - name: Read the host etcd principal

@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "phase": 6,
+  "cluster": "management",
+  "activation": {
+    "enabled": false,
+    "writes_allowed": false,
+    "integrated_commit": null,
+    "reason": "Awaiting authenticated capacity and price proof, integrated review, protected backups, and single-writer lease."
+  },
+  "terraform": {
+    "root": "infra/terraform/environments/management",
+    "source_instance_type": "CPU.4V.16G",
+    "target_instance_type": "CPU.8V.32G",
+    "source_resource_expiry_utc": "2026-08-24T21:00:00Z",
+    "target_resource_expiry_utc": null,
+    "location": "FIN-03",
+    "image": "ubuntu-24.04",
+    "root_volume_size_gib": 80,
+    "root_volume_type": "NVMe",
+    "on_demand": true,
+    "saved_plan_must_be_outside_repository": true,
+    "state_must_be_outside_repository": true
+  },
+  "serial": {
+    "resize_order": ["03", "02", "01"],
+    "rollback_order": ["01", "02", "03"],
+    "maximum_concurrent_replacements": 1,
+    "addresses": {
+      "01": "module.management.module.node[\"01\"].verda_instance.this",
+      "02": "module.management.module.node[\"02\"].verda_instance.this",
+      "03": "module.management.module.node[\"03\"].verda_instance.this"
+    },
+    "join_peers": {
+      "01": "02",
+      "02": "01",
+      "03": "01"
+    }
+  },
+  "freshness_seconds": 600,
+  "required_preflight": {
+    "ready_nodes": 3,
+    "etcd_members": 3,
+    "etcd_healthy_members": 3,
+    "etcd_quorum": true,
+    "selected_node_is_not_current_etcd_leader": true,
+    "cilium_ready_nodes": 3,
+    "cilium_connectivity": true,
+    "longhorn_ready_nodes": 3,
+    "longhorn_schedulable_nodes": 3,
+    "longhorn_healthy_volumes": true,
+    "longhorn_degraded_volumes": 0,
+    "terraform_state_backup_verified": true,
+    "etcd_off_cluster_snapshot_verified": true,
+    "data_recovery_point_verified": true,
+    "terraform_zero_drift": true
+  },
+  "required_recovery": {
+    "partial_inventory_refreshed": true,
+    "replacement_shape_verified": true,
+    "replacement_ssh_host_key_rotated_and_verified": true,
+    "surviving_ready_nodes": 2,
+    "surviving_etcd_healthy_members": 2,
+    "etcd_quorum": true,
+    "replacement_not_ready": true,
+    "wireguard_peer_inputs_complete": true,
+    "post_apply_terraform_state_backup_verified": true
+  },
+  "required_postflight": {
+    "ready_nodes": 3,
+    "etcd_members": 3,
+    "etcd_healthy_members": 3,
+    "etcd_quorum": true,
+    "cilium_ready_nodes": 3,
+    "cilium_connectivity": true,
+    "longhorn_ready_nodes": 3,
+    "longhorn_schedulable_nodes": 3,
+    "longhorn_healthy_volumes": true,
+    "longhorn_degraded_volumes": 0,
+    "longhorn_rebuild_complete": true,
+    "terraform_zero_drift": true,
+    "replacement_access_hardened": true,
+    "wireguard_all_peers_converged": true,
+    "stale_etcd_member_removed": true,
+    "replacement_joined_existing_cluster": true,
+    "replacement_shape_verified": true
+  },
+  "evidence": {
+    "forbidden_key_fragments": [
+      "address",
+      "client_id",
+      "client_secret",
+      "credential",
+      "kubeconfig",
+      "private_key",
+      "public_ip",
+      "resource_id",
+      "secret",
+      "token"
+    ],
+    "hash_algorithm": "sha256",
+    "identity_free": true
+  }
+}

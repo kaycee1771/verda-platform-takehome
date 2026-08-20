@@ -1,0 +1,120 @@
+---
+- name: Validate the exact serial replacement target and join peer
+  hosts: localhost
+  gather_facts: false
+  vars:
+    phase6_join_peer_contract:
+      verda-mgmt-server-01: verda-mgmt-server-02
+      verda-mgmt-server-02: verda-mgmt-server-01
+      verda-mgmt-server-03: verda-mgmt-server-01
+    phase6_other_survivor_contract:
+      verda-mgmt-server-01: verda-mgmt-server-03
+      verda-mgmt-server-02: verda-mgmt-server-03
+      verda-mgmt-server-03: verda-mgmt-server-02
+  tasks:
+    - name: Refuse an unexpected target or surviving join peer
+      ansible.builtin.assert:
+        that:
+          - phase6_resize_target in phase6_join_peer_contract
+          - phase6_join_peer == phase6_join_peer_contract[phase6_resize_target]
+          - phase6_resize_target != phase6_join_peer
+          - phase6_other_survivor == phase6_other_survivor_contract[phase6_resize_target]
+          - phase6_other_survivor not in [phase6_resize_target, phase6_join_peer]
+          - >-
+            groups['management_servers'] | sort ==
+            ['verda-mgmt-server-01', 'verda-mgmt-server-02', 'verda-mgmt-server-03']
+        fail_msg: The replacement target, join peer, or inventory topology differs from the serial contract.
+
+- name: Bootstrap only the fresh replacement through the recovery root boundary
+  hosts: "{{ phase6_resize_target }}"
+  gather_facts: false
+  any_errors_fatal: true
+  roles:
+    - role: access_bootstrap
+
+- name: Rebuild and verify the replacement host without touching peer storage
+  hosts: "{{ phase6_resize_target }}"
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  roles:
+    - role: common
+    - role: hardening
+    - role: storage_device
+
+- name: Read or generate every node-local WireGuard public identity
+  hosts: management_servers
+  order: inventory
+  serial: 1
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  roles:
+    - role: wireguard
+      wireguard_identity_only: true
+
+- name: Converge the changed endpoint and public key on all three WireGuard peers
+  hosts: management_servers
+  order: inventory
+  serial: 1
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  roles:
+    - role: wireguard
+      wireguard_identity_only: false
+    - role: firewall
+
+- name: Remove exactly the stale etcd and Kubernetes identity from a surviving peer
+  hosts: "{{ phase6_join_peer }}"
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Install the bounded stale-member removal helper
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../scripts/phase6/remove-stale-management-member.sh"
+        dest: /usr/local/libexec/verda-phase6-remove-stale-member
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Remove only the selected stale member after the protected snapshot gate
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/verda-phase6-remove-stale-member
+          - "{{ phase6_resize_target }}"
+          - "{{ phase3_wireguard_addresses[phase6_other_survivor] }}"
+      register: phase6_stale_member_removal
+      changed_when: true
+      no_log: true
+
+- name: Prepare the replacement to join the surviving cluster, including node 01
+  hosts: "{{ phase6_resize_target }}"
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  vars:
+    phase4_action: prepare
+    phase4_join_existing_cluster: true
+    phase4_join_server_address: "{{ phase3_wireguard_addresses[phase6_join_peer] }}"
+  roles:
+    - role: rke2_server
+
+- name: Start and verify the replacement as an existing-cluster server
+  hosts: "{{ phase6_resize_target }}"
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  vars:
+    phase4_action: start
+    phase4_join_existing_cluster: true
+    phase4_join_server_address: "{{ phase3_wireguard_addresses[phase6_join_peer] }}"
+  roles:
+    - role: rke2_server
