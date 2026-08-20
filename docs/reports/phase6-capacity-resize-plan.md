@@ -1,6 +1,6 @@
 # Phase 6 Capacity Resize Decision
 
-Status: **PARTIAL — provider preflight passed; live mutation remains fail closed**
+Status: **APPROVED BOUNDARY — provider preflight passed; live mutation remains fail closed**
 
 ## Trigger
 
@@ -35,10 +35,11 @@ Adding the existing `$5` unquoted-services allowance and 15% contingency
 produces a planning envelope of `$66.674694572`. Adding the required 12-hour
 reserve at the candidate rate produces a maximum exposure of `$70.458837092`.
 Against the authenticated `$99.22` balance, that is approximately 71.01% and
-therefore crosses the 70% expansion trigger. It is affordable but not yet
-authorized: an explicit user-approved ceiling and evaluator expiry are required
-before any replacement, followed by a fresh authenticated balance, price, and
-availability check before each saved-plan apply.
+therefore crosses the 70% expansion trigger. On 2026-08-20 the user explicitly
+approved the mandatory Phase 6 resize within a maximum seven-day envelope of
+`$70.46` and evaluator expiry `2026-08-27T21:00:00Z`. Stage B and GPU remain
+frozen. A fresh authenticated balance, price, and availability check is still
+required before each saved-plan apply.
 
 ## Replacement semantics
 

@@ -87,10 +87,12 @@ would raise the known rate to `$0.31534521/hour`. The seven-day known subtotal i
 `$52.97799528`; adding the existing `$5` unquoted-services allowance and 15%
 contingency gives `$66.674694572`. Including the mandatory 12-hour reserve gives
 a maximum exposure of `$70.458837092`, approximately 71.01% of the authenticated
-balance. This exceeds the currently approved `$50.51` Stage A envelope and the
-70% bonus-expansion cut line. It is therefore **not authorized** by the prior
-cost decision: no replacement may occur until the user approves an exact new
-ceiling and evaluator expiry. Stage B and GPU expansion remain frozen.
+balance. This exceeds the prior `$50.51` Stage A envelope and the 70%
+bonus-expansion cut line. On 2026-08-20 the user explicitly approved the
+mandatory Phase 6 resize within a maximum seven-day envelope of `$70.46` and
+evaluator expiry `2026-08-27T21:00:00Z`. Stage B and GPU expansion remain
+frozen. The approval does not waive fresh price, availability, balance, backup,
+plan, review, or rollback gates before each serial replacement.
 
 ## Conditional Stage B scenario
 
