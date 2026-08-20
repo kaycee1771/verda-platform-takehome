@@ -184,7 +184,7 @@ prometheus_validate() {
 }
 
 trivy_validate() {
-  trivy config --cache-dir .local/trivy --skip-check-update --timeout 15m --exit-code 1 \
+  trivy config --cache-dir .local/trivy --skip-check-update --timeout 30m --exit-code 1 \
     --helm-kube-version 1.35.7 \
     --severity HIGH,CRITICAL \
     --skip-dirs .git --skip-dirs .local --skip-dirs tmp \
