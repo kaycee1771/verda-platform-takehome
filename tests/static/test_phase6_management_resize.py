@@ -7,6 +7,7 @@ import copy
 import datetime as dt
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -76,6 +77,7 @@ def plan(node: str = "03", direction: str = "resize") -> dict:
         "errored": False,
         "resource_drift": [],
         "timestamp": NOW.isoformat(),
+        "format_version": "1.2",
         "terraform_version": "1.15.8",
         "configuration": {"root_module": {"module_calls": {}}},
         "prior_state": {"format_version": "1.0", "values": {}},
@@ -210,7 +212,8 @@ class PlanTests(unittest.TestCase):
             ("resource_drift", [{"address": "redacted"}]),
             ("target_addrs", ["redacted"]),
             ("timestamp", (NOW - dt.timedelta(hours=2)).isoformat()),
-            ("terraform_version", "1.14.9"),
+            ("terraform_version", "1.15.9"),
+            ("format_version", "1.1"),
         ]
         for key, value in defects:
             with self.subTest(key=key):
@@ -464,9 +467,8 @@ class RecoverySourceTests(unittest.TestCase):
         choices = next(action.choices for action in parser._actions if getattr(action, "choices", None))
         self.assertEqual(set(choices), {"validate-contract"})
         phase2 = (ROOT / "scripts" / "infra" / "phase2.ps1").read_text()
-        apply_case = phase2.split("'phase6-resize-apply' {", 1)[1].split("}", 1)[0]
-        self.assertIn("intentionally disabled", apply_case)
-        self.assertNotIn("Invoke-Phase6ResizeApply", apply_case)
+        self.assertNotIn("phase6-resize-apply", phase2)
+        self.assertNotIn("Invoke-Phase6ResizeApply", phase2)
 
 
 class ProtectedStateSourceTests(unittest.TestCase):
@@ -477,28 +479,21 @@ class ProtectedStateSourceTests(unittest.TestCase):
     def section(self, start: str, end: str) -> str:
         return self.source.split(start, 1)[1].split(end, 1)[0]
 
-    def test_phase6_has_explicit_plan_apply_output_boundaries(self) -> None:
+    def test_phase6_has_explicit_plan_and_output_boundaries_only(self) -> None:
         self.assertIn("'phase6-resize-plan'", self.source)
-        self.assertIn("'phase6-resize-apply'", self.source)
         self.assertIn("'phase6-resize-output'", self.source)
+        self.assertNotIn("phase6-resize-apply", self.source)
+        self.assertNotIn("Invoke-Phase6ResizeApply", self.source)
         self.assertIn("Assert-OutsideRepository -Path $statePath", self.source)
         self.assertIn("Close-SealedState -Paths $paths", self.source)
         self.assertIn("$phase6ProtectedTarget -and $phase6StateOpened", self.source)
 
     def test_plan_is_ordinary_saved_plan_and_exit_zero_is_refused(self) -> None:
-        section = self.section("function Invoke-Phase6ResizePlan", "function Invoke-Phase6ResizeApply")
+        section = self.section("function Invoke-Phase6ResizePlan", "function Invoke-Phase6ResizeOutput")
         self.assertIn("'-detailed-exitcode'", section)
         self.assertIn("-AcceptedExitCodes @(2)", section)
         self.assertNotIn("-target=", section)
         self.assertNotIn("-replace=", section)
-
-    def test_apply_implementation_binds_open_plan_and_state_lifecycle(self) -> None:
-        section = self.section("function Invoke-Phase6ResizeApply", "function Invoke-Phase6ResizeOutput")
-        self.assertIn("[IO.FileShare]::Read", section)
-        self.assertIn("if ($planHash -ne $ExpectedPlanSha256)", section)
-        self.assertGreaterEqual(section.count("Backup-State -Paths $Paths"), 2)
-        self.assertIn("finally", section)
-        self.assertIn("$after.serial -le $before.serial", section)
 
     def test_protected_terraform_does_not_tee_raw_output(self) -> None:
         section = self.section("function Invoke-Phase6Terraform", "function Invoke-Phase6ResizePlan")
@@ -515,6 +510,217 @@ class ProtectedStateSourceTests(unittest.TestCase):
             "known_hosts_sha256", "private_key_public_sha256",
         ):
             self.assertIn(marker, section)
+
+    @unittest.skipUnless(os.name == "nt", "DPAPI/reparse behavioral boundary is Windows-only")
+    def test_dot_source_cannot_expose_or_invoke_phase6_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory) / "base"
+            backup = pathlib.Path(directory) / "backup"
+            driver = rf"""
+$env:VERDA_TAKEHOME_CONFIG_DIR = '{base}'
+$env:VERDA_TF_BACKUP_DIR = '{backup}'
+$script:terraformCalled = $false
+function terraform {{ $script:terraformCalled = $true; throw 'fake terraform invoked' }}
+try {{ . '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-apply }} catch {{ $caught = $_.Exception.Message }}
+$applyCommand = Get-Command Invoke-Phase6ResizeApply -ErrorAction SilentlyContinue
+if ($applyCommand -or $script:terraformCalled) {{ exit 91 }}
+if ([string]::IsNullOrWhiteSpace($caught)) {{ exit 92 }}
+"apply-unreachable"
+"""
+            result = subprocess.run(
+                ["pwsh", "-NoLogo", "-NoProfile", "-Command", driver],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("apply-unreachable", result.stdout)
+
+    @unittest.skipUnless(os.name == "nt", "DPAPI/reparse behavioral boundary is Windows-only")
+    def test_alias_matrix_preserves_protected_assets_without_terraform(self) -> None:
+        aliases = ("state", "sealed", "key", "known_hosts", "backup")
+        for alias in aliases:
+            with self.subTest(alias=alias), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                base, backup = root / "base", root / "backup"
+                base.mkdir()
+                backup.mkdir()
+                state = base / "terraform" / "management.tfstate"
+                key = base / "ssh" / "id_ed25519"
+                known_hosts = base / "ssh" / "known_hosts"
+                state.parent.mkdir()
+                key.parent.mkdir()
+                sentinels = {
+                    "state": state,
+                    "sealed": pathlib.Path(f"{state}.dpapi"),
+                    "key": key,
+                    "known_hosts": known_hosts,
+                    "backup": backup / "protected.tfstate.dpapi",
+                }
+                for name, path in sentinels.items():
+                    path.write_text(f"sentinel-{name}", encoding="utf-8")
+                candidate = sentinels[alias]
+                driver = rf"""
+$env:VERDA_TAKEHOME_CONFIG_DIR = '{base}'
+$env:VERDA_TF_BACKUP_DIR = '{backup}'
+$env:VERDA_TF_STATE_PATH = '{state}'
+$env:VERDA_CLIENT_ID = 'test-only'
+$env:VERDA_CLIENT_SECRET = 'test-only'
+$script:terraformCalled = $false
+function terraform {{ $script:terraformCalled = $true; throw 'fake terraform invoked' }}
+try {{
+  . '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-plan `
+    -SavedPlan '{candidate}' -ExpectedStateLineageSha256 ('a' * 64) -ExpectedStateSerial 1 -OperationId ('b' * 64)
+  exit 81
+}} catch {{
+  if ($script:terraformCalled) {{ exit 82 }}
+}}
+"alias-refused"
+"""
+                result = subprocess.run(
+                    ["pwsh", "-NoLogo", "-NoProfile", "-Command", driver],
+                    check=False, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("alias-refused", result.stdout)
+                for name, path in sentinels.items():
+                    self.assertEqual(path.read_text(encoding="utf-8"), f"sentinel-{name}")
+
+    @unittest.skipUnless(os.name == "nt", "DPAPI/reparse behavioral boundary is Windows-only")
+    def test_inventory_output_alias_matrix_preserves_assets_without_terraform(self) -> None:
+        aliases = ("state", "sealed", "key", "known_hosts", "backup")
+        for alias in aliases:
+            with self.subTest(alias=alias), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                base, backup = root / "base", root / "backup"
+                base.mkdir()
+                backup.mkdir()
+                state = base / "terraform" / "management.tfstate"
+                key = base / "ssh" / "id_ed25519"
+                known_hosts = base / "ssh" / "known_hosts"
+                state.parent.mkdir()
+                key.parent.mkdir()
+                sentinels = {
+                    "state": state,
+                    "sealed": pathlib.Path(f"{state}.dpapi"),
+                    "key": key,
+                    "known_hosts": known_hosts,
+                    "backup": backup / "protected.tfstate.dpapi",
+                }
+                for name, path in sentinels.items():
+                    path.write_text(f"sentinel-{name}", encoding="utf-8")
+                driver = rf"""
+$env:VERDA_TAKEHOME_CONFIG_DIR = '{base}'
+$env:VERDA_TF_BACKUP_DIR = '{backup}'
+$env:VERDA_TF_STATE_PATH = '{state}'
+$env:VERDA_CLIENT_ID = 'test-only'
+$env:VERDA_CLIENT_SECRET = 'test-only'
+$script:terraformCalled = $false
+function terraform {{ $script:terraformCalled = $true; throw 'fake terraform invoked' }}
+try {{
+  . '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-output `
+    -InventoryOutput '{sentinels[alias]}' -KnownHosts '{known_hosts}' `
+    -ExpectedStateLineageSha256 ('a' * 64) -ExpectedStateSerial 1 -OperationId ('b' * 64)
+  exit 61
+}} catch {{
+  if ($script:terraformCalled) {{ exit 62 }}
+}}
+"inventory-alias-refused"
+"""
+                result = subprocess.run(
+                    ["pwsh", "-NoLogo", "-NoProfile", "-Command", driver],
+                    check=False, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("inventory-alias-refused", result.stdout)
+                for name, path in sentinels.items():
+                    self.assertEqual(path.read_text(encoding="utf-8"), f"sentinel-{name}")
+
+    @unittest.skipUnless(os.name == "nt", "Windows hard-link/reparse behavior")
+    def test_existing_hardlink_and_reparse_plan_directory_are_refused(self) -> None:
+        for mode in ("hardlink", "junction"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                base, backup = root / "base", root / "backup"
+                state = base / "terraform" / "management.tfstate"
+                state.parent.mkdir(parents=True)
+                backup.mkdir()
+                state.write_text("protected-state", encoding="utf-8")
+                phase6 = base / "phase6"
+                phase6.mkdir()
+                plan_dir = phase6 / "plans"
+                candidate = plan_dir / "node03.tfplan"
+                if mode == "hardlink":
+                    plan_dir.mkdir()
+                    os.link(state, candidate)
+                else:
+                    result = subprocess.run(
+                        ["pwsh", "-NoLogo", "-NoProfile", "-Command",
+                         f"New-Item -ItemType Junction -Path '{plan_dir}' -Target '{backup}' | Out-Null"],
+                        check=False, capture_output=True, text=True,
+                    )
+                    if result.returncode != 0:
+                        self.skipTest("junction creation unavailable")
+                driver = rf"""
+$env:VERDA_TAKEHOME_CONFIG_DIR = '{base}'
+$env:VERDA_TF_BACKUP_DIR = '{backup}'
+$env:VERDA_TF_STATE_PATH = '{state}'
+$env:VERDA_CLIENT_ID = 'test-only'
+$env:VERDA_CLIENT_SECRET = 'test-only'
+$script:terraformCalled = $false
+function terraform {{ $script:terraformCalled = $true; throw 'fake terraform invoked' }}
+try {{
+  . '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-plan `
+    -SavedPlan '{candidate}' -ExpectedStateLineageSha256 ('a' * 64) -ExpectedStateSerial 1 -OperationId ('b' * 64)
+  exit 51
+}} catch {{ if ($script:terraformCalled) {{ exit 52 }} }}
+"alias-type-refused"
+"""
+                result = subprocess.run(
+                    ["pwsh", "-NoLogo", "-NoProfile", "-Command", driver],
+                    check=False, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("alias-type-refused", result.stdout)
+                self.assertEqual(state.read_text(encoding="utf-8"), "protected-state")
+
+    @unittest.skipUnless(os.name == "nt", "DPAPI failure sealing is Windows-only")
+    def test_failure_after_open_reseals_state_and_withholds_fake_terraform_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            base, backup = root / "base", root / "backup"
+            state = base / "terraform" / "management.tfstate"
+            plan_path = base / "phase6" / "plans" / "node03.tfplan"
+            fake_bin = root / "fake-bin"
+            marker = root / "terraform-invoked"
+            state.parent.mkdir(parents=True)
+            backup.mkdir()
+            fake_bin.mkdir()
+            state.write_text('{"lineage":"11111111-1111-1111-1111-111111111111","serial":1}', encoding="utf-8")
+            (fake_bin / "terraform.cmd").write_text(
+                f"@echo off\r\necho SENSITIVE-FAKE-TERRAFORM 1>&2\r\necho invoked>\"{marker}\"\r\nexit /b 1\r\n",
+                encoding="utf-8",
+            )
+            driver = rf"""
+$env:VERDA_TAKEHOME_CONFIG_DIR = '{base}'
+$env:VERDA_TF_BACKUP_DIR = '{backup}'
+$env:VERDA_TF_STATE_PATH = '{state}'
+$env:VERDA_CLIENT_ID = 'test-only'
+$env:VERDA_CLIENT_SECRET = 'test-only'
+$env:PATH = '{fake_bin};' + $env:PATH
+try {{
+  . '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-plan `
+    -SavedPlan '{plan_path}' -ExpectedStateLineageSha256 ('a' * 64) -ExpectedStateSerial 1 -OperationId ('b' * 64)
+  exit 71
+}} catch {{ "generic-failure" }}
+"""
+            result = subprocess.run(
+                ["pwsh", "-NoLogo", "-NoProfile", "-Command", driver],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(state.exists())
+            self.assertTrue(pathlib.Path(f"{state}.dpapi").is_file())
+            self.assertTrue(marker.is_file())
+            self.assertNotIn("SENSITIVE-FAKE-TERRAFORM", result.stdout + result.stderr)
 
 
 class TrustedInputAndCollectorTests(unittest.TestCase):

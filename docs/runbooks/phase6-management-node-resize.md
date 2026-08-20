@@ -10,9 +10,12 @@ or authorize parallel replacement.
 
 **No Phase 6 live resize is currently authorized.** The controller CLI exposes
 only `validate-contract`; apply, recovery, and postflight advancement are not
-registered commands. The protected Phase 2 apply target also fails before
-opening state or invoking Terraform. The protected plan/output primitives and
-the collector are preparatory code only. They must not be enabled until the
+registered commands. Phase 2 contains no Phase 6 apply target or apply
+function. Its protected plan/output primitives and the disconnected collector
+are preparatory code only. The plan/output primitives are Windows-DPAPI-only
+and require fresh artifacts directly under dedicated protected external
+directories; state, backup, key, known-hosts, hard-link, and reparse aliases are
+refused before state is opened. They must not be enabled until the
 pinned-container recovery runner, canonical inventory/secret-descriptor
 review, trusted collector bindings, quiesce workflow, and OS-lock/journal
 integration have landed and received independent review.

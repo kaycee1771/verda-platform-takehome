@@ -481,9 +481,11 @@ def assert_plan(
     age = (now.astimezone(dt.timezone.utc) - timestamp).total_seconds()
     if age < -30 or age > 3600:
         refuse("saved plan timestamp is older than the one-hour review boundary")
+    if plan.get("format_version") != "1.2":
+        refuse("saved plan JSON format differs from the accepted v1.2 schema")
     terraform_version = plan.get("terraform_version")
-    if not isinstance(terraform_version, str) or not re.fullmatch(r"1\.15\.[0-9]+", terraform_version):
-        refuse("saved plan Terraform version differs from the pinned 1.15.x toolchain")
+    if terraform_version != "1.15.8":
+        refuse("saved plan Terraform version differs from the exact pinned 1.15.8 toolchain")
     configuration = plan.get("configuration")
     prior_state = plan.get("prior_state")
     if not isinstance(configuration, dict) or not configuration or not isinstance(prior_state, dict):
