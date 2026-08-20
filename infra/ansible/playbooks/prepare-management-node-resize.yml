@@ -1,0 +1,87 @@
+---
+- name: Validate the exact serial prepare target and survivor
+  hosts: localhost
+  gather_facts: false
+  vars:
+    phase6_survivor_contract:
+      verda-mgmt-server-01: [verda-mgmt-server-02, verda-mgmt-server-03]
+      verda-mgmt-server-02: [verda-mgmt-server-01, verda-mgmt-server-03]
+      verda-mgmt-server-03: [verda-mgmt-server-01, verda-mgmt-server-02]
+  tasks:
+    - name: Refuse an unexpected target or survivor
+      ansible.builtin.assert:
+        that:
+          - phase6_resize_target in phase6_survivor_contract
+          - phase6_prepare_survivor in phase6_survivor_contract[phase6_resize_target]
+          - groups['management_servers'] | sort == ['verda-mgmt-server-01', 'verda-mgmt-server-02', 'verda-mgmt-server-03']
+        fail_msg: The prepare target, survivor, or inventory topology differs from contract.
+
+- name: Evacuate workloads and Longhorn replicas through a survivor
+  hosts: "{{ phase6_prepare_survivor }}"
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Install the bounded prepare helper
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../scripts/phase6/prepare-management-node-resize.sh"
+        dest: /usr/local/libexec/verda-phase6-prepare-resize
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Cordon drain evacuate and prove the two-survivor boundary
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/verda-phase6-prepare-resize
+          - "{{ phase6_resize_target }}"
+      register: phase6_prepare_result
+      changed_when: true
+      no_log: true
+
+- name: Stop RKE2 and cleanly unmount the evacuated replacement target
+  hosts: "{{ phase6_resize_target }}"
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Stop the selected RKE2 server
+      ansible.builtin.systemd:
+        name: rke2-server
+        state: stopped
+
+    - name: Flush pending writes
+      ansible.builtin.command: sync
+      changed_when: false
+
+    - name: Unmount the evacuated Longhorn data filesystem
+      ansible.posix.mount:
+        path: /var/lib/longhorn
+        state: unmounted
+
+    - name: Prove RKE2 is inactive and Longhorn storage is detached from the filesystem
+      ansible.builtin.shell: |
+        set -eu
+        test "$(systemctl is-active rke2-server || true)" = inactive
+        ! mountpoint -q /var/lib/longhorn
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+- name: Re-prove two-survivor readiness and etcd quorum after quiesce
+  hosts: "{{ phase6_prepare_survivor }}"
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Run the bounded post-quiesce survivor gate
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/verda-phase6-prepare-resize
+          - "{{ phase6_resize_target }}"
+          - --post-quiesce
+      changed_when: false
+      no_log: true

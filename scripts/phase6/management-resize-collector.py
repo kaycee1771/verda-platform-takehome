@@ -77,7 +77,7 @@ class Runner:
             raise CollectionError("fixed collector command returned invalid JSON") from error
 
 
-def read_inventory(path: pathlib.Path) -> dict[str, dict[str, Any]]:
+def read_inventory(path: pathlib.Path) -> tuple[dict[str, dict[str, Any]], pathlib.Path]:
     try:
         value = yaml.load(path.read_text(encoding="utf-8"), Loader=UniqueKeyLoader)
         hosts = value["all"]["children"]["management_servers"]["hosts"]
@@ -91,38 +91,61 @@ def read_inventory(path: pathlib.Path) -> dict[str, dict[str, Any]]:
         "attached_device_id", "data_volume_size_gib",
     }
     addresses: list[str] = []
+    internal_addresses: list[str] = []
+    wireguard_addresses: list[str] = []
     known_hosts_values: set[str] = set()
     for name, host in hosts.items():
         if not isinstance(host, dict) or set(host) != required:
             raise CollectionError(f"strict inventory fields are incomplete for node {name[-2:]}")
         try:
             ipaddress.ip_address(host["ansible_host"])
+            ipaddress.ip_address(host["internal_ip"])
+            ipaddress.ip_address(host["wireguard_ip"])
         except ValueError as error:
             raise CollectionError("inventory contains an invalid host endpoint") from error
         addresses.append(str(host["ansible_host"]))
-        if host["ansible_user"] != "root" or host["node_name"] != name:
+        internal_addresses.append(str(host["internal_ip"]))
+        wireguard_addresses.append(str(host["wireguard_ip"]))
+        if (
+            host["ansible_user"] != "root" or host["node_name"] != name or host["role"] != "server"
+            or host["wireguard_ip"] != WG_ADDRESSES[name]
+        ):
             raise CollectionError("inventory SSH user or canonical hostname differs from contract")
         if host["data_volume_size_gib"] != 100 or host["data_volume_id"] != host["attached_device_id"]:
             raise CollectionError("inventory volume size or attachment continuity differs from contract")
-        key_path = pathlib.Path(str(host["ansible_ssh_private_key_file"]))
-        if not key_path.is_absolute():
+        key_value = str(host["ansible_ssh_private_key_file"])
+        if not (pathlib.Path(key_value).is_absolute() or pathlib.PurePosixPath(key_value).is_absolute()):
             raise CollectionError("inventory private-key descriptor is not absolute")
         ssh_args = str(host["ansible_ssh_common_args"])
         prefix = "-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="
         if not ssh_args.startswith(prefix) or len(ssh_args.split()) != 8:
             raise CollectionError("inventory does not contain the exact strict SSH argument set")
         known_hosts = ssh_args.removeprefix(prefix)
-        if not pathlib.Path(known_hosts).is_absolute():
+        if not (pathlib.Path(known_hosts).is_absolute() or pathlib.PurePosixPath(known_hosts).is_absolute()):
             raise CollectionError("inventory known-hosts descriptor is not absolute")
         known_hosts_values.add(known_hosts)
-    if len(set(addresses)) != 3 or len(known_hosts_values) != 1:
+    if (
+        any(len(set(values)) != 3 for values in (addresses, internal_addresses, wireguard_addresses))
+        or len(known_hosts_values) != 1
+    ):
         raise CollectionError("inventory endpoints or known-hosts provenance are not uniquely bound")
-    return hosts
+    return hosts, pathlib.Path(known_hosts_values.pop())
 
 
-def ready_nodes(nodes: dict[str, Any]) -> tuple[int, dict[str, int]]:
+def memory_bytes(value: Any) -> int:
+    if not isinstance(value, str):
+        raise CollectionError("node allocatable memory is invalid")
+    match = re.fullmatch(r"([0-9]+)(Ki|Mi|Gi)?", value)
+    if not match:
+        raise CollectionError("node allocatable memory is invalid")
+    multiplier = {None: 1, "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3}[match.group(2)]
+    return int(match.group(1)) * multiplier
+
+
+def ready_nodes(nodes: dict[str, Any]) -> tuple[int, dict[str, int], dict[str, int]]:
     items = nodes.get("items", [])
     counts: dict[str, int] = {}
+    memory: dict[str, int] = {}
     ready = 0
     for item in items:
         name = item.get("metadata", {}).get("name")
@@ -137,9 +160,10 @@ def ready_nodes(nodes: dict[str, Any]) -> tuple[int, dict[str, int]]:
             counts[name] = int(cpu) * 1000
         else:
             raise CollectionError("node allocatable CPU is invalid")
-    if len(counts) != 3:
+        memory[name] = memory_bytes(item.get("status", {}).get("allocatable", {}).get("memory"))
+    if len(counts) != 3 or len(memory) != 3:
         raise CollectionError("node facts do not contain the exact management topology")
-    return ready, counts
+    return ready, counts, memory
 
 
 def etcd_facts(status: Any, members: Any, target: str) -> dict[str, Any]:
@@ -201,6 +225,8 @@ def longhorn_facts(nodes: dict[str, Any], volumes: dict[str, Any]) -> dict[str, 
         if condition_map.get("Schedulable") == "True":
             schedulable += 1
     volume_items = volumes.get("items", [])
+    if not volume_items:
+        raise CollectionError("Longhorn volume set is empty")
     degraded = sum(1 for item in volume_items if item.get("status", {}).get("robustness") != "healthy")
     return {
         "longhorn_ready_nodes": ready,
@@ -213,6 +239,8 @@ def longhorn_facts(nodes: dict[str, Any], volumes: dict[str, Any]) -> dict[str, 
 
 def argo_facts(applications: dict[str, Any]) -> dict[str, Any]:
     items = applications.get("items", [])
+    if not items:
+        raise CollectionError("Argo CD application set is empty")
     unhealthy = [
         item for item in items
         if item.get("status", {}).get("health", {}).get("status") != "Healthy"
@@ -221,19 +249,45 @@ def argo_facts(applications: dict[str, Any]) -> dict[str, Any]:
     return {"argocd_application_count": len(items), "argocd_all_healthy_synced": not unhealthy}
 
 
+def snapshot_facts(snapshot: Any) -> dict[str, Any]:
+    items = snapshot.get("items") if isinstance(snapshot, dict) else snapshot
+    if not isinstance(items, list) or not items:
+        raise CollectionError("off-cluster snapshot inventory is empty or invalid")
+    verified = [
+        item for item in items
+        if isinstance(item, dict)
+        and isinstance(item.get("spec"), dict)
+        and str(item["spec"].get("location", "")).startswith("s3://")
+        and str(item["spec"].get("snapshotName", "")).endswith(".zip")
+        and isinstance(item.get("status"), dict)
+        and item["status"].get("readyToUse") is True
+        and str(item["status"].get("size", "")) not in {"", "0", "None"}
+        and isinstance(item["status"].get("creationTime"), str)
+        and bool(item["status"]["creationTime"])
+    ]
+    if not verified:
+        raise CollectionError("no successful structured off-cluster snapshot was verified")
+    return {"etcd_off_cluster_snapshot_verified": True, "etcd_off_cluster_snapshot_count": len(verified)}
+
+
 def command_set(
-    runner: Runner, kubeconfig: pathlib.Path, inventory: pathlib.Path, target: str, stage: str,
+    runner: Runner, kubeconfig: pathlib.Path, inventory: pathlib.Path, target: str, survivor: str, stage: str,
 ) -> dict[str, Any]:
-    hosts = read_inventory(inventory)
+    hosts, known_hosts = read_inventory(inventory)
+    if survivor == target or survivor not in NODES:
+        raise CollectionError("collector survivor is invalid")
+    for host in hosts.values():
+        runner.run(["ssh-keygen", "-F", str(host["ansible_host"]), "-f", str(known_hosts)])
     kubectl = ["kubectl", f"--kubeconfig={kubeconfig}"]
     nodes = runner.json(kubectl + ["get", "nodes", "-o", "json"])
-    ready, allocatable = ready_nodes(nodes)
-    target_host = hosts[target]
+    ready, allocatable, allocatable_memory = ready_nodes(nodes)
+    survivor_host = hosts[survivor]
     ssh = [
         "ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
         "-o", "StrictHostKeyChecking=yes",
-        "-i", str(target_host["ansible_ssh_private_key_file"]),
-        f"{target_host['ansible_user']}@{target_host['ansible_host']}",
+        "-o", f"UserKnownHostsFile={known_hosts}",
+        "-i", str(survivor_host["ansible_ssh_private_key_file"]),
+        f"{survivor_host['ansible_user']}@{survivor_host['ansible_host']}",
     ]
     endpoints = ",".join(f"https://{WG_ADDRESSES[node]}:2379" for node in NODES)
     etcd_prefix = (
@@ -255,6 +309,14 @@ def command_set(
     facts.update(argo_facts(runner.json(kubectl + ["-n", "argocd", "get", "applications.argoproj.io", "-o", "json"])))
     facts["candidate_allocatable_cpu_millicores"] = allocatable[target]
     facts["candidate_two_survivor_cpu_millicores"] = sum(value for name, value in allocatable.items() if name != target)
+    facts["candidate_allocatable_memory_bytes"] = allocatable_memory[target]
+    facts["candidate_two_survivor_memory_bytes"] = sum(
+        value for name, value in allocatable_memory.items() if name != target
+    )
+    facts["worst_two_allocatable_cpu_millicores"] = sum(sorted(allocatable.values())[:2])
+    facts["worst_two_allocatable_memory_bytes"] = sum(sorted(allocatable_memory.values())[:2])
+    facts["minimum_observed_per_node_cpu_millicores"] = min(allocatable.values())
+    facts["minimum_observed_per_node_memory_bytes"] = min(allocatable_memory.values())
 
     if stage == "preflight":
         runner.run(kubectl + [
@@ -262,11 +324,10 @@ def command_set(
             "--dry-run=server", "--timeout=60s",
         ])
         facts["drain_server_dry_run"] = True
-        snapshot = runner.run(ssh + [
-            "sudo -n rke2 etcd-snapshot list --s3 "
-            "--s3-config-secret=rke2-etcd-snapshot-s3-config"
-        ]).decode("utf-8", errors="replace")
-        facts["etcd_off_cluster_snapshot_verified"] = "s3://" in snapshot
+        snapshot = runner.json(ssh + [
+            "sudo -n /usr/local/bin/rke2 etcd-snapshot ls --output=json"
+        ])
+        facts.update(snapshot_facts(snapshot))
         stateful = runner.json(kubectl + ["get", "statefulsets", "--all-namespaces", "-o", "json"])
         protected_namespaces = {"argocd", "cert-manager", "longhorn-system"}
         unprotected = [
@@ -292,6 +353,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", choices=("preflight", "recovery", "postflight"), required=True)
     parser.add_argument("--node", choices=NODES, required=True)
+    parser.add_argument("--survivor", choices=NODES, required=True)
     parser.add_argument("--direction", choices=("resize", "rollback"), required=True)
     parser.add_argument("--operation-id", required=True)
     parser.add_argument("--commit", required=True)
@@ -304,21 +366,27 @@ def main() -> int:
         if not re.fullmatch(r"[0-9a-f]{64}", args.operation_id):
             raise CollectionError("collector operation identity is invalid")
         runner = Runner()
-        facts = command_set(runner, args.kubeconfig, args.inventory, args.node, args.stage)
+        facts = command_set(runner, args.kubeconfig, args.inventory, args.node, args.survivor, args.stage)
         report = {
             "schema_version": 1,
             "collector": "phase6-management-resize-v1",
+            "collector_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
             "stage": args.stage,
             "phase": 6,
             "cluster": "management",
             "integrated_commit": args.commit,
             "operation_id": args.operation_id,
             "node": args.node[-2:],
+            "survivor_node": args.survivor[-2:],
             "direction": args.direction,
             "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "facts": facts,
             "facts_sha256": canonical_digest(facts),
             "command_fingerprints": runner.fingerprints,
+            "input_fingerprints": {
+                "inventory_sha256": hashlib.sha256(args.inventory.read_bytes()).hexdigest(),
+                "host_trust_sha256": hashlib.sha256(read_inventory(args.inventory)[1].read_bytes()).hexdigest(),
+            },
         }
         ensure_identity_free(report)
         print(json.dumps(report, sort_keys=True, separators=(",", ":")))

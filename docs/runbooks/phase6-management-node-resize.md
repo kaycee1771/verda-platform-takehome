@@ -15,17 +15,18 @@ function. Its protected plan/output primitives and the disconnected collector
 are preparatory code only. The plan/output primitives are Windows-DPAPI-only
 and require fresh artifacts directly under dedicated protected external
 directories; state, backup, key, known-hosts, hard-link, and reparse aliases are
-refused before state is opened. They must not be enabled until the
-pinned-container recovery runner, canonical inventory/secret-descriptor
-review, trusted collector bindings, quiesce workflow, and OS-lock/journal
-integration have landed and received independent review.
+refused before state is opened. The pinned-container command builder,
+canonical input validator, fixed trusted collector, quiesce playbook, and
+crash-safe operation journal are also disconnected review-only components.
+They must not be enabled until a protected Phase 6 apply boundary connects
+them atomically and the complete path receives independent review.
 
 The checked-in contract has `enabled=false`, `writes_allowed=false`, a null
 integrated commit, and a null target expiry. Never edit it to create a
 self-referential commit. For each node, create a protected external copy with
 the exact already-integrated commit and reviewed target expiry. The controller
 validates every other field and binds that external contract by SHA-256 in the
-two-reviewer record.
+three-reviewer record.
 
 ## Preconditions
 
@@ -43,8 +44,9 @@ Before planning one node:
 6. Create and verify an independent encrypted Terraform state backup, a current
    off-cluster etcd snapshot, and a real recovery point for any persistent data.
    Longhorn replication alone is not a backup.
-7. Have an author and a distinct security/capacity reviewer approve the exact
-   commit, contract hash, preflight hash, and saved-plan hash.
+7. Have a distinct author, security/capacity reviewer, and reliability reviewer
+   approve the exact commit, contract, preflight, cost, capacity, collector,
+   tool-lock, saved-plan byte, and saved-plan semantic hashes.
 
 ## Per-node desired state and plan
 
@@ -67,8 +69,10 @@ refuses unless the saved plan contains exactly one instance replacement at the
 next serial address. The hostname, image, location, on-demand status, OS-volume
 contract, SSH keys, startup-script attachment, and exact persistent data-volume
 attachment must remain unchanged. The shape and expiry must make the exact
-reviewed transition. Apply accepts only those same saved-plan bytes; never
-regenerate a plan between review and apply.
+reviewed transition. The future protected apply boundary must stage the
+reviewed bytes into a fresh protected regular file and use that same held path
+for semantic review and apply; never regenerate a plan between review and
+apply.
 
 The preparatory protected progress object is identity-free and uses this schema:
 
@@ -93,6 +97,13 @@ Mark the exact node/direction in flight immediately after a successful saved
 plan apply. Do not advance the completed prefix until recovery and postflight
 both pass. Back up the updated Terraform state in a `finally` path.
 
+Before apply, the disconnected prepare command builder runs only the checked-in
+prepare playbook in the pinned Phase 4 quality container. It selects a survivor,
+cordons the target, performs a PDB-respecting drain, evacuates every Longhorn
+replica from the target and waits for healthy rebuilds, stops RKE2, flushes
+writes, unmounts `/var/lib/longhorn`, and re-proves the two-survivor Ready/etcd
+boundary. No prepare or apply command is currently exposed.
+
 ## Replacement recovery and existing-cluster join
 
 A replacement has a new OS disk, public endpoint, SSH host key, WireGuard key,
@@ -106,10 +117,11 @@ After apply and before starting RKE2:
 2. Independently verify the replacement instance/shape and its new SSH host-key
    provenance, then rotate only that host's known-hosts entry.
 3. Prove the two survivors are Ready and retain etcd quorum.
-4. Recovery remains disabled. A future reviewed implementation must use the
-   pinned Phase 4 container runner with read-only external key/token mounts,
-   checked-in group vars, exact runtime vars, and the exact integrated commit;
-   native host `ansible-playbook` is not an approved execution path.
+4. Recovery remains disabled. The disconnected command builder uses the pinned
+   Phase 4 container runner with read-only external key/public-key/known-hosts
+   mounts, an exact secret environment allowlist, checked-in group vars, exact
+   runtime vars, and the integrated source tree. Native host
+   `ansible-playbook` is not an approved execution path.
 5. The playbook bootstraps and hardens only the fresh host, remounts the
    preserved data volume, gathers every node-local WireGuard public key, and
    serially converges all three peer endpoints and firewall rules.
@@ -120,6 +132,9 @@ After apply and before starting RKE2:
 7. The replacement always renders `server:` to an existing survivor. This is
    mandatory for node 01 as well; the empty primary/bootstrap configuration is
    permitted only for the original cluster creation.
+8. From a survivor, re-enable Longhorn scheduling on the replacement and wait
+   until the node is Ready, both Longhorn Ready/Schedulable conditions pass,
+   the volume set is non-empty, and every volume is healthy.
 
 Keep the lease after any recovery failure. Do not start another replacement.
 Assess the exact rollback or repair while the two survivors retain quorum.
@@ -133,6 +148,8 @@ Capture a fresh identity-free postflight bundle only after all of these pass:
 - Cilium healthy on all nodes and connectivity passing;
 - Longhorn has three Ready/schedulable nodes, no degraded volumes, and replica
   rebuild complete;
+- every Argo CD application is Healthy and Synced, and measured per-node and
+  worst-two allocatable CPU/memory meet the checksum-bound thresholds;
 - hardened replacement access, all WireGuard peers converged, and the node
   joined the existing cluster;
 - the replacement reports the exact reviewed shape; and

@@ -38,6 +38,17 @@
     }
   },
   "freshness_seconds": 600,
+  "cost": {
+    "target_price_per_instance_hour_usd": 0.0558,
+    "approved_seven_day_envelope_usd": 66.6747,
+    "minimum_balance_with_reserve_usd": 70.46
+  },
+  "capacity": {
+    "minimum_per_node_cpu_millicores": 6793,
+    "minimum_per_node_memory_bytes": 13659799552,
+    "minimum_worst_two_cpu_millicores": 13585,
+    "minimum_worst_two_memory_bytes": 27319599104
+  },
   "required_preflight": {
     "ready_nodes": 3,
     "etcd_members": 3,
@@ -78,6 +89,11 @@
     "longhorn_healthy_volumes": true,
     "longhorn_degraded_volumes": 0,
     "longhorn_rebuild_complete": true,
+    "argocd_all_healthy_synced": true,
+    "minimum_observed_per_node_cpu_millicores": 6793,
+    "minimum_observed_per_node_memory_bytes": 13659799552,
+    "worst_two_allocatable_cpu_millicores": 13585,
+    "worst_two_allocatable_memory_bytes": 27319599104,
     "terraform_zero_drift": true,
     "replacement_access_hardened": true,
     "wireguard_all_peers_converged": true,

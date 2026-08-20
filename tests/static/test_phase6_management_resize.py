@@ -14,6 +14,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import yaml
+
 
 ROOT = pathlib.Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts" / "phase6" / "management-node-resize.py"
@@ -345,6 +347,35 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(RESIZE.ResizeRefused):
             RESIZE.assert_gate_bundle(partial, contract["required_preflight"], COMMIT, "03", contract, NOW, "preflight")
 
+    def test_cost_and_worst_two_capacity_must_meet_bound_contract(self) -> None:
+        contract = active_contract()
+        cost = {
+            "schema_version": 1, "phase": 6, "integrated_commit": COMMIT,
+            "captured_at": NOW.isoformat(), "shape": "CPU.8V.32G", "location": "FIN-03",
+            "on_demand_available": True, "price_per_instance_hour_usd": 0.0558,
+            "project_balance_usd": 70.45, "seven_day_envelope_usd": 66.6747,
+            "raw_values_recorded": False,
+        }
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "price, balance"):
+            RESIZE.assert_cost_receipt(cost, contract, COMMIT, NOW)
+        capacity = {
+            "schema_version": 1, "phase": 6, "integrated_commit": COMMIT, "candidate_node_count": 3,
+            "minimum_observed_per_node_cpu_millicores": 7000,
+            "minimum_observed_per_node_memory_bytes": 30_000_000_000,
+            "worst_two_allocatable_cpu_millicores": 13584,
+            "worst_two_allocatable_memory_bytes": 60_000_000_000,
+            "projection_sha256": "9" * 64, "raw_values_recorded": False,
+        }
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "worst-two"):
+            RESIZE.assert_capacity_receipt(capacity, contract, COMMIT)
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "trusted collector measurements"):
+            RESIZE.assert_measured_capacity({
+                "minimum_observed_per_node_cpu_millicores": 7000,
+                "minimum_observed_per_node_memory_bytes": 30_000_000_000,
+                "worst_two_allocatable_cpu_millicores": 13584,
+                "worst_two_allocatable_memory_bytes": 60_000_000_000,
+            }, contract)
+
     def test_lease_expiry_and_same_reviewer_are_rejected(self) -> None:
         lease = {
             "schema_version": 1,
@@ -358,24 +389,33 @@ class GateTests(unittest.TestCase):
             RESIZE.assert_lease(lease, COMMIT, NOW)
         review = {
             "schema_version": 1, "phase": 6, "integrated_commit": COMMIT, "node": "03", "direction": "resize",
-            "plan_sha256": "1" * 64, "preflight_sha256": "2" * 64, "contract_sha256": "3" * 64,
-            "author_digest": AUTHOR, "reviewer_digest": AUTHOR, "security_approved": True, "capacity_approved": True,
+            "operation_id": "0" * 64, "plan_sha256": "1" * 64, "plan_semantic_sha256": "2" * 64,
+            "preflight_sha256": "3" * 64, "contract_sha256": "4" * 64,
+            "cost_receipt_sha256": "5" * 64, "capacity_receipt_sha256": "6" * 64,
+            "collector_report_sha256": "7" * 64, "tool_lock_sha256": "8" * 64,
+            "author_digest": AUTHOR, "reviewer_digest": AUTHOR, "reliability_reviewer_digest": "e" * 64,
+            "security_approved": True, "capacity_approved": True, "reliability_approved": True,
         }
-        with self.assertRaisesRegex(RESIZE.ResizeRefused, "must differ"):
-            RESIZE.assert_review(review, COMMIT, "03", "resize", "1" * 64, "2" * 64, "3" * 64)
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "must be distinct"):
+            RESIZE.assert_review(
+                review, COMMIT, "03", "resize", "0" * 64, "1" * 64, "2" * 64,
+                "3" * 64, "4" * 64, "5" * 64, "6" * 64, "7" * 64, "8" * 64,
+            )
 
 
 class AdmissionTests(unittest.TestCase):
     def test_full_admission_is_hash_bound_and_identity_free(self) -> None:
-        with tempfile.TemporaryDirectory() as repo_name, tempfile.TemporaryDirectory() as external_name:
-            repo = pathlib.Path(repo_name)
+        with tempfile.TemporaryDirectory() as external_name:
             external = pathlib.Path(external_name)
             contract = active_contract()
-            contract_path = repo / "contract.json"
-            progress_path = repo / "progress.json"
-            preflight_path = repo / "preflight.json"
-            review_path = repo / "review.json"
-            lease_path = repo / "lease.json"
+            contract_path = external / "contract.json"
+            progress_path = external / "progress.json"
+            preflight_path = external / "preflight.json"
+            review_path = external / "review.json"
+            lease_path = external / "lease.json"
+            cost_path = external / "cost.json"
+            capacity_path = external / "capacity.json"
+            collector_path = external / "collector.json"
             plan_path = external / "node03.tfplan"
             contract_path.write_text(json.dumps(contract), encoding="utf-8")
             progress_path.write_text(json.dumps(progress()), encoding="utf-8")
@@ -385,11 +425,54 @@ class AdmissionTests(unittest.TestCase):
             }
             preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
             plan_path.write_bytes(b"opaque saved terraform plan")
+            cost_path.write_text(json.dumps({
+                "schema_version": 1, "phase": 6, "integrated_commit": COMMIT,
+                "captured_at": NOW.isoformat(), "shape": "CPU.8V.32G", "location": "FIN-03",
+                "on_demand_available": True, "price_per_instance_hour_usd": 0.0558,
+                "project_balance_usd": 100.0, "seven_day_envelope_usd": 66.6747,
+                "raw_values_recorded": False,
+            }), encoding="utf-8")
+            capacity_path.write_text(json.dumps({
+                "schema_version": 1, "phase": 6, "integrated_commit": COMMIT, "candidate_node_count": 3,
+                "minimum_observed_per_node_cpu_millicores": 7000,
+                "minimum_observed_per_node_memory_bytes": 30_000_000_000,
+                "worst_two_allocatable_cpu_millicores": 14000,
+                "worst_two_allocatable_memory_bytes": 60_000_000_000,
+                "projection_sha256": "9" * 64, "raw_values_recorded": False,
+            }), encoding="utf-8")
+            collector_path.write_text("{}", encoding="utf-8")
+            semantic_sha = RESIZE.canonical_digest(RESIZE.assert_plan(plan(), contract, "03", "resize", NOW))
+            tool_lock_sha = RESIZE.canonical_digest({
+                "versions_lock": RESIZE.digest_file(ROOT / "versions.lock.yaml"),
+                "terraform_lock": RESIZE.digest_file(
+                    ROOT / "infra" / "terraform" / "environments" / "management" / ".terraform.lock.hcl"
+                ),
+                "controller": RESIZE.digest_file(SCRIPT),
+                "collector": RESIZE.digest_file(COLLECTOR_SCRIPT),
+                "prepare_playbook": RESIZE.digest_file(
+                    ROOT / "infra" / "ansible" / "playbooks" / "prepare-management-node-resize.yml"
+                ),
+                "recovery_playbook": RESIZE.digest_file(
+                    ROOT / "infra" / "ansible" / "playbooks" / "recover-resized-management-node.yml"
+                ),
+                "prepare_helper": RESIZE.digest_file(
+                    ROOT / "scripts" / "phase6" / "prepare-management-node-resize.sh"
+                ),
+                "management_group_vars": RESIZE.digest_file(
+                    ROOT / "infra" / "ansible" / "inventories" / "group_vars" / "management_servers.yml"
+                ),
+            })
             review = {
                 "schema_version": 1, "phase": 6, "integrated_commit": COMMIT, "node": "03", "direction": "resize",
-                "plan_sha256": RESIZE.digest_file(plan_path), "preflight_sha256": RESIZE.digest_file(preflight_path),
-                "contract_sha256": RESIZE.digest_file(contract_path), "author_digest": AUTHOR,
-                "reviewer_digest": REVIEWER, "security_approved": True, "capacity_approved": True,
+                "operation_id": "0" * 64, "plan_sha256": RESIZE.digest_file(plan_path),
+                "plan_semantic_sha256": semantic_sha, "preflight_sha256": RESIZE.digest_file(preflight_path),
+                "contract_sha256": RESIZE.digest_file(contract_path),
+                "cost_receipt_sha256": RESIZE.digest_file(cost_path),
+                "capacity_receipt_sha256": RESIZE.digest_file(capacity_path),
+                "collector_report_sha256": RESIZE.digest_file(collector_path), "tool_lock_sha256": tool_lock_sha,
+                "author_digest": AUTHOR, "reviewer_digest": REVIEWER,
+                "reliability_reviewer_digest": "e" * 64,
+                "security_approved": True, "capacity_approved": True, "reliability_approved": True,
             }
             review_path.write_text(json.dumps(review), encoding="utf-8")
             lease = {
@@ -397,13 +480,26 @@ class AdmissionTests(unittest.TestCase):
                 "writes_allowed": True, "expires_at": (NOW + dt.timedelta(minutes=5)).isoformat(),
             }
             lease_path.write_text(json.dumps(lease), encoding="utf-8")
-            summary = RESIZE.admission(
-                contract_path=contract_path, progress_path=progress_path, saved_plan=plan_path,
-                preflight_path=preflight_path, review_path=review_path, lease_path=lease_path,
-                direction="resize", git_commit=COMMIT, repository=repo, now=NOW, plan=plan(),
-            )
+            measured = {
+                "minimum_observed_per_node_cpu_millicores": 7000,
+                "minimum_observed_per_node_memory_bytes": 30_000_000_000,
+                "worst_two_allocatable_cpu_millicores": 14000,
+                "worst_two_allocatable_memory_bytes": 60_000_000_000,
+            }
+            with mock.patch.object(RESIZE, "assert_clean_reviewed_worktree") as clean, mock.patch.object(
+                RESIZE, "assert_trusted_collector_report", return_value=measured
+            ):
+                summary = RESIZE.admission(
+                    contract_path=contract_path, progress_path=progress_path, saved_plan=plan_path,
+                    preflight_path=preflight_path, review_path=review_path, lease_path=lease_path,
+                    cost_path=cost_path, capacity_path=capacity_path, collector_path=collector_path,
+                    operation_id="0" * 64, survivor="01", direction="resize", git_commit=COMMIT,
+                    repository=ROOT, now=NOW, plan=plan(),
+                )
+                clean.assert_called_once_with(ROOT, COMMIT)
             rendered = json.dumps(summary)
             self.assertEqual(summary["replacement_count"], 1)
+            self.assertEqual(summary["reviewer_count"], 3)
             self.assertNotIn("sensitive-provider", rendered)
             self.assertNotIn("address", rendered)
 
@@ -436,6 +532,24 @@ class RecoverySourceTests(unittest.TestCase):
         self.assertIn("Ready", remover)
         self.assertIn("other_survivor_address", remover)
         self.assertIn("^[0-9a-f]{16}$", remover)
+
+    def test_prepare_owns_pdb_drain_quiesce_storage_evacuation_and_rebuild(self) -> None:
+        prepare = (ROOT / "infra" / "ansible" / "playbooks" / "prepare-management-node-resize.yml").read_text()
+        helper = (ROOT / "scripts" / "phase6" / "prepare-management-node-resize.sh").read_text()
+        recovery = (ROOT / "infra" / "ansible" / "playbooks" / "recover-resized-management-node.yml").read_text()
+        self.assertIn("cordon", helper)
+        self.assertIn("drain", helper)
+        self.assertNotIn("--force", helper)
+        self.assertNotIn("--disable-eviction", helper)
+        self.assertIn('"evictionRequested":true', helper)
+        self.assertIn('"$target_replicas" == 0', helper)
+        self.assertIn("Stop the selected RKE2 server", prepare)
+        self.assertIn("state: unmounted", prepare)
+        self.assertLess(prepare.index("state: stopped"), prepare.index("state: unmounted"))
+        self.assertIn("--post-quiesce", prepare)
+        self.assertIn("--post-recovery", recovery)
+        self.assertIn('"allowScheduling":true', helper)
+        self.assertIn("replacement Ready and Longhorn scheduling/rebuild restored", helper)
 
     def test_terraform_uses_only_the_checked_in_per_node_lifecycle_map(self) -> None:
         variables = (ROOT / "infra" / "terraform" / "environments" / "management" / "variables.tf").read_text()
@@ -770,6 +884,353 @@ class TrustedInputAndCollectorTests(unittest.TestCase):
         facts = COLLECTOR.etcd_facts(statuses, members, "verda-mgmt-server-03")
         self.assertTrue(facts["selected_node_is_not_current_etcd_leader"])
         self.assertEqual(facts["etcd_healthy_members"], 3)
+
+    def test_collectors_reject_empty_longhorn_and_argo_sets(self) -> None:
+        healthy_nodes = {"items": [{"status": {"conditions": [
+            {"type": "Ready", "status": "True"}, {"type": "Schedulable", "status": "True"},
+        ]}} for _ in range(3)]}
+        with self.assertRaisesRegex(COLLECTOR.CollectionError, "volume set is empty"):
+            COLLECTOR.longhorn_facts(healthy_nodes, {"items": []})
+        with self.assertRaisesRegex(COLLECTOR.CollectionError, "application set is empty"):
+            COLLECTOR.argo_facts({"items": []})
+
+    def test_capacity_parser_computes_memory_and_worst_two(self) -> None:
+        nodes = {"items": []}
+        for index, cpu in enumerate(("6793m", "7000m", "7100m"), start=1):
+            nodes["items"].append({
+                "metadata": {"name": f"verda-mgmt-server-{index:02d}"},
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "allocatable": {"cpu": cpu, "memory": f"{13 + index}Gi"},
+                },
+            })
+        ready, cpu, memory = COLLECTOR.ready_nodes(nodes)
+        self.assertEqual(ready, 3)
+        self.assertEqual(sum(sorted(cpu.values())[:2]), 13793)
+        self.assertEqual(sum(sorted(memory.values())[:2]), 29 * 1024**3)
+
+    def test_fixed_collector_uses_verified_known_hosts_and_survivor_for_etcd(self) -> None:
+        class FakeRunner:
+            def __init__(self) -> None:
+                self.commands: list[list[str]] = []
+
+            def run(self, argv: list[str], *, stdin: bytes | None = None) -> bytes:
+                self.commands.append(argv)
+                rendered = " ".join(argv)
+                if "endpoint status" in rendered:
+                    return json.dumps([{
+                        "Endpoint": f"https://{COLLECTOR.WG_ADDRESSES[name]}:2379",
+                        "Status": {"header": {"member_id": index}, "leader": 1},
+                    } for index, name in enumerate(COLLECTOR.NODES, start=1)]).encode()
+                if "member list" in rendered:
+                    return json.dumps({"members": [{"name": name} for name in COLLECTOR.NODES]}).encode()
+                return b"verified"
+
+            def json(self, argv: list[str]) -> object:
+                self.commands.append(argv)
+                rendered = " ".join(argv)
+                if "get nodes -o json" in rendered and "longhorn-system" not in rendered:
+                    return {"items": [{
+                        "metadata": {"name": name},
+                        "status": {
+                            "conditions": [{"type": "Ready", "status": "True"}],
+                            "allocatable": {"cpu": "7000m", "memory": "28Gi"},
+                        },
+                    } for name in COLLECTOR.NODES]}
+                if argv and argv[0] == "cilium":
+                    return {"errors": [], "warnings": [], "cluster": {"desired": 3, "ready": 3}}
+                if "nodes.longhorn.io" in rendered:
+                    return {"items": [{"status": {"conditions": [
+                        {"type": "Ready", "status": "True"},
+                        {"type": "Schedulable", "status": "True"},
+                    ]}} for _ in range(3)]}
+                if "volumes.longhorn.io" in rendered:
+                    return {"items": [{"status": {"robustness": "healthy"}}]}
+                if "applications.argoproj.io" in rendered:
+                    return {"items": [{"status": {
+                        "health": {"status": "Healthy"}, "sync": {"status": "Synced"},
+                    }}]}
+                if "etcd-snapshot ls" in rendered:
+                    return {"items": [{
+                        "spec": {"location": "s3://withheld/phase6.zip", "snapshotName": "phase6.zip"},
+                        "status": {"readyToUse": True, "size": "1024", "creationTime": NOW.isoformat()},
+                    }]}
+                if "statefulsets" in rendered:
+                    return {"items": []}
+                raise AssertionError(rendered)
+
+        with tempfile.TemporaryDirectory() as directory:
+            external = pathlib.Path(directory)
+            inventory = external / "inventory.yml"
+            known = external / "known_hosts"
+            known.write_text("verified host keys", encoding="utf-8")
+            value = self.canonical_inventory()
+            for host in value["all"]["children"]["management_servers"]["hosts"].values():
+                host["ansible_ssh_private_key_file"] = "/tmp/phase3-ssh-key"
+                host["ansible_ssh_common_args"] = (
+                    "-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "
+                    f"-o UserKnownHostsFile={known}"
+                )
+            inventory.write_text(yaml.safe_dump(value), encoding="utf-8")
+            runner = FakeRunner()
+            facts = COLLECTOR.command_set(
+                runner, external / "kubeconfig", inventory,
+                "verda-mgmt-server-03", "verda-mgmt-server-01", "preflight",
+            )
+            key_checks = [command for command in runner.commands if command[0] == "ssh-keygen"]
+            ssh_commands = [command for command in runner.commands if command[0] == "ssh"]
+            self.assertEqual(len(key_checks), 3)
+            self.assertTrue(all(str(known) in command for command in key_checks))
+            self.assertTrue(all("root@192.0.2.1" in command for command in ssh_commands))
+            self.assertTrue(all(f"UserKnownHostsFile={known}" in command for command in ssh_commands))
+            self.assertEqual(facts["worst_two_allocatable_memory_bytes"], 56 * 1024**3)
+            self.assertTrue(facts["etcd_off_cluster_snapshot_verified"])
+
+    def test_collector_report_is_source_identity_freshness_and_fact_hash_bound(self) -> None:
+        facts = {
+            "ready_nodes": 3, "etcd_members": 3, "etcd_healthy_members": 3, "etcd_quorum": True,
+            "selected_node_is_not_current_etcd_leader": True, "cilium_ready_nodes": 3,
+            "cilium_connectivity": True, "longhorn_ready_nodes": 3,
+            "longhorn_schedulable_nodes": 3, "longhorn_healthy_volumes": True,
+            "longhorn_degraded_volumes": 0, "argocd_all_healthy_synced": True,
+            "drain_server_dry_run": True, "etcd_off_cluster_snapshot_verified": True,
+            "data_recovery_point_verified": True,
+        }
+        report = {
+            "schema_version": 1, "collector": "phase6-management-resize-v1",
+            "collector_sha256": RESIZE.digest_file(COLLECTOR_SCRIPT), "stage": "preflight",
+            "phase": 6, "cluster": "management", "integrated_commit": COMMIT,
+            "operation_id": "0" * 64, "node": "03", "survivor_node": "01",
+            "direction": "resize", "captured_at": NOW.isoformat(), "facts": facts,
+            "facts_sha256": RESIZE.canonical_digest(facts), "command_fingerprints": ["1" * 64] * 8,
+            "input_fingerprints": {"inventory_sha256": "2" * 64, "host_trust_sha256": "3" * 64},
+        }
+        RESIZE.assert_trusted_collector_report(
+            report, repository=ROOT, integrated_commit=COMMIT, operation_id="0" * 64,
+            node="03", survivor="01", direction="resize", stage="preflight", now=NOW,
+            freshness_seconds=600,
+        )
+        tampered = copy.deepcopy(report)
+        tampered["facts"]["ready_nodes"] = 2
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "facts digest"):
+            RESIZE.assert_trusted_collector_report(
+                tampered, repository=ROOT, integrated_commit=COMMIT, operation_id="0" * 64,
+                node="03", survivor="01", direction="resize", stage="preflight", now=NOW,
+                freshness_seconds=600,
+            )
+        tampered = copy.deepcopy(report)
+        tampered["collector_sha256"] = "f" * 64
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "provenance"):
+            RESIZE.assert_trusted_collector_report(
+                tampered, repository=ROOT, integrated_commit=COMMIT, operation_id="0" * 64,
+                node="03", survivor="01", direction="resize", stage="preflight", now=NOW,
+                freshness_seconds=600,
+            )
+
+
+class OperationJournalTests(unittest.TestCase):
+    def paths(self, external: pathlib.Path, operation_id: str) -> tuple[pathlib.Path, pathlib.Path]:
+        control = external / "phase6-resize-control"
+        return control / f"phase6-resize-operation-{operation_id}.json", control / "phase6-resize-operation.lock"
+
+    def test_prepared_applying_adopted_applied_is_atomic_and_generation_bound(self) -> None:
+        operation = "1" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            journal_path, lease_path = self.paths(pathlib.Path(directory), operation)
+            journal = RESIZE.OperationJournal(
+                repository=ROOT, journal_path=journal_path, lease_path=lease_path,
+                operation_id=operation, integrated_commit=COMMIT,
+            )
+            with journal:
+                prepared = journal.prepare(
+                    expected_generation=0, node="03", direction="resize", plan_sha256="2" * 64,
+                    review_sha256="3" * 64, prepare_sha256="4" * 64,
+                    state_lineage_sha256="5" * 64, state_serial_before=10, captured_at=NOW.isoformat(),
+                )
+                self.assertEqual((prepared["state"], prepared["generation"]), ("PREPARED", 1))
+                applying = journal.begin_apply(expected_generation=1, captured_at=NOW.isoformat())
+                self.assertEqual((applying["state"], applying["generation"]), ("APPLYING", 2))
+                adopted = journal.adopt_applying(
+                    expected_generation=2, plan_sha256="2" * 64,
+                    state_lineage_sha256="5" * 64, state_serial_before=10,
+                    captured_at=(NOW + dt.timedelta(seconds=1)).isoformat(),
+                )
+                self.assertEqual(adopted["generation"], 3)
+                applied = journal.record_apply_receipt(
+                    expected_generation=3, receipt_sha256="6" * 64,
+                    captured_at=(NOW + dt.timedelta(seconds=2)).isoformat(),
+                )
+                self.assertEqual((applied["state"], applied["generation"]), ("APPLIED", 4))
+                with self.assertRaisesRegex(RESIZE.ResizeRefused, "PREPARED"):
+                    journal.begin_apply(expected_generation=1, captured_at=NOW.isoformat())
+            self.assertEqual(json.loads(journal_path.read_text(encoding="utf-8"))["state"], "APPLIED")
+
+    def test_crash_adoption_mismatch_and_parallel_lease_are_refused(self) -> None:
+        operation = "7" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            journal_path, lease_path = self.paths(pathlib.Path(directory), operation)
+            first = RESIZE.OperationJournal(
+                repository=ROOT, journal_path=journal_path, lease_path=lease_path,
+                operation_id=operation, integrated_commit=COMMIT,
+            )
+            second = RESIZE.OperationJournal(
+                repository=ROOT, journal_path=journal_path, lease_path=lease_path,
+                operation_id=operation, integrated_commit=COMMIT,
+            )
+            with first:
+                first.prepare(
+                    expected_generation=0, node="03", direction="resize", plan_sha256="2" * 64,
+                    review_sha256="3" * 64, prepare_sha256="4" * 64,
+                    state_lineage_sha256="5" * 64, state_serial_before=10, captured_at=NOW.isoformat(),
+                )
+                first.begin_apply(expected_generation=1, captured_at=NOW.isoformat())
+                with self.assertRaisesRegex(RESIZE.ResizeRefused, "OS-exclusive"):
+                    second.__enter__()
+                with self.assertRaisesRegex(RESIZE.ResizeRefused, "does not match"):
+                    first.adopt_applying(
+                        expected_generation=2, plan_sha256="8" * 64,
+                        state_lineage_sha256="5" * 64, state_serial_before=10,
+                        captured_at=NOW.isoformat(),
+                    )
+
+    def test_applied_resize_does_not_block_separate_immediate_rollback_journal(self) -> None:
+        resize_operation, rollback_operation = "a" * 64, "b" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            external = pathlib.Path(directory)
+            resize_path, lease_path = self.paths(external, resize_operation)
+            with RESIZE.OperationJournal(
+                repository=ROOT, journal_path=resize_path, lease_path=lease_path,
+                operation_id=resize_operation, integrated_commit=COMMIT,
+            ) as journal:
+                journal.prepare(
+                    expected_generation=0, node="03", direction="resize", plan_sha256="2" * 64,
+                    review_sha256="3" * 64, prepare_sha256="4" * 64,
+                    state_lineage_sha256="5" * 64, state_serial_before=10, captured_at=NOW.isoformat(),
+                )
+                journal.begin_apply(expected_generation=1, captured_at=NOW.isoformat())
+                journal.record_apply_receipt(
+                    expected_generation=2, receipt_sha256="6" * 64, captured_at=NOW.isoformat(),
+                )
+            rollback_path, _ = self.paths(external, rollback_operation)
+            with RESIZE.OperationJournal(
+                repository=ROOT, journal_path=rollback_path, lease_path=lease_path,
+                operation_id=rollback_operation, integrated_commit=COMMIT,
+            ) as rollback:
+                prepared = rollback.prepare(
+                    expected_generation=0, node="03", direction="rollback", plan_sha256="7" * 64,
+                    review_sha256="8" * 64, prepare_sha256="9" * 64,
+                    state_lineage_sha256="5" * 64, state_serial_before=11, captured_at=NOW.isoformat(),
+                )
+                self.assertEqual(prepared["direction"], "rollback")
+
+
+class PinnedRecoveryRunnerTests(unittest.TestCase):
+    def inputs(self, external: pathlib.Path) -> dict[str, pathlib.Path]:
+        inventory = external / "inventory.yml"
+        runtime = external / "runtime.json"
+        private = external / "id_ed25519"
+        public = external / "id_ed25519.pub"
+        known = external / "known_hosts"
+        hosts = {}
+        for index in range(1, 4):
+            name = f"verda-mgmt-server-{index:02d}"
+            hosts[name] = {
+                "ansible_host": f"192.0.2.{index}", "ansible_user": "root", "node_name": name,
+                "role": "server", "internal_ip": f"10.0.0.{index}", "wireguard_ip": f"10.250.0.1{index}",
+                "data_volume_id": f"volume-{index}", "attached_device_id": f"volume-{index}",
+                "data_volume_size_gib": 100, "ansible_ssh_private_key_file": "/tmp/phase3-ssh-key",
+                "ansible_ssh_common_args": (
+                    "-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "
+                    "-o UserKnownHostsFile=/run/config/known_hosts"
+                ),
+            }
+        inventory.write_text(
+            yaml.safe_dump({"all": {"children": {"management_servers": {"hosts": hosts}}}}, sort_keys=True),
+            encoding="utf-8",
+        )
+        runtime.write_text(json.dumps({
+            "phase3_admin_cidrs_v4": ["192.0.2.0/24"], "phase4_cluster_firewall_enabled": True,
+        }), encoding="utf-8")
+        private.write_text("not-a-real-private-key", encoding="utf-8")
+        if os.name != "nt":
+            private.chmod(0o600)
+        public.write_text(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA phase6\n",
+            encoding="utf-8",
+        )
+        known.write_text("hashed known-host fixture\n", encoding="utf-8")
+        return {"inventory": inventory, "runtime": runtime, "private": private, "public": public, "known": known}
+
+    def build(self, external: pathlib.Path, mode: str = "recover") -> tuple[list[str], dict]:
+        paths = self.inputs(external)
+        return RESIZE.build_phase6_docker_command(
+            repository=ROOT, mode=mode, node="03", survivor="01",
+            inventory_path=paths["inventory"], runtime_vars_path=paths["runtime"],
+            private_key_path=paths["private"], public_key_path=paths["public"],
+            known_hosts_path=paths["known"],
+        )
+
+    def test_recovery_uses_exact_pinned_container_mounts_env_and_workdir(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            command, receipt = self.build(pathlib.Path(directory))
+            rendered = " ".join(command)
+            self.assertEqual(command[:3], ["docker", "run", "--rm"])
+            self.assertIn("verda-platform-quality:phase1-2026-08-16", command)
+            self.assertIn("/run/secrets/phase3_ssh_key.pub:ro", rendered)
+            self.assertIn("/run/source/phase4-ssh-key:ro", rendered)
+            self.assertIn("/run/config/known_hosts:ro", rendered)
+            self.assertIn("/workspace/infra/ansible", command)
+            self.assertIn("@inventories/group_vars/management_servers.yml", rendered)
+            self.assertIn("@/run/config/phase6-runtime.json", rendered)
+            environments = [command[index + 1] for index, value in enumerate(command[:-1]) if value == "--env"]
+            self.assertEqual(tuple(environments), RESIZE.RECOVERY_ENV_ALLOWLIST)
+            self.assertNotIn("not-a-real-private-key", rendered + json.dumps(receipt))
+            self.assertEqual(receipt["status"], "DORMANT_COMMAND_REVIEW_ONLY")
+
+    def test_prepare_uses_only_bounded_prepare_playbook(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            command, receipt = self.build(pathlib.Path(directory), "prepare")
+            rendered = " ".join(command)
+            self.assertIn("playbooks/prepare-management-node-resize.yml", rendered)
+            self.assertIn("phase6_prepare_survivor=verda-mgmt-server-01", rendered)
+            self.assertNotIn("recover-resized-management-node.yml", rendered)
+            self.assertEqual(receipt["mode"], "prepare")
+
+    def test_runtime_extra_field_and_ssh_downgrade_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            external = pathlib.Path(directory)
+            paths = self.inputs(external)
+            runtime = json.loads(paths["runtime"].read_text(encoding="utf-8"))
+            runtime["unexpected"] = True
+            paths["runtime"].write_text(json.dumps(runtime), encoding="utf-8")
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "exact checked schema"):
+                RESIZE.canonical_recovery_inputs(
+                    repository=ROOT, inventory_path=paths["inventory"], runtime_vars_path=paths["runtime"],
+                    private_key_path=paths["private"], public_key_path=paths["public"], known_hosts_path=paths["known"],
+                )
+            paths = self.inputs(external)
+            inventory = paths["inventory"].read_text(encoding="utf-8").replace(
+                "StrictHostKeyChecking=yes", "StrictHostKeyChecking=accept-new"
+            )
+            paths["inventory"].write_text(inventory, encoding="utf-8")
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "SSH"):
+                RESIZE.canonical_recovery_inputs(
+                    repository=ROOT, inventory_path=paths["inventory"], runtime_vars_path=paths["runtime"],
+                    private_key_path=paths["private"], public_key_path=paths["public"], known_hosts_path=paths["known"],
+                )
+
+    def test_hardlinked_recovery_inputs_are_rejected_before_command_construction(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self.inputs(pathlib.Path(directory))
+            paths["known"].unlink()
+            os.link(paths["private"], paths["known"])
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "file identity"):
+                RESIZE.build_phase6_docker_command(
+                    repository=ROOT, mode="recover", node="03", survivor="01",
+                    inventory_path=paths["inventory"], runtime_vars_path=paths["runtime"],
+                    private_key_path=paths["private"], public_key_path=paths["public"],
+                    known_hosts_path=paths["known"],
+                )
 
 
 if __name__ == "__main__":

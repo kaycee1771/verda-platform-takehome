@@ -118,3 +118,27 @@
     phase4_join_server_address: "{{ phase3_wireguard_addresses[phase6_join_peer] }}"
   roles:
     - role: rke2_server
+
+- name: Restore Longhorn scheduling and prove the replacement rebuild boundary
+  hosts: "{{ phase6_join_peer }}"
+  remote_user: "{{ phase3_platform_admin }}"
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Install the bounded Phase 6 storage gate helper
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../scripts/phase6/prepare-management-node-resize.sh"
+        dest: /usr/local/libexec/verda-phase6-prepare-resize
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Re-enable the replacement and wait for Ready storage rebuild
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/verda-phase6-prepare-resize
+          - "{{ phase6_resize_target }}"
+          - --post-recovery
+      changed_when: true
+      no_log: true
