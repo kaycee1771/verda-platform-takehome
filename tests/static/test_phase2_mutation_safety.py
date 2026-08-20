@@ -110,6 +110,7 @@ try {{
             replacement = root / "replacement.tfplan"
             applied = root / "applied.txt"
             swap = root / "swap.txt"
+            stage_swap = root / "stage-swap.txt"
             state.parent.mkdir(parents=True)
             backup.mkdir()
             state.write_text('{"lineage":"11111111-1111-1111-1111-111111111111","serial":1}', encoding="utf-8")
@@ -140,6 +141,13 @@ function python {{
       'SWAP-SUCCEEDED' | Set-Content '{swap}'
     }}
     catch {{ 'SWAP-BLOCKED' | Set-Content '{swap}' }}
+    $planIndex = [Array]::IndexOf($Arguments, '--plan')
+    $stagedPath = [string]$Arguments[$planIndex + 1]
+    $stageParent = Split-Path -Parent $stagedPath
+    try {{
+      Move-Item -LiteralPath $stageParent -Destination '{root / 'moved-stage'}' -ErrorAction Stop
+      'STAGING-SWAP-SUCCEEDED' | Set-Content '{stage_swap}'
+    }} catch {{ 'STAGING-SWAP-BLOCKED' | Set-Content '{stage_swap}' }}
   }}
   $global:LASTEXITCODE = 0
 }}
@@ -154,6 +162,7 @@ if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 """)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(swap.read_text(encoding="utf-8").strip(), "SWAP-SUCCEEDED")
+            self.assertEqual(stage_swap.read_text(encoding="utf-8").strip(), "STAGING-SWAP-BLOCKED")
             self.assertEqual(applied.read_text(encoding="utf-8"), "REVIEWED-PLAN")
 
     def test_hardlinked_lease_is_refused_without_mutating_asset_or_calling_terraform(self) -> None:

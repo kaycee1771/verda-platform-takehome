@@ -165,6 +165,71 @@ function Get-OpenPlanSha256 {
     $digest
 }
 
+function Initialize-Phase2NativeFileIdentity {
+    if ('Phase2NativeFileIdentity' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+public static class Phase2NativeFileIdentity {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BY_HANDLE_FILE_INFORMATION {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+        string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle handle, out BY_HANDLE_FILE_INFORMATION information);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(
+        SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+
+    public static SafeFileHandle OpenDirectoryNoDelete(string path) {
+        const uint GENERIC_READ = 0x80000000;
+        const uint FILE_SHARE_READ_WRITE = 0x00000003;
+        const uint OPEN_EXISTING = 3;
+        const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+        SafeFileHandle handle = CreateFile(
+            path, GENERIC_READ, FILE_SHARE_READ_WRITE, IntPtr.Zero, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
+        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return handle;
+    }
+
+    public static string Identity(SafeFileHandle handle) {
+        BY_HANDLE_FILE_INFORMATION information;
+        if (!GetFileInformationByHandle(handle, out information))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return String.Format("{0:x8}:{1:x8}{2:x8}", information.VolumeSerialNumber,
+            information.FileIndexHigh, information.FileIndexLow);
+    }
+
+    public static string FinalPath(SafeFileHandle handle) {
+        StringBuilder path = new StringBuilder(32768);
+        uint length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, 0);
+        if (length == 0 || length >= path.Capacity)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return path.ToString();
+    }
+}
+'@
+}
+
 function New-StagedReviewedPlan {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Paths)
 
@@ -173,8 +238,16 @@ function New-StagedReviewedPlan {
     Assert-NoReparsePath -Path $stagingDirectory -Label 'Reviewed Terraform plan staging directory'
     Protect-Directory -Path $stagingDirectory
     Assert-NoReparsePath -Path $stagingDirectory -Label 'Reviewed Terraform plan staging directory'
+    if (-not $IsWindows) { throw 'Reviewed plan staging requires Windows handle-identity protections.' }
+    Initialize-Phase2NativeFileIdentity
+    try {
+        $parentHandle = [Phase2NativeFileIdentity]::OpenDirectoryNoDelete($stagingDirectory)
+    } catch {
+        throw 'Unable to hold the reviewed-plan staging directory against replacement.'
+    }
     $stagedPath = Join-Path $stagingDirectory ("reviewed-{0}.tfplan" -f [Guid]::NewGuid().ToString('N'))
     $staged = $null
+    $held = $null
     try {
         $staged = [IO.File]::Open(
             $stagedPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read
@@ -185,25 +258,75 @@ function New-StagedReviewedPlan {
         $staged.Position = 0
         Assert-NoReparsePath -Path $stagedPath -Label 'Staged reviewed Terraform plan'
         Assert-SingleFileIdentity -Path $stagedPath -Label 'Staged reviewed Terraform plan'
+        $createdIdentity = [Phase2NativeFileIdentity]::Identity($staged.SafeFileHandle)
+        $createdFinalPath = [Phase2NativeFileIdentity]::FinalPath($staged.SafeFileHandle)
+        $createdSha256 = Get-OpenPlanSha256 -Stream $staged
+        $staged.Dispose()
+        $staged = $null
+        $held = [IO.File]::Open(
+            $stagedPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read
+        )
+        if (
+            [Phase2NativeFileIdentity]::Identity($held.SafeFileHandle) -ne $createdIdentity -or
+            -not [Phase2NativeFileIdentity]::FinalPath($held.SafeFileHandle).Equals(
+                $createdFinalPath, [StringComparison]::OrdinalIgnoreCase
+            ) -or
+            (Get-OpenPlanSha256 -Stream $held) -ne $createdSha256
+        ) {
+            throw 'Staged reviewed Terraform plan changed while acquiring its held read boundary.'
+        }
         [pscustomobject]@{
             Path = $stagedPath
-            Handle = $staged
-            Sha256 = Get-OpenPlanSha256 -Stream $staged
+            Handle = $held
+            Sha256 = $createdSha256
+            Identity = $createdIdentity
+            FinalPath = $createdFinalPath
+            ParentHandle = $parentHandle
         }
-        $staged = $null
+        $held = $null
+        $parentHandle = $null
     } finally {
         $source.Dispose()
         if ($staged) { $staged.Dispose() }
+        if ($held) { $held.Dispose() }
+        if ($parentHandle) { $parentHandle.Dispose() }
+    }
+}
+
+function Open-VerifiedStagedPlanPath {
+    param([Parameter(Mandatory)]$Stage)
+
+    Assert-NoReparsePath -Path $Stage.Path -Label 'Staged reviewed Terraform plan before apply'
+    Assert-SingleFileIdentity -Path $Stage.Path -Label 'Staged reviewed Terraform plan before apply'
+    $pathHandle = [IO.File]::Open(
+        $Stage.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read
+    )
+    try {
+        $identity = [Phase2NativeFileIdentity]::Identity($pathHandle.SafeFileHandle)
+        $finalPath = [Phase2NativeFileIdentity]::FinalPath($pathHandle.SafeFileHandle)
+        if ($identity -ne $Stage.Identity -or
+            -not $finalPath.Equals($Stage.FinalPath, [StringComparison]::OrdinalIgnoreCase) -or
+            (Get-OpenPlanSha256 -Stream $pathHandle) -ne $Stage.Sha256) {
+            throw 'Staged reviewed Terraform plan pathname identity differs from the held reviewed bytes.'
+        }
+        $pathHandle
+        $pathHandle = $null
+    } finally {
+        if ($pathHandle) { $pathHandle.Dispose() }
     }
 }
 
 function Remove-StagedReviewedPlan {
     param([Parameter(Mandatory)]$Stage)
 
-    $Stage.Handle.Dispose()
-    Assert-NoReparsePath -Path $Stage.Path -Label 'Staged reviewed Terraform plan cleanup'
-    Assert-SingleFileIdentity -Path $Stage.Path -Label 'Staged reviewed Terraform plan cleanup'
-    Remove-Item -LiteralPath $Stage.Path -Force
+    try {
+        $Stage.Handle.Dispose()
+        Assert-NoReparsePath -Path $Stage.Path -Label 'Staged reviewed Terraform plan cleanup'
+        Assert-SingleFileIdentity -Path $Stage.Path -Label 'Staged reviewed Terraform plan cleanup'
+        Remove-Item -LiteralPath $Stage.Path -Force
+    } finally {
+        $Stage.ParentHandle.Dispose()
+    }
 }
 
 function Assert-Phase6StateBoundary {
@@ -686,12 +809,14 @@ function Invoke-Node02RepairApply {
         if ((Get-OpenPlanSha256 -Stream $stage.Handle) -ne $stage.Sha256) {
             throw 'Staged reviewed node-02 plan bytes changed while held open.'
         }
-        Backup-State -Paths $Paths
+        $pathHandle = Open-VerifiedStagedPlanPath -Stage $stage
         try {
+            Backup-State -Paths $Paths
             Invoke-Terraform -Arguments @(
                 'apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $stage.Path
             ) -LogName 'node-02-replacement-apply.log' | Out-Null
         } finally {
+            $pathHandle.Dispose()
             if (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf) {
                 Backup-State -Paths $Paths
             }
@@ -1059,8 +1184,13 @@ switch ($Target) {
             if ((Get-OpenPlanSha256 -Stream $stage.Handle) -ne $stage.Sha256) {
                 throw 'Staged reviewed Terraform plan bytes changed while held open.'
             }
-            Invoke-Terraform -Arguments @('apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $stage.Path) `
-                -LogName 'apply.log' | Out-Null
+            $pathHandle = Open-VerifiedStagedPlanPath -Stage $stage
+            try {
+                Invoke-Terraform -Arguments @('apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $stage.Path) `
+                    -LogName 'apply.log' | Out-Null
+            } finally {
+                $pathHandle.Dispose()
+            }
             Backup-State -Paths $paths
         } finally {
             $paths.PlanPath = $originalPlanPath
