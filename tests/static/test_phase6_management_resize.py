@@ -567,7 +567,7 @@ $env:VERDA_CLIENT_SECRET = 'test-only'
 $script:terraformCalled = $false
 function terraform {{ $script:terraformCalled = $true; throw 'fake terraform invoked' }}
 try {{
-  . '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-plan `
+  & '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-plan `
     -SavedPlan '{candidate}' -ExpectedStateLineageSha256 ('a' * 64) -ExpectedStateSerial 1 -OperationId ('b' * 64)
   exit 81
 }} catch {{
@@ -616,7 +616,7 @@ $env:VERDA_CLIENT_SECRET = 'test-only'
 $script:terraformCalled = $false
 function terraform {{ $script:terraformCalled = $true; throw 'fake terraform invoked' }}
 try {{
-  . '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-output `
+  & '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-output `
     -InventoryOutput '{sentinels[alias]}' -KnownHosts '{known_hosts}' `
     -ExpectedStateLineageSha256 ('a' * 64) -ExpectedStateSerial 1 -OperationId ('b' * 64)
   exit 61
@@ -668,7 +668,7 @@ $env:VERDA_CLIENT_SECRET = 'test-only'
 $script:terraformCalled = $false
 function terraform {{ $script:terraformCalled = $true; throw 'fake terraform invoked' }}
 try {{
-  . '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-plan `
+  & '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-plan `
     -SavedPlan '{candidate}' -ExpectedStateLineageSha256 ('a' * 64) -ExpectedStateSerial 1 -OperationId ('b' * 64)
   exit 51
 }} catch {{ if ($script:terraformCalled) {{ exit 52 }} }}
@@ -707,7 +707,7 @@ $env:VERDA_CLIENT_ID = 'test-only'
 $env:VERDA_CLIENT_SECRET = 'test-only'
 $env:PATH = '{fake_bin};' + $env:PATH
 try {{
-  . '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-plan `
+  & '{ROOT / 'scripts' / 'infra' / 'phase2.ps1'}' -Target phase6-resize-plan `
     -SavedPlan '{plan_path}' -ExpectedStateLineageSha256 ('a' * 64) -ExpectedStateSerial 1 -OperationId ('b' * 64)
   exit 71
 }} catch {{ "generic-failure" }}

@@ -14,6 +14,10 @@ param(
     [string]$KnownHosts = ''
 )
 
+if ($MyInvocation.InvocationName -eq '.') {
+    throw 'phase2.ps1 is a non-library entrypoint and must not be dot-sourced.'
+}
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -88,6 +92,110 @@ function Assert-CanonicalTreesDisjoint {
         $leftPath.StartsWith($rightPrefix, [StringComparison]::OrdinalIgnoreCase) -or
         $rightPath.StartsWith($leftPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw "$Label must be canonical, separate external trees."
+    }
+}
+
+function Assert-SingleFileIdentity {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Label)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+    $item = Get-Item -LiteralPath $Path -Force
+    $linkTypeProperty = $item.PSObject.Properties['LinkType']
+    $targetProperty = $item.PSObject.Properties['Target']
+    $linkType = if ($linkTypeProperty) { [string]$linkTypeProperty.Value } else { '' }
+    $linkTargets = if ($targetProperty) { @($targetProperty.Value) } else { @() }
+    if ($linkType -eq 'HardLink' -and $linkTargets.Count -gt 1) {
+        throw "$Label must not be a hard link or share file identity with another asset."
+    }
+}
+
+function Enter-Phase2MutationLease {
+    param([Parameter(Mandatory)]$Paths)
+
+    $leaseDirectory = Join-Path $Paths.Base 'locks'
+    Protect-Directory -Path $leaseDirectory
+    $leasePath = Join-Path $leaseDirectory 'phase2-live-mutation.lock'
+    try {
+        $stream = [IO.File]::Open(
+            $leasePath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None
+        )
+    } catch {
+        throw 'Another Phase 2 process holds the OS-exclusive live-mutation lease.'
+    }
+    $metadata = [Text.Encoding]::UTF8.GetBytes(
+        ([ordered]@{ schema_version = 1; pid = $PID; target = $Target } | ConvertTo-Json -Compress)
+    )
+    $stream.SetLength(0)
+    $stream.Write($metadata, 0, $metadata.Length)
+    $stream.Flush($true)
+    $stream.Position = 0
+    $stream
+}
+
+function Open-ReviewedPlanHandle {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw 'The reviewed Terraform saved plan is absent.'
+    }
+    try {
+        [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    } catch {
+        throw 'Unable to hold the reviewed Terraform saved plan against replacement.'
+    }
+}
+
+function Get-OpenPlanSha256 {
+    param([Parameter(Mandatory)][IO.FileStream]$Stream)
+
+    $Stream.Position = 0
+    $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Stream)).ToLowerInvariant()
+    $Stream.Position = 0
+    $digest
+}
+
+function Assert-Phase6StateBoundary {
+    param([Parameter(Mandatory)]$Paths)
+
+    $expectedState = [IO.Path]::GetFullPath((Join-Path $Paths.Base 'terraform\management.tfstate'))
+    $configuredState = [IO.Path]::GetFullPath($Paths.StatePath)
+    if (-not $configuredState.Equals($expectedState, [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Get-CanonicalBoundaryPath -Path $configuredState).Equals(
+            (Get-CanonicalBoundaryPath -Path $expectedState), [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'Phase 6 state must use the exact dedicated protected state path.'
+    }
+    $stateDirectory = Split-Path -Parent $configuredState
+    Assert-NoReparsePath -Path $stateDirectory -Label 'Phase 6 state directory'
+    $stateAssets = @(
+        $configuredState, $Paths.EncryptedStatePath,
+        "$configuredState.dpapi.new", "$configuredState.backup", "$configuredState.backup.dpapi",
+        "$configuredState.backup.dpapi.new"
+    )
+    $otherAssets = @($Paths.SshPrivateKey, $Paths.SshPublicKey, $Paths.KnownHosts)
+    foreach ($asset in $stateAssets + $otherAssets) {
+        Assert-NoReparsePath -Path $asset -Label 'Phase 6 protected asset'
+        Assert-SingleFileIdentity -Path $asset -Label 'Phase 6 protected asset'
+    }
+    $allCanonical = @(($stateAssets + $otherAssets) | ForEach-Object { Get-CanonicalBoundaryPath -Path $_ })
+    if (@($allCanonical | Sort-Object -Unique).Count -ne $allCanonical.Count) {
+        throw 'Phase 6 protected state, key, and known-hosts paths must be pairwise distinct.'
+    }
+    foreach ($stateAsset in $stateAssets) {
+        $stateCanonical = Get-CanonicalBoundaryPath -Path $stateAsset
+        foreach ($otherAsset in $otherAssets) {
+            if ($stateCanonical.Equals(
+                (Get-CanonicalBoundaryPath -Path $otherAsset), [StringComparison]::OrdinalIgnoreCase
+            )) {
+                throw 'Phase 6 state aliases an SSH key or known-hosts asset.'
+            }
+        }
+        $backup = Get-CanonicalBoundaryPath -Path $Paths.BackupDirectory
+        $backupPrefix = $backup.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($stateCanonical.Equals($backup, [StringComparison]::OrdinalIgnoreCase) -or
+            $stateCanonical.StartsWith($backupPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Phase 6 state aliases the protected backup tree.'
+        }
     }
 }
 
@@ -517,24 +625,29 @@ function Invoke-Node02RepairApply {
         throw "No reviewed node-02 recovery plan exists; run the guarded recovery-plan target first."
     }
 
+    $planHandle = Open-ReviewedPlanHandle -Path $Paths.RepairPlanPath
+    $reviewedPlanSha256 = Get-OpenPlanSha256 -Stream $planHandle
     $originalPlanPath = $Paths.PlanPath
     try {
         $Paths.PlanPath = $Paths.RepairPlanPath
         Assert-Plan -Paths $Paths -Mode 'node-02-replacement' -SummaryPath $repairSummary
         Assert-CostEnvelope -SummaryPath $repairSummary
+        if ((Get-OpenPlanSha256 -Stream $planHandle) -ne $reviewedPlanSha256) {
+            throw 'Reviewed node-02 plan bytes changed while held open.'
+        }
+        Backup-State -Paths $Paths
+        try {
+            Invoke-Terraform -Arguments @(
+                'apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $Paths.RepairPlanPath
+            ) -LogName 'node-02-replacement-apply.log' | Out-Null
+        } finally {
+            if (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf) {
+                Backup-State -Paths $Paths
+            }
+        }
     } finally {
         $Paths.PlanPath = $originalPlanPath
-    }
-
-    Backup-State -Paths $Paths
-    try {
-        Invoke-Terraform -Arguments @(
-            'apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $Paths.RepairPlanPath
-        ) -LogName 'node-02-replacement-apply.log' | Out-Null
-    } finally {
-        if (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf) {
-            Backup-State -Paths $Paths
-        }
+        $planHandle.Dispose()
     }
     Write-Host "[PASS] Node 02 compute/OS replacement applied; protected data-volume state remains managed."
 }
@@ -830,11 +943,19 @@ if ($phase6ProtectedTarget -and -not $IsWindows) {
 }
 $paths = Get-ExternalPaths
 $phase6StateOpened = $false
+$mutationTarget = $Target -in @('apply', 'repair-node-02-apply', 'destroy')
+$mutationLease = $null
+if ($phase6ProtectedTarget) {
+    Assert-Phase6StateBoundary -Paths $paths
+}
 if (-not $phase6ProtectedTarget) {
     Write-Host "[phase 2] target=$Target cluster=$Cluster credentials=process-only cloud-mutation=$($Target -in @('apply', 'repair-node-02-apply', 'destroy'))"
 }
 
 try {
+if ($mutationTarget) {
+    $mutationLease = Enter-Phase2MutationLease -Paths $paths
+}
 switch ($Target) {
     'phase6-resize-plan' {
         Assert-Credentials
@@ -879,11 +1000,20 @@ switch ($Target) {
         if (-not (Test-Path -LiteralPath $paths.PlanPath -PathType Leaf)) {
             throw "No reviewed external saved plan exists; run make infra-plan CLUSTER=management first."
         }
-        Assert-Plan -Paths $paths -Mode 'auto' -SummaryPath $planSummary
-        Assert-CostEnvelope -SummaryPath $planSummary
-        Invoke-Terraform -Arguments @('apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $paths.PlanPath) `
-            -LogName 'apply.log' | Out-Null
-        Backup-State -Paths $paths
+        $planHandle = Open-ReviewedPlanHandle -Path $paths.PlanPath
+        try {
+            $reviewedPlanSha256 = Get-OpenPlanSha256 -Stream $planHandle
+            Assert-Plan -Paths $paths -Mode 'auto' -SummaryPath $planSummary
+            Assert-CostEnvelope -SummaryPath $planSummary
+            if ((Get-OpenPlanSha256 -Stream $planHandle) -ne $reviewedPlanSha256) {
+                throw 'Reviewed Terraform plan bytes changed while held open.'
+            }
+            Invoke-Terraform -Arguments @('apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $paths.PlanPath) `
+                -LogName 'apply.log' | Out-Null
+            Backup-State -Paths $paths
+        } finally {
+            $planHandle.Dispose()
+        }
     }
     'repair-node-02-plan' {
         Assert-DestructiveConfirmation
@@ -985,9 +1115,13 @@ switch ($Target) {
     }
 }
 } finally {
-    if ($phase6ProtectedTarget -and $phase6StateOpened) {
-        Close-SealedState -Paths $paths 6>$null
-    } elseif (-not $phase6ProtectedTarget) {
-        Close-SealedState -Paths $paths
+    try {
+        if ($phase6ProtectedTarget -and $phase6StateOpened) {
+            Close-SealedState -Paths $paths 6>$null
+        } elseif (-not $phase6ProtectedTarget) {
+            Close-SealedState -Paths $paths
+        }
+    } finally {
+        if ($mutationLease) { $mutationLease.Dispose() }
     }
 }
