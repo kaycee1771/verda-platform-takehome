@@ -187,7 +187,7 @@ trivy_validate() {
   trivy config --cache-dir .local/trivy --skip-check-update --timeout 30m --exit-code 1 \
     --helm-kube-version 1.35.7 \
     --severity HIGH,CRITICAL \
-    --skip-dirs .git --skip-dirs .local --skip-dirs tmp \
+    --skip-dirs .git --skip-dirs .local --skip-dirs .worktrees --skip-dirs tmp \
     --skip-dirs tests --skip-dirs policies/kyverno/tests \
     --skip-dirs platform/management/cert-manager/staging \
     --skip-dirs platform/management/cert-manager/production \
