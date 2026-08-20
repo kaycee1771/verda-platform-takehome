@@ -4,3 +4,4 @@ kind: Kustomization
 resources:
   - priorityclasses.yaml
   - namespaces.yaml
+  - cattle-system-limit-range.yaml

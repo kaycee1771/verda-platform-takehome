@@ -183,7 +183,6 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
             [
                 "current-three-node-cpu-envelope-insufficient",
                 "candidate-shape-kubernetes-allocatable-unverified",
-                "rancher-pre-upgrade-hook-has-no-chart-supported-resource-values",
             ],
         )
         self.assertEqual(contract["baseline"]["allocatable_memory_bytes"], 42291773440)
@@ -197,16 +196,20 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
         self.assertEqual(contract["baseline"]["required_memory_reserve_bytes"], 4 * GIB)
         self.assertEqual(contract["baseline"]["required_storage_reserve_bytes"], 50 * GIB)
         self.assertEqual(contract["projection_result"]["new_steady_cpu_millicores"], 4460)
-        self.assertEqual(contract["projection_result"]["new_rollout_peak_cpu_millicores"], 6550)
+        self.assertEqual(contract["projection_result"]["new_rollout_peak_cpu_millicores"], 6650)
         self.assertEqual(
             contract["projection_result"]["one_node_loss_cpu_reserve_shortfall_millicores"],
-            7485,
+            7585,
         )
         self.assertEqual(
             contract["projection_result"]["one_node_loss_memory_reserve_headroom_bytes"],
-            1009131520,
+            874913792,
         )
-        self.assertEqual(contract["projection_result"]["unrequested_container_count"], 1)
+        self.assertEqual(contract["projection_result"]["unrequested_container_count"], 0)
+        self.assertEqual(
+            contract["projection_result"]["required_candidate_per_node_cpu_millicores"],
+            6793,
+        )
         self.assertEqual(set(contract["components"]), RUNTIME.REQUIRED_COMPONENTS)
         for component in contract["components"].values():
             self.assertRegex(component["render_sha256"], r"^[0-9a-f]{64}$")
@@ -218,6 +221,8 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
         self.assertIn("SYNTHETIC_DIGEST", source)
         self.assertIn("operator-workloads.capacity-input", source)
         self.assertIn("velero_generated_projections", source)
+        self.assertIn("inject_rancher_hook_limit", source)
+        self.assertIn("cattle-system-limit-range.yaml", source)
         self.assertNotIn("kubectl get", source)
         self.assertNotIn("helm install", source)
 

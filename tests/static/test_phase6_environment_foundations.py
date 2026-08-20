@@ -27,7 +27,12 @@ class Phase6EnvironmentFoundationTests(unittest.TestCase):
             (root / "kustomization.yaml").read_text(encoding="utf-8")
         )
         self.assertEqual(
-            kustomization["resources"], ["priorityclasses.yaml", "namespaces.yaml"]
+            kustomization["resources"],
+            [
+                "priorityclasses.yaml",
+                "namespaces.yaml",
+                "cattle-system-limit-range.yaml",
+            ],
         )
         priorities = documents(root / "priorityclasses.yaml")
         self.assertEqual(
@@ -65,6 +70,29 @@ class Phase6EnvironmentFoundationTests(unittest.TestCase):
                 "pod-security.kubernetes.io/enforce"
             ],
             "baseline",
+        )
+        self.assertEqual(
+            by_name["cattle-system"]["metadata"]["annotations"][
+                "argocd.argoproj.io/sync-wave"
+            ],
+            "-20",
+        )
+        limit_range = documents(root / "cattle-system-limit-range.yaml")[0]
+        self.assertEqual(limit_range["kind"], "LimitRange")
+        self.assertEqual(limit_range["metadata"]["namespace"], "cattle-system")
+        self.assertEqual(
+            limit_range["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"],
+            "-19",
+        )
+        self.assertEqual(
+            limit_range["spec"]["limits"],
+            [
+                {
+                    "type": "Container",
+                    "defaultRequest": {"cpu": "100m", "memory": "128Mi"},
+                    "default": {"cpu": "500m", "memory": "256Mi"},
+                }
+            ],
         )
         self.assertEqual(
             by_name["logging"]["metadata"]["labels"][

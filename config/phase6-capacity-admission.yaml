@@ -8,7 +8,6 @@ admission_status: blocked-incomplete-inputs
 blockers:
   - current-three-node-cpu-envelope-insufficient
   - candidate-shape-kubernetes-allocatable-unverified
-  - rancher-pre-upgrade-hook-has-no-chart-supported-resource-values
 baseline:
   node_count: 3
   allocatable_cpu_millicores: 9000
@@ -42,27 +41,27 @@ projection_result:
   rendered_document_count: 350
   workload_definition_count: 34
   pvc_definition_count: 8
-  unrequested_container_count: 1
+  unrequested_container_count: 0
   new_steady_cpu_millicores: 4460
-  new_rollout_peak_cpu_millicores: 6550
+  new_rollout_peak_cpu_millicores: 6650
   new_steady_memory_bytes: 9328132096
-  new_rollout_peak_memory_bytes: 12767461376
+  new_rollout_peak_memory_bytes: 12901679104
   new_logical_pvc_bytes: 63350767616
   new_raw_pvc_bytes: 177167400960
   one_node_loss_pvc_bytes: 113816633344
   post_steady_cpu_millicores: 10395
-  post_rollout_peak_cpu_millicores: 12485
+  post_rollout_peak_cpu_millicores: 12585
   post_steady_memory_bytes: 19451084800
-  post_rollout_peak_memory_bytes: 22890414080
+  post_rollout_peak_memory_bytes: 23024631808
   total_cpu_shortfall_millicores: 1395
-  one_node_loss_cpu_headroom_millicores: -6485
-  one_node_loss_cpu_reserve_shortfall_millicores: 7485
-  one_node_loss_memory_headroom_bytes: 5304098816
-  one_node_loss_memory_reserve_headroom_bytes: 1009131520
-  required_candidate_two_node_cpu_millicores: 13485
-  required_candidate_per_node_cpu_millicores: 6743
-  required_candidate_two_node_memory_bytes: 27185381376
-  required_candidate_per_node_memory_bytes: 13592690688
+  one_node_loss_cpu_headroom_millicores: -6585
+  one_node_loss_cpu_reserve_shortfall_millicores: 7585
+  one_node_loss_memory_headroom_bytes: 5169881088
+  one_node_loss_memory_reserve_headroom_bytes: 874913792
+  required_candidate_two_node_cpu_millicores: 13585
+  required_candidate_per_node_cpu_millicores: 6793
+  required_candidate_two_node_memory_bytes: 27319599104
+  required_candidate_per_node_memory_bytes: 13659799552
   storage_headroom_bytes: 137719971840
   one_node_loss_storage_headroom_bytes: 96108281856
 storage_classes:
@@ -179,13 +178,18 @@ components:
          sha256: 463b3454d1e284ec59f1bc19765e254b5bfd0ee9c5c664fbf28b30c6e111cceb}
   rancher:
     render_path: ../.local/phase6/renders/rancher.yaml
-    render_sha256: a2a7d9a47ef99240a12fc63ed6bb463cba3aba107d25b7ed490455447ac0beb3
+    render_sha256: 3e1bd47c0dc78f2075511c0e2949048cfb043138e59d060150529fcb82235464
     expected_document_count: 13
     expected_workload_count: 2
     expected_pvc_definition_count: 0
     chart_archive_sha256: 65d4505a3547e7ee5179f14345377137e826541b4daf19c6a7575517f992daf6
-    projection_semantics: upstream chart with checked-in Rancher values; activation gate not asserted
+    projection_semantics: >-
+      upstream chart with checked-in values and exact cattle-system LimitRange
+      mutation for the pre-upgrade hook; activation gate not asserted
     source_inputs:
+      - {path: platform/management/namespaces/cattle-system-limit-range.yaml,
+         recursive: false,
+         sha256: e7bed7736b66e6266d955532ebb59ab4e4de014c4c47c8f6912fd92ce9d49e38}
       - {path: platform/management/rancher/values.yaml, recursive: false,
          sha256: e745b1af4c250cfc5c7c556a81ec54f8c60bb6f1880f8dbb5b1ceb4d518a068f}
       - {path: versions.lock.yaml, recursive: false,

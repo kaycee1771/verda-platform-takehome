@@ -264,6 +264,55 @@ def component_entry(output: Path, result: dict[str, int | str], sources: list[di
     return entry
 
 
+def inject_rancher_hook_limit(
+    documents: list[dict[str, Any]], limit_range: dict[str, Any]
+) -> None:
+    """Model the API-server LimitRange mutation for the exact Rancher hook."""
+
+    limits = limit_range.get("spec", {}).get("limits")
+    if not isinstance(limits, list) or len(limits) != 1:
+        raise RenderError("cattle-system LimitRange must contain one Container rule")
+    rule = limits[0]
+    if not isinstance(rule, dict) or rule.get("type") != "Container":
+        raise RenderError("cattle-system LimitRange must contain one Container rule")
+    request = rule.get("defaultRequest")
+    resource_limit = rule.get("default")
+    if request != {"cpu": "100m", "memory": "128Mi"} or resource_limit != {
+        "cpu": "500m",
+        "memory": "256Mi",
+    }:
+        raise RenderError("cattle-system LimitRange resources changed")
+
+    matches = []
+    for document in documents:
+        metadata = document.get("metadata", {})
+        annotations = metadata.get("annotations", {}) if isinstance(metadata, dict) else {}
+        if (
+            document.get("apiVersion") == "batch/v1"
+            and document.get("kind") == "Job"
+            and isinstance(metadata, dict)
+            and metadata.get("name") == "rancher-pre-upgrade"
+            and isinstance(annotations, dict)
+            and annotations.get("helm.sh/hook") == "pre-upgrade"
+        ):
+            matches.append(document)
+    if len(matches) != 1:
+        raise RenderError("Rancher render must contain exactly one pre-upgrade hook Job")
+    containers = matches[0].get("spec", {}).get("template", {}).get("spec", {}).get("containers")
+    if not isinstance(containers, list) or len(containers) != 1:
+        raise RenderError("Rancher pre-upgrade hook must contain exactly one container")
+    container = containers[0]
+    if not isinstance(container, dict) or container.get("name") != "rancher-pre-upgrade":
+        raise RenderError("Rancher pre-upgrade hook container identity changed")
+    if "resources" in container:
+        raise RenderError("Rancher hook gained chart-owned resources; remove the projection")
+    container["resources"] = {
+        "requests": deepcopy(request),
+        "limits": deepcopy(resource_limit),
+    }
+    projection_annotations(matches[0], "cattle-system-limit-range-admission")
+
+
 def render_all(args: argparse.Namespace) -> dict[str, Any]:
     lock = load_one(LOCK)
     output_dir = args.output_dir.resolve()
@@ -276,8 +325,11 @@ def render_all(args: argparse.Namespace) -> dict[str, Any]:
         rancher_values = deepcopy(load_one(rancher_source)["rancher"])
         rancher_values.pop("enabled", None)
         rancher_docs = helm_render(args.helm, "rancher", "cattle-system", chart_path(lock, cache, "rancher", "rancher"), rancher_values, temporary)
+        rancher_limit_source = ROOT / "platform/management/namespaces/cattle-system-limit-range.yaml"
+        rancher_limit = load_one(rancher_limit_source)
+        inject_rancher_hook_limit(rancher_docs, rancher_limit)
         rancher_out = output_dir / "rancher.yaml"
-        components["rancher"] = component_entry(rancher_out, canonical_write(rancher_out, rancher_docs), [tracked_source(LOCK), tracked_source(rancher_source)], chart_archive_sha256=lock["helm_charts"]["rancher"]["archive_sha256"], projection_semantics="upstream-chart-with-checked-in-rancher-values; activation gate not asserted")
+        components["rancher"] = component_entry(rancher_out, canonical_write(rancher_out, rancher_docs), [tracked_source(LOCK), tracked_source(rancher_source), tracked_source(rancher_limit_source)], chart_archive_sha256=lock["helm_charts"]["rancher"]["archive_sha256"], projection_semantics="upstream chart with checked-in values and exact cattle-system LimitRange mutation for the pre-upgrade hook; activation gate not asserted")
 
         harbor_source = ROOT / "platform/management/harbor/service/values.yaml"
         harbor_values = deepcopy(load_one(harbor_source)["harbor"])

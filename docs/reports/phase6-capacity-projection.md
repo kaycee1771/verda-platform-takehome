@@ -19,10 +19,10 @@ archive by SHA-256.
 | Kyverno | 420m | 740m |
 | Loki | 275m | 300m |
 | Stage A smoke | 40m | 70m |
-| Rancher | 1575m | 2100m |
+| Rancher | 1575m | 2200m |
 | Sealed Secrets | 50m | 100m |
 | Velero with generated work | 500m | 1300m |
-| **Total** | **4460m** | **6550m** |
+| **Total** | **4460m** | **6650m** |
 
 | Scope | Steady memory (bytes) | Peak memory (bytes) |
 |---|---:|---:|
@@ -33,10 +33,10 @@ archive by SHA-256.
 | Kyverno | 536870912 | 939524096 |
 | Loki | 570425344 | 603979776 |
 | Stage A smoke | 67108864 | 117440512 |
-| Rancher | 3422552064 | 4563402752 |
+| Rancher | 3422552064 | 4697620480 |
 | Sealed Secrets | 67108864 | 134217728 |
 | Velero with generated work | 1073741824 | 2013265920 |
-| **Total** | **9328132096** | **12767461376** |
+| **Total** | **9328132096** | **12901679104** |
 
 | Scope | Logical PVC bytes | Raw replicated bytes |
 |---|---:|---:|
@@ -95,12 +95,12 @@ CPU blocks the current cluster independently of the missing exact memory input:
 
 - post-Phase-6 steady CPU would be 10395m, exceeding total allocatable CPU by
   1395m;
-- post-Phase-6 rollout peak would be 12485m;
-- after one node loss the rollout headroom would be negative 6485m;
+- post-Phase-6 rollout peak would be 12585m;
+- after one node loss the rollout headroom would be negative 6585m;
 - including the selected 1000m reserve, the two surviving nodes are short by
-  7485m.
+  7585m.
 
-Any replacement shape must prove at least 13485m exact worst-two-node
+Any replacement shape must prove at least 13585m exact worst-two-node
 allocatable CPU for this projection and reserve. Marketing vCPU count is not an
 acceptable substitute for the rendered Kubernetes allocatable value.
 
@@ -114,24 +114,23 @@ produces the replacement nodes' exact allocatable bytes. The current baseline
 itself is exact and passes the selected memory reserve:
 
 - post-Phase-6 steady memory: 19451084800 bytes;
-- post-Phase-6 rollout peak memory: 22890414080 bytes;
-- current one-node-loss memory headroom: 5304098816 bytes;
-- headroom after the four GiB reserve: 1009131520 bytes.
+- post-Phase-6 rollout peak memory: 23024631808 bytes;
+- current one-node-loss memory headroom: 5169881088 bytes;
+- headroom after the four GiB reserve: 874913792 bytes.
 
 The candidate shape must satisfy:
 
 ```text
-worst-two-node allocatable memory >= 27185381376
+worst-two-node allocatable memory >= 27319599104
 ```
 
-One additional workload-quality blocker is visible: the pinned upstream Rancher
-`rancher-pre-upgrade` hook container has no explicit CPU or memory request.
-Kubernetes schedules that container at zero request, which the projection
-reports exactly. Rancher chart 2.14.3 exposes only image values for this hook;
-its template does not consume a resources value or an enable/disable value.
-Adding a values key would therefore be inert. Stage A admission remains fail
-closed until a supported chart revision, reviewed chart fork, or another tested
-rendering mechanism can set the request.
+The pinned upstream Rancher `rancher-pre-upgrade` hook exposes no chart-owned
+resource values. The foundation Application therefore owns a bounded
+`cattle-system` LimitRange, ordered after the Namespace and before Rancher. Its
+100m/128Mi default request and 500m/256Mi default limit are modeled as the exact
+API-server mutation of that one hook container. The renderer fails if the
+upstream hook identity changes, if the chart gains its own resources, or if the
+LimitRange values drift.
 
 ## Candidate-shape thresholds
 
@@ -142,10 +141,10 @@ memory and storage pass.
 For an equal three-node replacement, the complete projection plus reserves
 requires:
 
-- at least 13485m CPU across the worst two surviving nodes;
-- at least 6743m Kubernetes allocatable CPU per node;
-- at least 27185381376 memory bytes across the worst two surviving nodes;
-- at least 13592690688 Kubernetes allocatable memory bytes per node.
+- at least 13585m CPU across the worst two surviving nodes;
+- at least 6793m Kubernetes allocatable CPU per node;
+- at least 27319599104 memory bytes across the worst two surviving nodes;
+- at least 13659799552 Kubernetes allocatable memory bytes per node.
 
 These are Kubernetes allocatable thresholds, not provider vCPU/RAM labels. The
 candidate `CPU.8V.32G` shape remains blocked until an exact rendered plan and a
@@ -156,8 +155,7 @@ fresh protected node sample prove these values.
 1. Fresh protected node and pod JSON after any resize, reduced locally without
    emitting identities.
 2. Exact post-resize worst-two-node Kubernetes allocatable CPU and memory.
-3. A supported Rancher pre-upgrade hook request mechanism.
-4. The real Stage A Harbor digest and live readiness gates.
+3. The real Stage A Harbor digest and live readiness gates.
 
 No cloud API, Kubernetes API, credential, live manifest, Argo root, or live
 mutation lease is changed by this projection.
