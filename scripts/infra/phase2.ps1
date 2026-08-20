@@ -1,12 +1,13 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('init', 'plan', 'apply', 'repair-node-02-plan', 'repair-node-02-apply', 'inventory', 'verify-hosts', 'lifecycle-check', 'cost-report', 'state-audit', 'destroy', 'phase6-resize-plan', 'phase6-resize-output')]
+    [ValidateSet('init', 'plan', 'apply', 'repair-node-02-plan', 'repair-node-02-apply', 'inventory', 'verify-hosts', 'lifecycle-check', 'cost-report', 'state-audit', 'destroy', 'phase6-resize-plan', 'phase6-resize-apply', 'phase6-resize-state', 'phase6-resize-no-drift', 'phase6-resize-output')]
     [string]$Target,
     [ValidateSet('management')]
     [string]$Cluster = 'management',
     [switch]$Confirm,
     [string]$SavedPlan = '',
+    [string]$ExpectedPlanSha256 = '',
     [string]$ExpectedStateLineageSha256 = '',
     [long]$ExpectedStateSerial = -1,
     [string]$OperationId = '',
@@ -956,6 +957,44 @@ function Assert-Phase6OutputArguments {
     Assert-OutsideRepository -Path $script:KnownHosts -Label 'Phase 6 known-hosts file'
 }
 
+function Assert-Phase6ApplyArguments {
+    param([Parameter(Mandatory)]$Paths)
+
+    if (-not $Confirm -or $env:CONFIRM_PHASE6_RESIZE -ne 'yes') {
+        throw 'Phase 6 apply requires both -Confirm and CONFIRM_PHASE6_RESIZE=yes.'
+    }
+    if ($OperationId -notmatch '^[0-9a-f]{64}$' -or $ExpectedPlanSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'Phase 6 apply operation or reviewed plan digest is invalid.'
+    }
+    if ($ExpectedStateLineageSha256 -notmatch '^[0-9a-f]{64}$' -or $ExpectedStateSerial -lt 0) {
+        throw 'Expected Terraform state lineage/serial is invalid.'
+    }
+    if (-not $SavedPlan) { throw 'An external reviewed Phase 6 saved plan path is required.' }
+    $candidate = [IO.Path]::GetFullPath($SavedPlan)
+    $directory = [IO.Path]::GetFullPath($Paths.Phase6PlanDirectory)
+    Assert-NoReparsePath -Path $directory -Label 'Phase 6 saved-plan directory'
+    Assert-NoReparsePath -Path $candidate -Label 'Phase 6 reviewed saved plan'
+    Assert-SingleFileIdentity -Path $candidate -Label 'Phase 6 reviewed saved plan'
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf) -or
+        -not ([IO.Path]::GetFullPath((Split-Path -Parent $candidate))).Equals(
+            $directory, [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not (Get-CanonicalBoundaryPath -Path (Split-Path -Parent $candidate)).Equals(
+            (Get-CanonicalBoundaryPath -Path $directory), [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'Phase 6 reviewed saved plan must be an existing direct child of its protected directory.'
+    }
+    Assert-OutsideRepository -Path $candidate -Label 'Phase 6 reviewed saved plan'
+    $script:SavedPlan = $candidate
+}
+
+function Assert-Phase6StateArguments {
+    if ($OperationId -notmatch '^[0-9a-f]{64}$' -or
+        $ExpectedStateLineageSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'Phase 6 state receipt operation or lineage digest is invalid.'
+    }
+}
+
 function Invoke-Phase6Terraform {
     param(
         [Parameter(Mandatory)][string[]]$Arguments,
@@ -1006,6 +1045,91 @@ function Invoke-Phase6ResizePlan {
         plan_sha256 = $planHash
         state_lineage_sha256 = $receipt.lineage_sha256
         state_serial = $receipt.serial
+        raw_values_recorded = $false
+    } | ConvertTo-Json -Compress
+}
+
+function Invoke-Phase6ResizeApply {
+    param([Parameter(Mandatory)]$Paths)
+
+    Assert-Credentials
+    $before = Get-Phase6StateReceipt -Paths $Paths
+    if ($before.lineage_sha256 -ne $ExpectedStateLineageSha256 -or $before.serial -ne $ExpectedStateSerial) {
+        throw 'Terraform state lineage/serial differs from the reviewed apply boundary.'
+    }
+    $stage = New-StagedReviewedPlan -Path $SavedPlan -Paths $Paths
+    try {
+        if ($stage.Sha256 -ne $ExpectedPlanSha256) {
+            throw 'Reviewed Phase 6 plan digest differs before apply.'
+        }
+        $pathHandle = Open-VerifiedStagedPlanPath -Stage $stage
+        try {
+            Backup-State -Paths $Paths
+            try {
+                Invoke-Phase6Terraform -Arguments @(
+                    'apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $stage.Path
+                ) -LogName "phase6-apply-$OperationId.log" | Out-Null
+            } finally {
+                if (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf) {
+                    Backup-State -Paths $Paths
+                }
+            }
+        } finally {
+            $pathHandle.Dispose()
+        }
+        $after = Get-Phase6StateReceipt -Paths $Paths
+        if ($after.lineage_sha256 -ne $before.lineage_sha256 -or $after.serial -le $before.serial) {
+            throw 'Terraform state lineage changed or serial did not advance after apply.'
+        }
+        [ordered]@{
+            schema_version = 1
+            status = 'APPLY_COMPLETE_RECOVERY_REQUIRED'
+            operation_id = $OperationId
+            plan_sha256 = $ExpectedPlanSha256
+            state_lineage_sha256 = $after.lineage_sha256
+            state_serial_before = $before.serial
+            state_serial_after = $after.serial
+            raw_values_recorded = $false
+        } | ConvertTo-Json -Compress
+    } finally {
+        Remove-StagedReviewedPlan -Stage $stage
+    }
+}
+
+function Invoke-Phase6ResizeState {
+    param([Parameter(Mandatory)]$Paths)
+
+    $receipt = Get-Phase6StateReceipt -Paths $Paths
+    if ($receipt.lineage_sha256 -ne $ExpectedStateLineageSha256) {
+        throw 'Terraform state lineage differs from the reviewed operation.'
+    }
+    [ordered]@{
+        schema_version = 1
+        status = 'STATE_RECEIPT'
+        operation_id = $OperationId
+        state_lineage_sha256 = $receipt.lineage_sha256
+        state_serial = $receipt.serial
+        raw_values_recorded = $false
+    } | ConvertTo-Json -Compress
+}
+
+function Invoke-Phase6ResizeNoDrift {
+    param([Parameter(Mandatory)]$Paths)
+
+    $receipt = Get-Phase6StateReceipt -Paths $Paths
+    if ($receipt.lineage_sha256 -ne $ExpectedStateLineageSha256 -or $receipt.serial -ne $ExpectedStateSerial) {
+        throw 'Terraform state lineage/serial differs from the reviewed postflight boundary.'
+    }
+    Invoke-Phase6Terraform -Arguments @(
+        'plan', '-input=false', '-lock-timeout=60s', '-detailed-exitcode'
+    ) -LogName "phase6-no-drift-$OperationId.log" -AcceptedExitCodes @(0) | Out-Null
+    [ordered]@{
+        schema_version = 1
+        status = 'ZERO_DRIFT_VERIFIED'
+        operation_id = $OperationId
+        state_lineage_sha256 = $receipt.lineage_sha256
+        state_serial = $receipt.serial
+        terraform_zero_drift = $true
         raw_values_recorded = $false
     } | ConvertTo-Json -Compress
 }
@@ -1149,7 +1273,10 @@ function Write-LiveCostReport {
     Write-Host "[PASS] Live resource count and hourly cost reconcile within the documented tolerance."
 }
 
-$phase6ProtectedTarget = $Target -in @('phase6-resize-plan', 'phase6-resize-output')
+$phase6ProtectedTarget = $Target -in @(
+    'phase6-resize-plan', 'phase6-resize-apply', 'phase6-resize-state',
+    'phase6-resize-no-drift', 'phase6-resize-output'
+)
 if ($phase6ProtectedTarget -and -not $IsWindows) {
     throw 'Phase 6 protected targets require Windows DPAPI until Linux backup decrypt-and-compare verification is implemented.'
 }
@@ -1176,6 +1303,34 @@ switch ($Target) {
         $phase6StateOpened = $true
         Initialize-Phase6Terraform -Paths $paths 6>$null
         Invoke-Phase6ResizePlan -Paths $paths 6>$null
+    }
+    'phase6-resize-apply' {
+        Assert-Credentials
+        Assert-Phase6ApplyArguments -Paths $paths
+        Initialize-LocalBoundary -Paths $paths 6>$null
+        Open-SealedState -Paths $paths 6>$null
+        $phase6StateOpened = $true
+        Initialize-Phase6Terraform -Paths $paths 6>$null
+        Invoke-Phase6ResizeApply -Paths $paths 6>$null
+    }
+    'phase6-resize-state' {
+        Assert-Credentials
+        Assert-Phase6StateArguments
+        Initialize-LocalBoundary -Paths $paths 6>$null
+        Open-SealedState -Paths $paths 6>$null
+        $phase6StateOpened = $true
+        Initialize-Phase6Terraform -Paths $paths 6>$null
+        Invoke-Phase6ResizeState -Paths $paths 6>$null
+    }
+    'phase6-resize-no-drift' {
+        Assert-Credentials
+        Assert-Phase6StateArguments
+        if ($ExpectedStateSerial -lt 0) { throw 'Expected postflight Terraform state serial is invalid.' }
+        Initialize-LocalBoundary -Paths $paths 6>$null
+        Open-SealedState -Paths $paths 6>$null
+        $phase6StateOpened = $true
+        Initialize-Phase6Terraform -Paths $paths 6>$null
+        Invoke-Phase6ResizeNoDrift -Paths $paths 6>$null
     }
     'phase6-resize-output' {
         Assert-Credentials

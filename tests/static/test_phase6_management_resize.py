@@ -39,6 +39,8 @@ COMMIT = "a" * 40
 AUTHOR = "b" * 64
 REVIEWER = "c" * 64
 OWNER = "d" * 64
+LINEAGE = "5" * 64
+STATE_SERIAL = 10
 
 
 def active_contract() -> dict:
@@ -393,6 +395,7 @@ class GateTests(unittest.TestCase):
             "preflight_sha256": "3" * 64, "contract_sha256": "4" * 64,
             "cost_receipt_sha256": "5" * 64, "capacity_receipt_sha256": "6" * 64,
             "collector_report_sha256": "7" * 64, "tool_lock_sha256": "8" * 64,
+            "state_lineage_sha256": LINEAGE, "state_serial": STATE_SERIAL,
             "author_digest": AUTHOR, "reviewer_digest": AUTHOR, "reliability_reviewer_digest": "e" * 64,
             "security_approved": True, "capacity_approved": True, "reliability_approved": True,
         }
@@ -400,6 +403,7 @@ class GateTests(unittest.TestCase):
             RESIZE.assert_review(
                 review, COMMIT, "03", "resize", "0" * 64, "1" * 64, "2" * 64,
                 "3" * 64, "4" * 64, "5" * 64, "6" * 64, "7" * 64, "8" * 64,
+                LINEAGE, STATE_SERIAL,
             )
 
 
@@ -458,6 +462,13 @@ class AdmissionTests(unittest.TestCase):
                 "prepare_helper": RESIZE.digest_file(
                     ROOT / "scripts" / "phase6" / "prepare-management-node-resize.sh"
                 ),
+                "remove_helper": RESIZE.digest_file(
+                    ROOT / "scripts" / "phase6" / "remove-stale-management-member.sh"
+                ),
+                "authorization_verifier": RESIZE.digest_file(
+                    ROOT / "scripts" / "phase6" / "assert-operation-authorization.py"
+                ),
+                "phase2_boundary": RESIZE.digest_file(ROOT / "scripts" / "infra" / "phase2.ps1"),
                 "management_group_vars": RESIZE.digest_file(
                     ROOT / "infra" / "ansible" / "inventories" / "group_vars" / "management_servers.yml"
                 ),
@@ -470,6 +481,7 @@ class AdmissionTests(unittest.TestCase):
                 "cost_receipt_sha256": RESIZE.digest_file(cost_path),
                 "capacity_receipt_sha256": RESIZE.digest_file(capacity_path),
                 "collector_report_sha256": RESIZE.digest_file(collector_path), "tool_lock_sha256": tool_lock_sha,
+                "state_lineage_sha256": LINEAGE, "state_serial": STATE_SERIAL,
                 "author_digest": AUTHOR, "reviewer_digest": REVIEWER,
                 "reliability_reviewer_digest": "e" * 64,
                 "security_approved": True, "capacity_approved": True, "reliability_approved": True,
@@ -488,13 +500,15 @@ class AdmissionTests(unittest.TestCase):
             }
             with mock.patch.object(RESIZE, "assert_clean_reviewed_worktree") as clean, mock.patch.object(
                 RESIZE, "assert_trusted_collector_report", return_value=measured
-            ):
+            ), mock.patch.object(RESIZE, "terraform_show", return_value=plan()):
                 summary = RESIZE.admission(
                     contract_path=contract_path, progress_path=progress_path, saved_plan=plan_path,
                     preflight_path=preflight_path, review_path=review_path, lease_path=lease_path,
                     cost_path=cost_path, capacity_path=capacity_path, collector_path=collector_path,
                     operation_id="0" * 64, survivor="01", direction="resize", git_commit=COMMIT,
-                    repository=ROOT, now=NOW, plan=plan(),
+                    repository=ROOT, state_lineage_sha256=LINEAGE, state_serial=STATE_SERIAL,
+                    inventory_path=collector_path, known_hosts_path=collector_path,
+                    now=NOW,
                 )
                 clean.assert_called_once_with(ROOT, COMMIT)
             rendered = json.dumps(summary)
@@ -566,23 +580,58 @@ class RecoverySourceTests(unittest.TestCase):
         self.assertNotIn('"-target', controller)
         self.assertNotIn('"-replace', controller)
 
-    def test_live_recovery_is_unconditionally_disabled(self) -> None:
-        with self.assertRaisesRegex(RESIZE.ResizeRefused, "pinned container runner"):
-            RESIZE.recovery_admission(
-                contract_path=pathlib.Path("unused"), progress_path=pathlib.Path("unused"),
-                recovery_path=pathlib.Path("unused"), lease_path=pathlib.Path("unused"),
-                direction="resize", git_commit=COMMIT, repository=ROOT,
-                inventory_path=pathlib.Path("unused"), private_key_path=pathlib.Path("unused"),
-                known_hosts_path=pathlib.Path("unused"), runtime_vars_path=pathlib.Path("unused"), now=NOW,
-            )
+    def test_direct_helpers_refuse_before_any_cluster_command_without_controller_authorization(self) -> None:
+        operation = "0" * 64
+        commands = [
+            ["bash", "scripts/phase6/prepare-management-node-resize.sh",
+             "verda-mgmt-server-03", "--prepare", "missing", operation],
+            ["bash", "scripts/phase6/remove-stale-management-member.sh",
+             "verda-mgmt-server-03", "10.250.0.12", "missing", operation],
+        ]
+        for command in commands:
+            with self.subTest(helper=pathlib.Path(command[1]).name):
+                result = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 64, result.stdout + result.stderr)
+        for playbook_name in ("prepare-management-node-resize.yml", "recover-resized-management-node.yml"):
+            plays = yaml.safe_load((ROOT / "infra" / "ansible" / "playbooks" / playbook_name).read_text())
+            self.assertIn("Verify the controller-issued", plays[0]["tasks"][0]["name"])
 
-    def test_cli_exposes_no_mutating_or_recovery_action(self) -> None:
+    def test_authorization_verifier_refuses_the_checked_in_inert_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            external = pathlib.Path(directory)
+            operation = "0" * 64
+            journal = external / "journal.json"
+            authorization = external / "authorization.json"
+            journal.write_text(json.dumps({
+                "schema_version": 1, "phase": 6, "integrated_commit": COMMIT,
+                "operation_id": operation, "node": "03", "direction": "resize", "state": "PREPARED",
+            }), encoding="utf-8")
+            authorization.write_text(json.dumps({
+                "schema_version": 1, "phase": 6, "status": "CONTROLLER_OPERATION_AUTHORIZED",
+                "integrated_commit": COMMIT, "operation_id": operation, "node": "03",
+                "direction": "resize", "mode": "prepare",
+                "contract_sha256": RESIZE.digest_file(CONTRACT_PATH),
+                "journal_sha256": RESIZE.digest_file(journal),
+                "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)).isoformat(),
+                "raw_values_recorded": False,
+            }), encoding="utf-8")
+            result = subprocess.run([
+                "python", str(ROOT / "scripts" / "phase6" / "assert-operation-authorization.py"),
+                "--authorization", str(authorization), "--contract", str(CONTRACT_PATH),
+                "--journal", str(journal), "--authorization-sha256", RESIZE.digest_file(authorization),
+                "--operation-id", operation, "--commit", COMMIT, "--node", "03",
+                "--direction", "resize", "--mode", "prepare",
+            ], check=False, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 64)
+            self.assertIn("active external contract", result.stderr)
+
+    def test_cli_exposes_only_reviewed_operation_routes(self) -> None:
         parser = RESIZE.build_parser()
         choices = next(action.choices for action in parser._actions if getattr(action, "choices", None))
-        self.assertEqual(set(choices), {"validate-contract"})
+        self.assertEqual(set(choices), {"validate-contract", "apply-node", "adopt-apply", "recover-node"})
         phase2 = (ROOT / "scripts" / "infra" / "phase2.ps1").read_text()
-        self.assertNotIn("phase6-resize-apply", phase2)
-        self.assertNotIn("Invoke-Phase6ResizeApply", phase2)
+        self.assertIn("phase6-resize-apply", phase2)
+        self.assertIn("Invoke-Phase6ResizeApply", phase2)
 
 
 class ProtectedStateSourceTests(unittest.TestCase):
@@ -593,11 +642,13 @@ class ProtectedStateSourceTests(unittest.TestCase):
     def section(self, start: str, end: str) -> str:
         return self.source.split(start, 1)[1].split(end, 1)[0]
 
-    def test_phase6_has_explicit_plan_and_output_boundaries_only(self) -> None:
+    def test_phase6_has_explicit_plan_apply_state_and_output_boundaries(self) -> None:
         self.assertIn("'phase6-resize-plan'", self.source)
+        self.assertIn("'phase6-resize-apply'", self.source)
+        self.assertIn("'phase6-resize-state'", self.source)
+        self.assertIn("'phase6-resize-no-drift'", self.source)
         self.assertIn("'phase6-resize-output'", self.source)
-        self.assertNotIn("phase6-resize-apply", self.source)
-        self.assertNotIn("Invoke-Phase6ResizeApply", self.source)
+        self.assertIn("Invoke-Phase6ResizeApply", self.source)
         self.assertIn("Assert-OutsideRepository -Path $statePath", self.source)
         self.assertIn("Close-SealedState -Paths $paths", self.source)
         self.assertIn("$phase6ProtectedTarget -and $phase6StateOpened", self.source)
@@ -976,6 +1027,7 @@ class TrustedInputAndCollectorTests(unittest.TestCase):
             facts = COLLECTOR.command_set(
                 runner, external / "kubeconfig", inventory,
                 "verda-mgmt-server-03", "verda-mgmt-server-01", "preflight",
+                now=NOW,
             )
             key_checks = [command for command in runner.commands if command[0] == "ssh-keygen"]
             ssh_commands = [command for command in runner.commands if command[0] == "ssh"]
@@ -1026,6 +1078,27 @@ class TrustedInputAndCollectorTests(unittest.TestCase):
                 node="03", survivor="01", direction="resize", stage="preflight", now=NOW,
                 freshness_seconds=600,
             )
+
+    def test_recovery_etcd_is_two_survivors_and_snapshot_must_be_operation_fresh(self) -> None:
+        members = {"members": [{"name": name} for name in COLLECTOR.NODES]}
+        statuses = [{
+            "Endpoint": f"https://{COLLECTOR.WG_ADDRESSES[name]}:2379",
+            "Status": {"header": {"member_id": index}, "leader": 1},
+        } for index, name in enumerate(COLLECTOR.NODES[:2], start=1)]
+        facts = COLLECTOR.etcd_facts(statuses, members, "verda-mgmt-server-03", "recovery")
+        self.assertEqual(facts["etcd_healthy_members"], 2)
+        with self.assertRaises(COLLECTOR.CollectionError):
+            COLLECTOR.etcd_facts(statuses + [{
+                "Endpoint": "https://10.250.0.13:2379",
+                "Status": {"header": {"member_id": 3}, "leader": 1},
+            }], members, "verda-mgmt-server-03", "recovery")
+        stale = {"items": [{
+            "spec": {"location": "s3://withheld/phase6.zip", "snapshotName": "phase6.zip"},
+            "status": {"readyToUse": True, "size": "1024",
+                       "creationTime": (NOW - dt.timedelta(hours=1)).isoformat()},
+        }]}
+        with self.assertRaisesRegex(COLLECTOR.CollectionError, "structured off-cluster"):
+            COLLECTOR.snapshot_facts(stale, now=NOW, freshness_seconds=600)
 
 
 class OperationJournalTests(unittest.TestCase):
@@ -1124,6 +1197,213 @@ class OperationJournalTests(unittest.TestCase):
                 self.assertEqual(prepared["direction"], "rollback")
 
 
+class ActivationIntegrationTests(unittest.TestCase):
+    class FakeAdapter:
+        def __init__(self, inventory_text: str, known_hosts: pathlib.Path, *, crash_apply: bool = False) -> None:
+            self.inventory_text = inventory_text
+            self.known_hosts = known_hosts
+            self.crash_apply = crash_apply
+            self.calls: list[str] = []
+
+        def run_container(self, command: list[str], receipt: dict) -> dict:
+            self.calls.append(f"container:{receipt['mode']}")
+            return {
+                "schema_version": 1, "status": "PINNED_CONTAINER_COMPLETE",
+                "mode": receipt["mode"], "node": receipt["node"],
+                "survivor_node": receipt["survivor_node"],
+                "command_receipt_sha256": RESIZE.canonical_digest(receipt),
+                "raw_values_recorded": False,
+            }
+
+        def phase2_apply(self, *, saved_plan: pathlib.Path, plan_sha256: str,
+                         lineage_sha256: str, state_serial: int, operation_id: str) -> dict:
+            self.calls.append("phase2:apply")
+            if self.crash_apply:
+                raise RESIZE.ResizeRefused("simulated receipt-loss crash")
+            return {
+                "schema_version": 1, "status": "APPLY_COMPLETE_RECOVERY_REQUIRED",
+                "operation_id": operation_id, "plan_sha256": plan_sha256,
+                "state_lineage_sha256": lineage_sha256, "state_serial_before": state_serial,
+                "state_serial_after": state_serial + 1, "raw_values_recorded": False,
+            }
+
+        def phase2_state(self, *, lineage_sha256: str, operation_id: str) -> dict:
+            self.calls.append("phase2:state")
+            return {
+                "schema_version": 1, "status": "STATE_RECEIPT", "operation_id": operation_id,
+                "state_lineage_sha256": lineage_sha256, "state_serial": STATE_SERIAL + 1,
+                "raw_values_recorded": False,
+            }
+
+        def phase2_output(self, *, inventory_output: pathlib.Path, known_hosts: pathlib.Path,
+                          lineage_sha256: str, state_serial: int, operation_id: str) -> dict:
+            self.calls.append("phase2:output")
+            inventory_output.write_text(self.inventory_text, encoding="utf-8")
+            return {
+                "schema_version": 1, "status": "STRICT_INVENTORY_CREATED_REVIEW_REQUIRED",
+                "operation_id": operation_id, "state_lineage_sha256": lineage_sha256,
+                "state_serial": state_serial, "inventory_sha256": RESIZE.digest_file(inventory_output),
+                "known_hosts_sha256": RESIZE.digest_file(known_hosts),
+                "private_key_public_sha256": "9" * 64, "raw_values_recorded": False,
+            }
+
+        def phase2_no_drift(self, *, lineage_sha256: str, state_serial: int,
+                            operation_id: str) -> dict:
+            self.calls.append("phase2:no-drift")
+            return {
+                "schema_version": 1, "status": "ZERO_DRIFT_VERIFIED",
+                "operation_id": operation_id, "state_lineage_sha256": lineage_sha256,
+                "state_serial": state_serial, "terraform_zero_drift": True,
+                "raw_values_recorded": False,
+            }
+
+        def collect(self, command: list[str]) -> dict:
+            stage = (
+                "preflight" if "--stage preflight" in command[-1]
+                else "recovery" if "--stage recovery" in command[-1]
+                else "postflight"
+            )
+            self.calls.append(f"collector:{stage}")
+            mounts = {
+                value.rsplit(":", 2)[1]: pathlib.Path(value.rsplit(":", 2)[0])
+                for index, value in enumerate(command)
+                if index > 0 and command[index - 1] == "--volume"
+            }
+            if stage == "recovery":
+                facts = {
+                    "ready_nodes": 2, "etcd_members": 3, "etcd_healthy_members": 2,
+                    "etcd_quorum": True, "surviving_ready_nodes": 2,
+                    "surviving_etcd_healthy_members": 2, "replacement_not_ready": True,
+                    "partial_inventory_refreshed": True, "wireguard_peer_inputs_complete": True,
+                }
+                fingerprints = ["1" * 64] * 6
+            else:
+                facts = {
+                    "ready_nodes": 3, "etcd_members": 3, "etcd_healthy_members": 3,
+                    "etcd_quorum": True, "cilium_ready_nodes": 3, "cilium_connectivity": True,
+                    "longhorn_ready_nodes": 3, "longhorn_schedulable_nodes": 3,
+                    "longhorn_healthy_volumes": True, "longhorn_degraded_volumes": 0,
+                    "longhorn_rebuild_complete": True, "argocd_all_healthy_synced": True,
+                    "minimum_observed_per_node_cpu_millicores": 7000,
+                    "minimum_observed_per_node_memory_bytes": 30_000_000_000,
+                    "worst_two_allocatable_cpu_millicores": 14000,
+                    "worst_two_allocatable_memory_bytes": 60_000_000_000,
+                }
+                if stage == "preflight":
+                    facts.update({
+                        "selected_node_is_not_current_etcd_leader": True,
+                        "drain_server_dry_run": True,
+                        "etcd_off_cluster_snapshot_verified": True,
+                        "data_recovery_point_verified": True,
+                    })
+                fingerprints = ["1" * 64] * 8
+            return {
+                "schema_version": 1, "collector": "phase6-management-resize-v1",
+                "collector_sha256": RESIZE.digest_file(COLLECTOR_SCRIPT), "stage": stage,
+                "phase": 6, "cluster": "management", "integrated_commit": COMMIT,
+                "operation_id": self.operation_id, "node": "03", "survivor_node": "01",
+                "direction": self.direction, "captured_at": NOW.isoformat(), "facts": facts,
+                "facts_sha256": RESIZE.canonical_digest(facts), "command_fingerprints": fingerprints,
+                "input_fingerprints": {
+                    "inventory_sha256": RESIZE.digest_file(mounts["/run/config/phase6-inventory.yml"]),
+                    "host_trust_sha256": RESIZE.digest_file(mounts["/run/config/known_hosts"]),
+                },
+            }
+
+    def inputs(self, external: pathlib.Path) -> dict[str, pathlib.Path | str]:
+        runner = PinnedRecoveryRunnerTests()
+        paths = runner.inputs(external)
+        kubeconfig = external / "kubeconfig"
+        kubeconfig.write_text("fake credential material", encoding="utf-8")
+        if os.name != "nt":
+            kubeconfig.chmod(0o600)
+        return {**paths, "inventory_text": paths["inventory"].read_text(encoding="utf-8"), "kubeconfig": kubeconfig}
+
+    def execute(self, external: pathlib.Path, adapter: "ActivationIntegrationTests.FakeAdapter",
+                *, operation: str, direction: str = "resize") -> dict:
+        contract_path = external / "contract.json"
+        progress_path = external / "progress.json"
+        saved_plan = external / f"{direction}.tfplan"
+        contract_path.write_text(json.dumps(active_contract()), encoding="utf-8")
+        if not progress_path.exists():
+            progress_path.write_text(json.dumps(progress()), encoding="utf-8")
+        saved_plan.write_bytes(direction.encode())
+        dummy = {}
+        for name in ("preflight", "review", "lease", "cost", "capacity", "collector"):
+            path = external / f"{name}.json"
+            path.write_text("{}", encoding="utf-8")
+            dummy[name] = path
+        inputs = self.inputs(external)
+        adapter.inventory_text = str(inputs["inventory_text"])
+        adapter.known_hosts = inputs["known"]  # type: ignore[assignment]
+        adapter.operation_id = operation
+        adapter.direction = direction
+        preflight_command = RESIZE.build_phase6_collector_command(
+            repository=ROOT, stage="preflight", node="03", survivor="01", direction=direction,
+            operation_id=operation, integrated_commit=COMMIT, kubeconfig_path=inputs["kubeconfig"],
+            inventory_path=inputs["inventory"], private_key_path=inputs["private"],
+            known_hosts_path=inputs["known"],
+        )
+        dummy["collector"].write_text(json.dumps(adapter.collect(preflight_command)), encoding="utf-8")
+        with mock.patch.object(RESIZE, "assert_clean_reviewed_worktree"), mock.patch.object(
+            RESIZE, "admission", return_value={"plan_sha256": RESIZE.digest_file(saved_plan)}
+        ):
+            return RESIZE.execute_reviewed_apply(
+                repository=ROOT, contract_path=contract_path, progress_path=progress_path,
+                saved_plan=saved_plan, preflight_path=dummy["preflight"], review_path=dummy["review"],
+                review_lease_path=dummy["lease"], cost_path=dummy["cost"],
+                capacity_path=dummy["capacity"], collector_path=dummy["collector"],
+                control_root=external / "phase6-resize-control", inventory_path=inputs["inventory"],
+                runtime_vars_path=inputs["runtime"], private_key_path=inputs["private"],
+                public_key_path=inputs["public"], known_hosts_path=inputs["known"],
+                operation_id=operation, survivor="01", direction=direction,
+                kubeconfig_path=inputs["kubeconfig"],
+                state_lineage_sha256=LINEAGE, state_serial=STATE_SERIAL,
+                git_commit=COMMIT, adapter=adapter, now=NOW,
+            )
+
+    def test_fake_apply_recovery_postflight_is_atomic_and_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            external = pathlib.Path(directory)
+            adapter = self.FakeAdapter("", external / "known_hosts")
+            operation = "4" * 64
+            applied = self.execute(external, adapter, operation=operation)
+            self.assertEqual(applied["status"], "APPLIED_RECOVERY_REQUIRED")
+            inputs = self.inputs(external)
+            adapter.inventory_text = str(inputs["inventory_text"])
+            adapter.known_hosts = inputs["known"]  # type: ignore[assignment]
+            with mock.patch.object(RESIZE, "assert_clean_reviewed_worktree"):
+                completed = RESIZE.recover_reviewed_node(
+                    repository=ROOT, contract_path=external / "contract.json",
+                    progress_path=external / "progress.json", control_root=external / "phase6-resize-control",
+                    operation_id=operation, survivor="01", inventory_output=external / "recovered-inventory.yml",
+                    runtime_vars_path=inputs["runtime"], private_key_path=inputs["private"],
+                    public_key_path=inputs["public"], known_hosts_path=inputs["known"],
+                    kubeconfig_path=inputs["kubeconfig"], git_commit=COMMIT, adapter=adapter, now=NOW,
+                )
+            self.assertEqual(completed["status"], "NODE_COMPLETE")
+            self.assertEqual(json.loads((external / "progress.json").read_text())["completed_resize_nodes"], ["03"])
+
+    def test_receipt_loss_crash_is_adopted_and_immediate_rollback_is_reachable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            external = pathlib.Path(directory)
+            crash = self.FakeAdapter("", external / "known_hosts", crash_apply=True)
+            operation = "6" * 64
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "receipt-loss"):
+                self.execute(external, crash, operation=operation)
+            crash.crash_apply = False
+            with mock.patch.object(RESIZE, "assert_clean_reviewed_worktree"):
+                adopted = RESIZE.adopt_reviewed_apply(
+                    repository=ROOT, contract_path=external / "contract.json",
+                    progress_path=external / "progress.json", control_root=external / "phase6-resize-control",
+                    operation_id=operation, git_commit=COMMIT, adapter=crash, now=NOW,
+                )
+            self.assertEqual(adopted["status"], "APPLY_ADOPTED_RECOVERY_REQUIRED")
+            rollback = self.FakeAdapter("", external / "known_hosts")
+            rolled = self.execute(external, rollback, operation="7" * 64, direction="rollback")
+            self.assertEqual((rolled["node"], rolled["direction"]), ("03", "rollback"))
+
+
 class PinnedRecoveryRunnerTests(unittest.TestCase):
     def inputs(self, external: pathlib.Path) -> dict[str, pathlib.Path]:
         inventory = external / "inventory.yml"
@@ -1161,13 +1441,36 @@ class PinnedRecoveryRunnerTests(unittest.TestCase):
         known.write_text("hashed known-host fixture\n", encoding="utf-8")
         return {"inventory": inventory, "runtime": runtime, "private": private, "public": public, "known": known}
 
+    def controls(self, external: pathlib.Path, mode: str) -> dict[str, pathlib.Path]:
+        control = external / "phase6-resize-control"
+        control.mkdir(exist_ok=True)
+        operation = "0" * 64
+        contract = external / "active-contract.json"
+        journal = control / f"phase6-resize-operation-{operation}.json"
+        authorization = control / f"phase6-resize-authorization-{operation}-{mode}.json"
+        contract.write_text(json.dumps(active_contract()), encoding="utf-8")
+        journal.write_text(json.dumps({
+            "schema_version": 1, "phase": 6, "integrated_commit": COMMIT,
+            "operation_id": operation, "node": "03", "direction": "resize",
+            "state": "PREPARED" if mode == "prepare" else "APPLIED",
+        }), encoding="utf-8")
+        RESIZE.create_operation_authorization(
+            path=authorization, contract_path=contract, journal_path=journal,
+            integrated_commit=COMMIT, operation_id=operation, node="03",
+            direction="resize", mode=mode, now=NOW,
+        )
+        return {"contract": contract, "journal": journal, "authorization": authorization}
+
     def build(self, external: pathlib.Path, mode: str = "recover") -> tuple[list[str], dict]:
         paths = self.inputs(external)
+        controls = self.controls(external, mode)
         return RESIZE.build_phase6_docker_command(
             repository=ROOT, mode=mode, node="03", survivor="01",
             inventory_path=paths["inventory"], runtime_vars_path=paths["runtime"],
             private_key_path=paths["private"], public_key_path=paths["public"],
-            known_hosts_path=paths["known"],
+            known_hosts_path=paths["known"], contract_path=controls["contract"],
+            journal_path=controls["journal"], authorization_path=controls["authorization"],
+            integrated_commit=COMMIT, operation_id="0" * 64, direction="resize",
         )
 
     def test_recovery_uses_exact_pinned_container_mounts_env_and_workdir(self) -> None:
@@ -1185,7 +1488,7 @@ class PinnedRecoveryRunnerTests(unittest.TestCase):
             environments = [command[index + 1] for index, value in enumerate(command[:-1]) if value == "--env"]
             self.assertEqual(tuple(environments), RESIZE.RECOVERY_ENV_ALLOWLIST)
             self.assertNotIn("not-a-real-private-key", rendered + json.dumps(receipt))
-            self.assertEqual(receipt["status"], "DORMANT_COMMAND_REVIEW_ONLY")
+            self.assertEqual(receipt["status"], "PINNED_OPERATION_COMMAND_BOUND")
 
     def test_prepare_uses_only_bounded_prepare_playbook(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1224,12 +1527,15 @@ class PinnedRecoveryRunnerTests(unittest.TestCase):
             paths = self.inputs(pathlib.Path(directory))
             paths["known"].unlink()
             os.link(paths["private"], paths["known"])
+            controls = self.controls(pathlib.Path(directory), "recover")
             with self.assertRaisesRegex(RESIZE.ResizeRefused, "file identity"):
                 RESIZE.build_phase6_docker_command(
                     repository=ROOT, mode="recover", node="03", survivor="01",
                     inventory_path=paths["inventory"], runtime_vars_path=paths["runtime"],
                     private_key_path=paths["private"], public_key_path=paths["public"],
-                    known_hosts_path=paths["known"],
+                    known_hosts_path=paths["known"], contract_path=controls["contract"],
+                    journal_path=controls["journal"], authorization_path=controls["authorization"],
+                    integrated_commit=COMMIT, operation_id="0" * 64, direction="resize",
                 )
 
 

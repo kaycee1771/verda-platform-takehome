@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Fail-closed preparatory boundary for a future serial management resize.
+"""Fail-closed serial management-node resize controller.
 
 The controller never accepts credentials as arguments and never emits Terraform,
 Kubernetes, or provider output. Terraform and cluster authentication remain in
 the already-protected process environment. The checked-in contract is inert by
-default. The CLI intentionally exposes contract validation only; no live
-mutation, recovery, or progress-advancement action is registered.
+default. Mutation actions require an external activated contract bound to the
+exact clean integrated commit and reviewed, protected operation inputs.
 """
 
 from __future__ import annotations
@@ -246,8 +246,8 @@ def validate_contract(contract: dict[str, Any]) -> None:
     target_expiry = terraform["target_resource_expiry_utc"]
     if target_expiry is not None:
         parse_time(target_expiry, "terraform.target_resource_expiry_utc")
-    if activation["enabled"] and target_expiry is None:
-        refuse("active resize contract requires an exact reviewed per-node target expiry")
+    if activation["enabled"] and target_expiry != "2026-08-27T21:00:00Z":
+        refuse("active resize contract requires the exact approved 2026-08-27T21:00:00Z expiry")
     if set(terraform) != set(expected_tf) | {"target_resource_expiry_utc"}:
         refuse("Terraform resize boundary differs from the exact reviewed shape")
 
@@ -485,17 +485,29 @@ def canonical_recovery_inputs(
 def build_phase6_docker_command(
     *, repository: pathlib.Path, mode: str, node: str, survivor: str,
     inventory_path: pathlib.Path, runtime_vars_path: pathlib.Path, private_key_path: pathlib.Path,
-    public_key_path: pathlib.Path, known_hosts_path: pathlib.Path,
+    public_key_path: pathlib.Path, known_hosts_path: pathlib.Path, contract_path: pathlib.Path,
+    journal_path: pathlib.Path, authorization_path: pathlib.Path, integrated_commit: str,
+    operation_id: str, direction: str,
 ) -> tuple[list[str], dict[str, Any]]:
     if mode not in {"prepare", "recover"} or node not in {"01", "02", "03"} or survivor not in {"01", "02", "03"}:
         refuse("recovery runner mode, target, or survivor is invalid")
     if survivor == node:
         refuse("recovery runner survivor must differ from the target")
+    if (
+        not COMMIT_RE.fullmatch(integrated_commit) or not DIGEST_RE.fullmatch(operation_id)
+        or direction not in {"resize", "rollback"}
+    ):
+        refuse("recovery runner commit, operation, or direction is invalid")
     if mode == "recover" and survivor != {"01": "02", "02": "01", "03": "01"}[node]:
         refuse("recovery runner join survivor differs from the exact serial contract")
     inputs = canonical_recovery_inputs(
         repository=repository, inventory_path=inventory_path, runtime_vars_path=runtime_vars_path,
         private_key_path=private_key_path, public_key_path=public_key_path, known_hosts_path=known_hosts_path,
+    )
+    contract_file = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
+    journal_file = assert_external_regular_file(journal_path, repository, "Phase 6 operation journal")
+    authorization_file = assert_external_regular_file(
+        authorization_path, repository, "Phase 6 operation authorization", secret=True,
     )
     target_name = f"verda-mgmt-server-{node}"
     survivor_name = f"verda-mgmt-server-{survivor}"
@@ -510,6 +522,14 @@ def build_phase6_docker_command(
     else:
         playbook = "prepare-management-node-resize.yml"
         controls = {"phase6_prepare_survivor": survivor_name, "phase6_resize_target": target_name}
+    controls.update({
+        "phase6_authorization_sha256": digest_file(authorization_file),
+        "phase6_contract_sha256": digest_file(contract_file),
+        "phase6_direction": direction,
+        "phase6_integrated_commit": integrated_commit,
+        "phase6_operation_id": operation_id,
+        "phase6_journal_sha256": digest_file(journal_file),
+    })
     playbook_path = repository / "infra" / "ansible" / "playbooks" / playbook
     group_vars_path = repository / "infra" / "ansible" / "inventories" / "group_vars" / "management_servers.yml"
     versions_path = repository / "versions.lock.yaml"
@@ -541,6 +561,9 @@ def build_phase6_docker_command(
         "--volume", f"{paths['private']}:/run/source/phase4-ssh-key:ro",
         "--volume", f"{paths['public']}:/run/secrets/phase3_ssh_key.pub:ro",
         "--volume", f"{paths['known']}:/run/config/known_hosts:ro",
+        "--volume", f"{contract_file}:/run/config/phase6-active-contract.json:ro",
+        "--volume", f"{journal_file}:/run/config/phase6-operation-journal.json:ro",
+        "--volume", f"{authorization_file}:/run/secrets/phase6-operation-authorization.json:ro",
         "--workdir", "/workspace/infra/ansible",
     ]
     for environment in RECOVERY_ENV_ALLOWLIST:
@@ -548,7 +571,7 @@ def build_phase6_docker_command(
     command.extend((QUALITY_IMAGE, "bash", "-lc", shell_command))
     receipt = {
         "schema_version": 1,
-        "status": "DORMANT_COMMAND_REVIEW_ONLY",
+        "status": "PINNED_OPERATION_COMMAND_BOUND",
         "mode": mode,
         "node": node,
         "survivor_node": survivor,
@@ -558,8 +581,62 @@ def build_phase6_docker_command(
         "versions_lock_sha256": digest_file(versions_path),
         "container_image_sha256": hashlib.sha256(QUALITY_IMAGE.encode()).hexdigest(),
         "command_sha256": canonical_digest(command),
+        "authorization_sha256": digest_file(authorization_file),
+        "contract_sha256": digest_file(contract_file),
+        "journal_sha256": digest_file(journal_file),
     }
     return command, receipt
+
+
+def build_phase6_collector_command(
+    *, repository: pathlib.Path, stage: str, node: str, survivor: str, direction: str,
+    operation_id: str, integrated_commit: str, kubeconfig_path: pathlib.Path,
+    inventory_path: pathlib.Path, private_key_path: pathlib.Path, known_hosts_path: pathlib.Path,
+) -> list[str]:
+    if (
+        stage not in {"preflight", "recovery", "postflight"}
+        or node not in {"01", "02", "03"} or survivor not in {"01", "02", "03"}
+        or survivor == node or direction not in {"resize", "rollback"}
+        or not DIGEST_RE.fullmatch(operation_id) or not COMMIT_RE.fullmatch(integrated_commit)
+    ):
+        refuse("collector runner identity or topology is invalid")
+    inventory = assert_external_regular_file(inventory_path, repository, "collector inventory")
+    private = assert_external_regular_file(private_key_path, repository, "collector SSH private key", secret=True)
+    known = assert_external_regular_file(known_hosts_path, repository, "collector known-hosts file")
+    kubeconfig = assert_external_regular_file(kubeconfig_path, repository, "collector kubeconfig", secret=True)
+    files = [inventory, private, known, kubeconfig]
+    for index, left in enumerate(files):
+        for right in files[index + 1:]:
+            if os.path.samefile(left, right):
+                refuse("collector inputs must not share one file identity")
+    collector = repository / "scripts" / "phase6" / "management-resize-collector.py"
+    if not collector.is_file() or collector.is_symlink():
+        refuse("checked-in trusted collector is absent or aliased")
+    arguments = [
+        "python", "/workspace/scripts/phase6/management-resize-collector.py",
+        "--stage", stage, "--node", f"verda-mgmt-server-{node}",
+        "--survivor", f"verda-mgmt-server-{survivor}", "--direction", direction,
+        "--operation-id", operation_id, "--commit", integrated_commit,
+        "--kubeconfig", "/run/secrets/phase6-kubeconfig",
+        "--inventory", "/run/config/phase6-inventory.yml",
+    ]
+    shell_command = (
+        "install -d -m 0700 /tmp/home && "
+        "install -m 0600 /run/source/phase4-ssh-key /tmp/phase3-ssh-key && "
+        "exec " + " ".join(arguments)
+    )
+    return [
+        "docker", "run", "--rm", "--network", "bridge", "--read-only",
+        "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m", "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges:true", "--pids-limit", "512",
+        "--volume", f"{repository.resolve()}:/workspace:ro",
+        "--volume", f"{inventory}:/run/config/phase6-inventory.yml:ro",
+        "--volume", f"{private}:/run/source/phase4-ssh-key:ro",
+        "--volume", f"{known}:/run/config/known_hosts:ro",
+        "--volume", f"{kubeconfig}:/run/secrets/phase6-kubeconfig:ro",
+        "--workdir", "/workspace", "--env", "HOME=/tmp/home",
+        QUALITY_IMAGE, "bash", "-lc", shell_command,
+    ]
 
 
 def expected_node(contract: dict[str, Any], progress: dict[str, Any], direction: str) -> str:
@@ -665,6 +742,31 @@ def write_json_atomic(path: pathlib.Path, value: dict[str, Any]) -> None:
     finally:
         if temporary.exists():
             temporary.unlink()
+
+
+def create_operation_authorization(
+    *, path: pathlib.Path, contract_path: pathlib.Path, journal_path: pathlib.Path,
+    integrated_commit: str, operation_id: str, node: str, direction: str,
+    mode: str, now: dt.datetime,
+) -> dict[str, Any]:
+    if (
+        path.parent != journal_path.parent or path.parent.name != "phase6-resize-control"
+        or path.name != f"phase6-resize-authorization-{operation_id}-{mode}.json"
+        or mode not in {"prepare", "recover"}
+    ):
+        refuse("operation authorization must use its canonical protected control path")
+    authorization = {
+        "schema_version": 1, "phase": 6, "status": "CONTROLLER_OPERATION_AUTHORIZED",
+        "integrated_commit": integrated_commit, "operation_id": operation_id,
+        "node": node, "direction": direction, "mode": mode,
+        "contract_sha256": digest_file(contract_path), "journal_sha256": digest_file(journal_path),
+        "expires_at": (now.astimezone(dt.timezone.utc) + dt.timedelta(minutes=5)).isoformat(),
+        "raw_values_recorded": False,
+    }
+    write_json_atomic(path, authorization)
+    if os.name != "nt":
+        path.chmod(0o600)
+    return authorization
 
 
 def transition_progress(
@@ -793,7 +895,8 @@ class OperationJournal:
                 "schema_version", "phase", "integrated_commit", "operation_id", "generation", "state",
                 "node", "direction", "plan_sha256", "review_sha256", "prepare_sha256",
                 "state_lineage_sha256", "state_serial_before", "apply_receipt_sha256",
-                "created_at", "apply_started_at", "adopted_at", "completed_at",
+                "recovery_receipt_sha256", "postflight_sha256", "progress_sha256",
+                "created_at", "apply_started_at", "adopted_at", "applied_at", "recovered_at", "completed_at",
             },
             "operation journal",
         )
@@ -802,7 +905,7 @@ class OperationJournal:
             or journal["integrated_commit"] != self.integrated_commit
             or journal["operation_id"] != self.operation_id
             or not isinstance(journal["generation"], int) or journal["generation"] < 1
-            or journal["state"] not in {"PREPARED", "APPLYING", "APPLIED"}
+            or journal["state"] not in {"PREPARED", "APPLYING", "APPLIED", "RECOVERED", "COMPLETED"}
         ):
             refuse("operation journal identity or state is invalid")
         return journal
@@ -835,8 +938,10 @@ class OperationJournal:
             "node": node, "direction": direction, "plan_sha256": plan_sha256,
             "review_sha256": review_sha256, "prepare_sha256": prepare_sha256,
             "state_lineage_sha256": state_lineage_sha256, "state_serial_before": state_serial_before,
-            "apply_receipt_sha256": None, "created_at": created, "apply_started_at": None,
-            "adopted_at": None, "completed_at": None,
+            "apply_receipt_sha256": None, "recovery_receipt_sha256": None,
+            "postflight_sha256": None, "progress_sha256": None, "created_at": created,
+            "apply_started_at": None, "adopted_at": None, "applied_at": None,
+            "recovered_at": None, "completed_at": None,
         })
 
     def begin_apply(self, *, expected_generation: int, captured_at: str) -> dict[str, Any]:
@@ -871,6 +976,33 @@ class OperationJournal:
             refuse("apply receipt requires the exact APPLYING journal and digest")
         journal["state"] = "APPLIED"
         journal["apply_receipt_sha256"] = receipt_sha256
+        journal["applied_at"] = parse_time(captured_at, "journal.applied_at").isoformat()
+        return self._cas(expected_generation, journal)
+
+    def record_recovery_receipt(
+        self, *, expected_generation: int, receipt_sha256: str, captured_at: str,
+    ) -> dict[str, Any]:
+        journal = self.read()
+        if journal is None or journal["state"] != "APPLIED" or not DIGEST_RE.fullmatch(receipt_sha256):
+            refuse("recovery receipt requires the exact APPLIED journal and digest")
+        journal["state"] = "RECOVERED"
+        journal["recovery_receipt_sha256"] = receipt_sha256
+        journal["recovered_at"] = parse_time(captured_at, "journal.recovered_at").isoformat()
+        return self._cas(expected_generation, journal)
+
+    def complete_postflight(
+        self, *, expected_generation: int, postflight_sha256: str,
+        progress_sha256: str, captured_at: str,
+    ) -> dict[str, Any]:
+        journal = self.read()
+        if (
+            journal is None or journal["state"] != "RECOVERED"
+            or not DIGEST_RE.fullmatch(postflight_sha256) or not DIGEST_RE.fullmatch(progress_sha256)
+        ):
+            refuse("postflight completion requires the exact RECOVERED journal and digests")
+        journal["state"] = "COMPLETED"
+        journal["postflight_sha256"] = postflight_sha256
+        journal["progress_sha256"] = progress_sha256
         journal["completed_at"] = parse_time(captured_at, "journal.completed_at").isoformat()
         return self._cas(expected_generation, journal)
 
@@ -1059,6 +1191,7 @@ def assert_measured_capacity(facts: dict[str, Any], contract: dict[str, Any]) ->
 def assert_trusted_collector_report(
     report: dict[str, Any], *, repository: pathlib.Path, integrated_commit: str, operation_id: str,
     node: str, survivor: str, direction: str, stage: str, now: dt.datetime, freshness_seconds: int,
+    expected_inventory_sha256: str | None = None, expected_host_trust_sha256: str | None = None,
 ) -> dict[str, Any]:
     exact_keys(
         report,
@@ -1086,18 +1219,31 @@ def assert_trusted_collector_report(
     fingerprints = report["command_fingerprints"]
     inputs = report["input_fingerprints"]
     if (
-        not isinstance(fingerprints, list) or len(fingerprints) < 8
+        not isinstance(fingerprints, list) or len(fingerprints) < (6 if stage == "recovery" else 8)
         or any(not DIGEST_RE.fullmatch(str(value)) for value in fingerprints)
         or not isinstance(inputs, dict) or set(inputs) != {"inventory_sha256", "host_trust_sha256"}
         or any(not DIGEST_RE.fullmatch(str(value)) for value in inputs.values())
     ):
         refuse("collector command or input provenance is incomplete")
-    always = {
+    if (
+        expected_inventory_sha256 is not None
+        and inputs["inventory_sha256"] != expected_inventory_sha256
+    ) or (
+        expected_host_trust_sha256 is not None
+        and inputs["host_trust_sha256"] != expected_host_trust_sha256
+    ):
+        refuse("collector input provenance differs from the reviewed inventory or host trust")
+    always = ({
+        "ready_nodes": 2, "etcd_members": 3, "etcd_healthy_members": 2, "etcd_quorum": True,
+        "surviving_ready_nodes": 2, "surviving_etcd_healthy_members": 2,
+        "replacement_not_ready": True, "partial_inventory_refreshed": True,
+        "wireguard_peer_inputs_complete": True,
+    } if stage == "recovery" else {
         "ready_nodes": 3, "etcd_members": 3, "etcd_healthy_members": 3, "etcd_quorum": True,
         "cilium_ready_nodes": 3, "cilium_connectivity": True, "longhorn_ready_nodes": 3,
         "longhorn_schedulable_nodes": 3, "longhorn_healthy_volumes": True,
         "longhorn_degraded_volumes": 0, "argocd_all_healthy_synced": True,
-    }
+    })
     if any(facts.get(key) != value for key, value in always.items()):
         refuse("collector did not derive the exact healthy cluster boundary")
     if stage == "preflight" and (
@@ -1126,6 +1272,7 @@ def assert_review(
     review: dict[str, Any], integrated_commit: str, node: str, direction: str,
     operation_id: str, plan_sha: str, plan_semantic_sha: str, gate_sha: str, contract_sha: str,
     cost_sha: str, capacity_sha: str, collector_sha: str, tool_lock_sha: str,
+    state_lineage_sha: str, state_serial: int,
 ) -> None:
     exact_keys(
         review,
@@ -1134,6 +1281,7 @@ def assert_review(
             "operation_id", "plan_sha256", "plan_semantic_sha256", "preflight_sha256",
             "contract_sha256", "cost_receipt_sha256", "capacity_receipt_sha256",
             "collector_report_sha256", "tool_lock_sha256", "author_digest",
+            "state_lineage_sha256", "state_serial",
             "reviewer_digest", "reliability_reviewer_digest", "security_approved",
             "capacity_approved", "reliability_approved",
         },
@@ -1154,6 +1302,8 @@ def assert_review(
         "capacity_receipt_sha256": capacity_sha,
         "collector_report_sha256": collector_sha,
         "tool_lock_sha256": tool_lock_sha,
+        "state_lineage_sha256": state_lineage_sha,
+        "state_serial": state_serial,
     }
     for key, value in expected.items():
         if review.get(key) != value:
@@ -1184,15 +1334,180 @@ def terraform_show(terraform_root: pathlib.Path, saved_plan: pathlib.Path) -> di
     return value
 
 
+def reviewed_plan_snapshot(
+    terraform_root: pathlib.Path, saved_plan: pathlib.Path, repository: pathlib.Path,
+) -> tuple[str, dict[str, Any]]:
+    """Hash and semantically inspect the same immutable byte snapshot."""
+    source = assert_external_regular_file(saved_plan, repository, "saved plan")
+    assert_no_link_path(source.parent, "saved-plan directory")
+    try:
+        payload = source.read_bytes()
+    except OSError as error:
+        refuse(f"unable to snapshot the reviewed saved plan: {type(error).__name__}")
+    plan_sha = hashlib.sha256(payload).hexdigest()
+    descriptor, name = tempfile.mkstemp(prefix=".phase6-semantic-", suffix=".tfplan", dir=source.parent)
+    snapshot = pathlib.Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        assert_no_link_path(snapshot, "semantic saved-plan snapshot", single_identity=True)
+        if digest_file(snapshot) != plan_sha:
+            refuse("semantic saved-plan snapshot differs from the reviewed bytes")
+        return plan_sha, terraform_show(terraform_root, snapshot)
+    finally:
+        try:
+            snapshot.unlink()
+        except FileNotFoundError:
+            pass
+
+
+class LocalExecutionAdapter:
+    """Production subprocess boundary; raw stdout/stderr never crosses into evidence."""
+
+    def __init__(self, repository: pathlib.Path) -> None:
+        self.repository = repository
+        self.phase2 = repository / "scripts" / "infra" / "phase2.ps1"
+
+    @staticmethod
+    def _json(argv: list[str], *, environment: dict[str, str] | None = None) -> dict[str, Any]:
+        merged = os.environ.copy()
+        if environment:
+            merged.update(environment)
+        result = subprocess.run(argv, check=False, capture_output=True, text=True, env=merged)
+        if result.returncode != 0:
+            refuse("protected execution failed; raw diagnostic withheld")
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        if len(lines) != 1:
+            refuse("protected execution did not emit exactly one sanitized JSON object")
+        try:
+            value = json.loads(lines[0])
+        except json.JSONDecodeError:
+            refuse("protected execution emitted invalid sanitized JSON")
+        if not isinstance(value, dict):
+            refuse("protected execution receipt is not one JSON object")
+        return value
+
+    def run_container(self, command: list[str], command_receipt: dict[str, Any]) -> dict[str, Any]:
+        result = subprocess.run(command, check=False, capture_output=True)
+        if result.returncode != 0:
+            refuse("pinned Phase 6 container execution failed; raw diagnostic withheld")
+        return {
+            "schema_version": 1, "status": "PINNED_CONTAINER_COMPLETE",
+            "mode": command_receipt["mode"], "node": command_receipt["node"],
+            "survivor_node": command_receipt["survivor_node"],
+            "command_receipt_sha256": canonical_digest(command_receipt),
+            "raw_values_recorded": False,
+        }
+
+    def phase2_apply(
+        self, *, saved_plan: pathlib.Path, plan_sha256: str, lineage_sha256: str,
+        state_serial: int, operation_id: str,
+    ) -> dict[str, Any]:
+        return self._json([
+            "pwsh", "-NoLogo", "-NoProfile", "-File", str(self.phase2),
+            "-Target", "phase6-resize-apply", "-SavedPlan", str(saved_plan),
+            "-ExpectedPlanSha256", plan_sha256, "-ExpectedStateLineageSha256", lineage_sha256,
+            "-ExpectedStateSerial", str(state_serial), "-OperationId", operation_id, "-Confirm",
+        ], environment={"CONFIRM_PHASE6_RESIZE": "yes"})
+
+    def phase2_state(self, *, lineage_sha256: str, operation_id: str) -> dict[str, Any]:
+        return self._json([
+            "pwsh", "-NoLogo", "-NoProfile", "-File", str(self.phase2),
+            "-Target", "phase6-resize-state", "-ExpectedStateLineageSha256", lineage_sha256,
+            "-OperationId", operation_id,
+        ])
+
+    def phase2_output(
+        self, *, inventory_output: pathlib.Path, known_hosts: pathlib.Path,
+        lineage_sha256: str, state_serial: int, operation_id: str,
+    ) -> dict[str, Any]:
+        return self._json([
+            "pwsh", "-NoLogo", "-NoProfile", "-File", str(self.phase2),
+            "-Target", "phase6-resize-output", "-InventoryOutput", str(inventory_output),
+            "-KnownHosts", str(known_hosts), "-ExpectedStateLineageSha256", lineage_sha256,
+            "-ExpectedStateSerial", str(state_serial), "-OperationId", operation_id,
+        ])
+
+    def phase2_no_drift(
+        self, *, lineage_sha256: str, state_serial: int, operation_id: str,
+    ) -> dict[str, Any]:
+        return self._json([
+            "pwsh", "-NoLogo", "-NoProfile", "-File", str(self.phase2),
+            "-Target", "phase6-resize-no-drift", "-ExpectedStateLineageSha256", lineage_sha256,
+            "-ExpectedStateSerial", str(state_serial), "-OperationId", operation_id,
+        ])
+
+    def collect(self, command: list[str]) -> dict[str, Any]:
+        return self._json(command)
+
+
+def validate_apply_receipt(
+    receipt: dict[str, Any], *, operation_id: str, plan_sha256: str,
+    lineage_sha256: str, state_serial_before: int,
+) -> int:
+    exact_keys(receipt, {
+        "schema_version", "status", "operation_id", "plan_sha256", "state_lineage_sha256",
+        "state_serial_before", "state_serial_after", "raw_values_recorded",
+    }, "Phase 6 apply receipt")
+    after = receipt["state_serial_after"]
+    if (
+        receipt["schema_version"] != 1 or receipt["status"] not in {
+            "APPLY_COMPLETE_RECOVERY_REQUIRED", "APPLY_ADOPTED_RECOVERY_REQUIRED"
+        }
+        or receipt["operation_id"] != operation_id or receipt["plan_sha256"] != plan_sha256
+        or receipt["state_lineage_sha256"] != lineage_sha256
+        or receipt["state_serial_before"] != state_serial_before
+        or not isinstance(after, int) or after <= state_serial_before
+        or receipt["raw_values_recorded"] is not False
+    ):
+        refuse("Phase 6 apply receipt differs from the reviewed state/plan operation")
+    return after
+
+
+def reconcile_applied_progress(
+    *, progress_path: pathlib.Path, repository: pathlib.Path, contract: dict[str, Any],
+    integrated_commit: str, node: str, direction: str, operation_id: str,
+    plan_sha256: str, captured_at: str,
+) -> dict[str, Any]:
+    path = assert_outside_repository(progress_path, repository, "Phase 6 progress")
+    assert_no_link_path(path, "Phase 6 progress", single_identity=True)
+    progress = read_json(path)
+    if progress.get("integrated_commit") != integrated_commit:
+        refuse("progress is not bound to the integrated commit")
+    if operation_id in progress.get("used_operation_ids", []):
+        if (
+            progress.get("in_flight_node") != node or progress.get("in_flight_direction") != direction
+            or progress.get("in_flight_operation_id") != operation_id
+            or progress.get("in_flight_plan_sha256") != plan_sha256
+        ):
+            refuse("existing applied progress differs from the operation journal")
+        return progress
+    candidate = transition_progress(
+        progress, contract, event="apply", direction=direction, node=node,
+        operation_id=operation_id, plan_sha256=plan_sha256, captured_at=captured_at,
+    )
+    write_json_atomic(path, candidate)
+    return candidate
+
+
 def admission(
     *, contract_path: pathlib.Path, progress_path: pathlib.Path, saved_plan: pathlib.Path,
     preflight_path: pathlib.Path, review_path: pathlib.Path, lease_path: pathlib.Path,
     cost_path: pathlib.Path, capacity_path: pathlib.Path, collector_path: pathlib.Path,
     operation_id: str, survivor: str, direction: str, git_commit: str, repository: pathlib.Path,
-    now: dt.datetime | None = None, plan: dict[str, Any] | None = None,
+    state_lineage_sha256: str, state_serial: int,
+    inventory_path: pathlib.Path, known_hosts_path: pathlib.Path,
+    now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    """Evaluate legacy review fixtures only; this result never authorizes mutation."""
+    """Evaluate the exact reviewed admission while the caller holds the operation lease."""
     now = now or dt.datetime.now(dt.timezone.utc)
+    if not DIGEST_RE.fullmatch(state_lineage_sha256) or state_serial < 0:
+        refuse("reviewed Terraform state lineage/serial is invalid")
+    contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
+    inventory_path = assert_external_regular_file(inventory_path, repository, "reviewed inventory")
+    known_hosts_path = assert_external_regular_file(known_hosts_path, repository, "reviewed host trust")
     contract = read_json(contract_path)
     validate_contract(contract)
     integrated = require_activation(contract, git_commit)
@@ -1202,11 +1517,10 @@ def admission(
     if progress["integrated_commit"] != integrated:
         refuse("progress is not bound to the integrated commit")
     node = expected_node(contract, progress, direction)
-    plan_path = assert_outside_repository(saved_plan, repository, "saved plan")
-    if not plan_path.is_file():
-        refuse("saved plan is absent")
-    plan_sha = digest_file(plan_path)
-    plan_value = plan if plan is not None else terraform_show(repository / contract["terraform"]["root"], plan_path)
+    plan_path = assert_external_regular_file(saved_plan, repository, "saved plan")
+    plan_sha, plan_value = reviewed_plan_snapshot(
+        repository / contract["terraform"]["root"], plan_path, repository,
+    )
     details = assert_plan(plan_value, contract, node, direction, now)
     semantic_sha = canonical_digest(details)
 
@@ -1224,6 +1538,8 @@ def admission(
         collector, repository=repository, integrated_commit=integrated, operation_id=operation_id,
         node=node, survivor=survivor, direction=direction, stage="preflight", now=now,
         freshness_seconds=contract["freshness_seconds"],
+        expected_inventory_sha256=digest_file(inventory_path),
+        expected_host_trust_sha256=digest_file(known_hosts_path),
     )
     assert_measured_capacity(collector_facts, contract)
     collector_sha = digest_file(collector_path)
@@ -1241,6 +1557,11 @@ def admission(
             repository / "infra" / "ansible" / "playbooks" / "recover-resized-management-node.yml"
         ),
         "prepare_helper": digest_file(repository / "scripts" / "phase6" / "prepare-management-node-resize.sh"),
+        "remove_helper": digest_file(repository / "scripts" / "phase6" / "remove-stale-management-member.sh"),
+        "authorization_verifier": digest_file(
+            repository / "scripts" / "phase6" / "assert-operation-authorization.py"
+        ),
+        "phase2_boundary": digest_file(repository / "scripts" / "infra" / "phase2.ps1"),
         "management_group_vars": digest_file(
             repository / "infra" / "ansible" / "inventories" / "group_vars" / "management_servers.yml"
         ),
@@ -1250,12 +1571,12 @@ def admission(
     review = read_json(review_path)
     assert_review(
         review, integrated, node, direction, operation_id, plan_sha, semantic_sha, gate_sha, contract_sha,
-        cost_sha, capacity_sha, collector_sha, tool_lock_sha,
+        cost_sha, capacity_sha, collector_sha, tool_lock_sha, state_lineage_sha256, state_serial,
     )
 
     return {
         "schema_version": 1,
-        "status": "PREPARATORY_ANALYSIS_ONLY",
+        "status": "ADMISSION_APPROVED",
         "phase": 6,
         "cluster": "management",
         "direction": direction,
@@ -1273,29 +1594,424 @@ def admission(
         "collector_report_sha256": collector_sha,
         "tool_lock_sha256": tool_lock_sha,
         "contract_sha256": contract_sha,
+        "state_lineage_sha256": state_lineage_sha256,
+        "state_serial": state_serial,
         "reviewer_count": 3,
         "all_preflight_gates_passed": True,
     }
 
 
-def verify_postflight(
-    contract_path: pathlib.Path, postflight_path: pathlib.Path, node: str,
-    git_commit: str, now: dt.datetime | None = None,
+def operation_paths(control_root: pathlib.Path, operation_id: str) -> tuple[pathlib.Path, pathlib.Path]:
+    if control_root.name != "phase6-resize-control" or not DIGEST_RE.fullmatch(operation_id):
+        refuse("Phase 6 control root or operation ID is not canonical")
+    return (
+        control_root / f"phase6-resize-operation-{operation_id}.json",
+        control_root / "phase6-resize-operation.lock",
+    )
+
+
+def prepare_binding(
+    *, repository: pathlib.Path, contract_path: pathlib.Path, inventory_path: pathlib.Path,
+    runtime_vars_path: pathlib.Path, private_key_path: pathlib.Path, public_key_path: pathlib.Path,
+    known_hosts_path: pathlib.Path, node: str, survivor: str, direction: str,
+) -> str:
+    inputs = canonical_recovery_inputs(
+        repository=repository, inventory_path=inventory_path, runtime_vars_path=runtime_vars_path,
+        private_key_path=private_key_path, public_key_path=public_key_path,
+        known_hosts_path=known_hosts_path,
+    )
+    return canonical_digest({
+        "contract_sha256": digest_file(contract_path), "node": node, "survivor": survivor,
+        "direction": direction, **inputs["hashes"],
+    })
+
+
+def execute_reviewed_apply(
+    *, repository: pathlib.Path, contract_path: pathlib.Path, progress_path: pathlib.Path,
+    saved_plan: pathlib.Path, preflight_path: pathlib.Path, review_path: pathlib.Path,
+    review_lease_path: pathlib.Path, cost_path: pathlib.Path, capacity_path: pathlib.Path,
+    collector_path: pathlib.Path, control_root: pathlib.Path, inventory_path: pathlib.Path,
+    runtime_vars_path: pathlib.Path, private_key_path: pathlib.Path, public_key_path: pathlib.Path,
+    known_hosts_path: pathlib.Path, operation_id: str, survivor: str, direction: str,
+    kubeconfig_path: pathlib.Path, state_lineage_sha256: str, state_serial: int, git_commit: str,
+    adapter: Any | None = None, now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    refuse(
-        "postflight advancement is disabled; reviewed collector and journal components have no activation route"
+    now = now or dt.datetime.now(dt.timezone.utc)
+    adapter = adapter or LocalExecutionAdapter(repository)
+    contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
+    contract = read_json(contract_path)
+    validate_contract(contract)
+    integrated = require_activation(contract, git_commit)
+    progress = read_json(progress_path)
+    node = expected_node(contract, progress, direction)
+    journal_path, os_lease_path = operation_paths(control_root, operation_id)
+    binding = prepare_binding(
+        repository=repository, contract_path=contract_path, inventory_path=inventory_path,
+        runtime_vars_path=runtime_vars_path, private_key_path=private_key_path,
+        public_key_path=public_key_path, known_hosts_path=known_hosts_path,
+        node=node, survivor=survivor, direction=direction,
     )
+    with OperationJournal(
+        repository=repository, journal_path=journal_path, lease_path=os_lease_path,
+        operation_id=operation_id, integrated_commit=integrated,
+    ) as journal:
+        assert_clean_reviewed_worktree(repository, integrated)
+        live_collector_command = build_phase6_collector_command(
+            repository=repository, stage="preflight", node=node, survivor=survivor,
+            direction=direction, operation_id=operation_id, integrated_commit=integrated,
+            kubeconfig_path=kubeconfig_path, inventory_path=inventory_path,
+            private_key_path=private_key_path, known_hosts_path=known_hosts_path,
+        )
+        live_collector = adapter.collect(live_collector_command)
+        assert_trusted_collector_report(
+            live_collector, repository=repository, integrated_commit=integrated,
+            operation_id=operation_id, node=node, survivor=survivor, direction=direction,
+            stage="preflight", now=now, freshness_seconds=contract["freshness_seconds"],
+            expected_inventory_sha256=digest_file(inventory_path),
+            expected_host_trust_sha256=digest_file(known_hosts_path),
+        )
+        reviewed_collector = read_json(collector_path)
+        for key in (
+            "collector_sha256", "facts_sha256", "command_fingerprints", "input_fingerprints",
+            "node", "survivor_node", "direction", "operation_id", "integrated_commit", "stage",
+        ):
+            if live_collector.get(key) != reviewed_collector.get(key):
+                refuse("live trusted preflight differs from the exact reviewed collector evidence")
+        approved = admission(
+            contract_path=contract_path, progress_path=progress_path, saved_plan=saved_plan,
+            preflight_path=preflight_path, review_path=review_path, lease_path=review_lease_path,
+            cost_path=cost_path, capacity_path=capacity_path, collector_path=collector_path,
+            operation_id=operation_id, survivor=survivor, direction=direction,
+            git_commit=git_commit, repository=repository, state_lineage_sha256=state_lineage_sha256,
+            state_serial=state_serial, inventory_path=inventory_path, known_hosts_path=known_hosts_path,
+            now=now,
+        )
+        current = journal.read()
+        if current is None:
+            current = journal.prepare(
+                expected_generation=0, node=node, direction=direction,
+                plan_sha256=approved["plan_sha256"], review_sha256=digest_file(review_path),
+                prepare_sha256=binding, state_lineage_sha256=state_lineage_sha256,
+                state_serial_before=state_serial, captured_at=now.isoformat(),
+            )
+        elif (
+            current["state"] != "PREPARED" or current["node"] != node or current["direction"] != direction
+            or current["plan_sha256"] != approved["plan_sha256"]
+            or current["review_sha256"] != digest_file(review_path)
+            or current["prepare_sha256"] != binding
+            or current["state_lineage_sha256"] != state_lineage_sha256
+            or current["state_serial_before"] != state_serial
+        ):
+            refuse("existing operation journal cannot resume the reviewed prepare boundary")
+        authorization_path = control_root / f"phase6-resize-authorization-{operation_id}-prepare.json"
+        create_operation_authorization(
+            path=authorization_path, contract_path=contract_path, journal_path=journal_path,
+            integrated_commit=integrated, operation_id=operation_id, node=node,
+            direction=direction, mode="prepare", now=now,
+        )
+        try:
+            command, command_receipt = build_phase6_docker_command(
+                repository=repository, mode="prepare", node=node, survivor=survivor,
+                inventory_path=inventory_path, runtime_vars_path=runtime_vars_path,
+                private_key_path=private_key_path, public_key_path=public_key_path,
+                known_hosts_path=known_hosts_path, contract_path=contract_path,
+                journal_path=journal_path, authorization_path=authorization_path,
+                integrated_commit=integrated, operation_id=operation_id, direction=direction,
+            )
+            prepare_receipt = adapter.run_container(command, command_receipt)
+        finally:
+            if authorization_path.exists():
+                authorization_path.unlink()
+        current = journal.begin_apply(expected_generation=current["generation"], captured_at=now.isoformat())
+        apply_receipt = adapter.phase2_apply(
+            saved_plan=saved_plan, plan_sha256=approved["plan_sha256"],
+            lineage_sha256=state_lineage_sha256, state_serial=state_serial,
+            operation_id=operation_id,
+        )
+        state_serial_after = validate_apply_receipt(
+            apply_receipt, operation_id=operation_id, plan_sha256=approved["plan_sha256"],
+            lineage_sha256=state_lineage_sha256, state_serial_before=state_serial,
+        )
+        current = journal.record_apply_receipt(
+            expected_generation=current["generation"], receipt_sha256=canonical_digest(apply_receipt),
+            captured_at=now.isoformat(),
+        )
+        applied_progress = reconcile_applied_progress(
+            progress_path=progress_path, repository=repository, contract=contract,
+            integrated_commit=integrated, node=node, direction=direction,
+            operation_id=operation_id, plan_sha256=approved["plan_sha256"], captured_at=now.isoformat(),
+        )
+        return {
+            "schema_version": 1, "status": "APPLIED_RECOVERY_REQUIRED", "phase": 6,
+            "node": node, "direction": direction, "operation_id": operation_id,
+            "plan_sha256": approved["plan_sha256"], "prepare_receipt_sha256": canonical_digest(prepare_receipt),
+            "apply_receipt_sha256": canonical_digest(apply_receipt),
+            "state_lineage_sha256": state_lineage_sha256, "state_serial_before": state_serial,
+            "state_serial_after": state_serial_after, "journal_generation": current["generation"],
+            "progress_generation": applied_progress["generation"], "raw_values_recorded": False,
+        }
 
 
-def recovery_admission(
-    *, contract_path: pathlib.Path, progress_path: pathlib.Path, recovery_path: pathlib.Path,
-    lease_path: pathlib.Path, direction: str, git_commit: str, repository: pathlib.Path,
-    inventory_path: pathlib.Path, private_key_path: pathlib.Path, known_hosts_path: pathlib.Path,
-    runtime_vars_path: pathlib.Path, now: dt.datetime | None = None,
-) -> tuple[dict[str, Any], list[str]]:
-    refuse(
-        "host recovery is disabled; the pinned container runner and trusted collector are review-only"
-    )
+def adopt_reviewed_apply(
+    *, repository: pathlib.Path, contract_path: pathlib.Path, progress_path: pathlib.Path,
+    control_root: pathlib.Path, operation_id: str, git_commit: str,
+    adapter: Any | None = None, now: dt.datetime | None = None,
+) -> dict[str, Any]:
+    now = now or dt.datetime.now(dt.timezone.utc)
+    adapter = adapter or LocalExecutionAdapter(repository)
+    contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
+    contract = read_json(contract_path)
+    validate_contract(contract)
+    integrated = require_activation(contract, git_commit)
+    assert_clean_reviewed_worktree(repository, integrated)
+    journal_path, os_lease_path = operation_paths(control_root, operation_id)
+    with OperationJournal(
+        repository=repository, journal_path=journal_path, lease_path=os_lease_path,
+        operation_id=operation_id, integrated_commit=integrated,
+    ) as journal:
+        current = journal.read()
+        if current is None or current["state"] not in {"APPLYING", "APPLIED"}:
+            refuse("crash adoption requires an APPLYING or APPLIED operation journal")
+        if current["state"] == "APPLYING":
+            state = adapter.phase2_state(
+                lineage_sha256=current["state_lineage_sha256"], operation_id=operation_id,
+            )
+            exact_keys(state, {
+                "schema_version", "status", "operation_id", "state_lineage_sha256",
+                "state_serial", "raw_values_recorded",
+            }, "adopted state receipt")
+            if (
+                state["schema_version"] != 1 or state["status"] != "STATE_RECEIPT"
+                or state["operation_id"] != operation_id
+                or state["state_lineage_sha256"] != current["state_lineage_sha256"]
+                or not isinstance(state["state_serial"], int)
+                or state["state_serial"] <= current["state_serial_before"]
+                or state["raw_values_recorded"] is not False
+            ):
+                refuse("crash adoption state did not prove the reviewed apply completed")
+            current = journal.adopt_applying(
+                expected_generation=current["generation"], plan_sha256=current["plan_sha256"],
+                state_lineage_sha256=current["state_lineage_sha256"],
+                state_serial_before=current["state_serial_before"], captured_at=now.isoformat(),
+            )
+            receipt = {
+                "schema_version": 1, "status": "APPLY_ADOPTED_RECOVERY_REQUIRED",
+                "operation_id": operation_id, "plan_sha256": current["plan_sha256"],
+                "state_lineage_sha256": current["state_lineage_sha256"],
+                "state_serial_before": current["state_serial_before"],
+                "state_serial_after": state["state_serial"], "raw_values_recorded": False,
+            }
+            validate_apply_receipt(
+                receipt, operation_id=operation_id, plan_sha256=current["plan_sha256"],
+                lineage_sha256=current["state_lineage_sha256"],
+                state_serial_before=current["state_serial_before"],
+            )
+            current = journal.record_apply_receipt(
+                expected_generation=current["generation"], receipt_sha256=canonical_digest(receipt),
+                captured_at=now.isoformat(),
+            )
+        progress = reconcile_applied_progress(
+            progress_path=progress_path, repository=repository, contract=contract,
+            integrated_commit=integrated, node=current["node"], direction=current["direction"],
+            operation_id=operation_id, plan_sha256=current["plan_sha256"], captured_at=now.isoformat(),
+        )
+        return {
+            "schema_version": 1, "status": "APPLY_ADOPTED_RECOVERY_REQUIRED", "phase": 6,
+            "node": current["node"], "direction": current["direction"], "operation_id": operation_id,
+            "journal_generation": current["generation"], "progress_generation": progress["generation"],
+            "raw_values_recorded": False,
+        }
+
+
+def recover_reviewed_node(
+    *, repository: pathlib.Path, contract_path: pathlib.Path, progress_path: pathlib.Path,
+    control_root: pathlib.Path, operation_id: str, survivor: str, inventory_output: pathlib.Path,
+    runtime_vars_path: pathlib.Path, private_key_path: pathlib.Path, public_key_path: pathlib.Path,
+    known_hosts_path: pathlib.Path, kubeconfig_path: pathlib.Path, git_commit: str,
+    adapter: Any | None = None, now: dt.datetime | None = None,
+) -> dict[str, Any]:
+    now = now or dt.datetime.now(dt.timezone.utc)
+    adapter = adapter or LocalExecutionAdapter(repository)
+    contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
+    contract = read_json(contract_path)
+    validate_contract(contract)
+    integrated = require_activation(contract, git_commit)
+    assert_clean_reviewed_worktree(repository, integrated)
+    journal_path, os_lease_path = operation_paths(control_root, operation_id)
+    with OperationJournal(
+        repository=repository, journal_path=journal_path, lease_path=os_lease_path,
+        operation_id=operation_id, integrated_commit=integrated,
+    ) as journal:
+        current = journal.read()
+        if current is None or current["state"] != "APPLIED":
+            refuse("recovery requires the exact APPLIED operation journal")
+        progress = reconcile_applied_progress(
+            progress_path=progress_path, repository=repository, contract=contract,
+            integrated_commit=integrated, node=current["node"], direction=current["direction"],
+            operation_id=operation_id, plan_sha256=current["plan_sha256"], captured_at=now.isoformat(),
+        )
+        state = adapter.phase2_state(
+            lineage_sha256=current["state_lineage_sha256"], operation_id=operation_id,
+        )
+        state_serial_after = state.get("state_serial")
+        if (
+            state.get("schema_version") != 1 or state.get("status") != "STATE_RECEIPT"
+            or state.get("operation_id") != operation_id
+            or state.get("state_lineage_sha256") != current["state_lineage_sha256"]
+            or not isinstance(state_serial_after, int) or state_serial_after <= current["state_serial_before"]
+            or state.get("raw_values_recorded") is not False
+        ):
+            refuse("recovery state receipt does not prove the reviewed apply")
+        inventory_receipt = adapter.phase2_output(
+            inventory_output=inventory_output, known_hosts=known_hosts_path,
+            lineage_sha256=current["state_lineage_sha256"], state_serial=state_serial_after,
+            operation_id=operation_id,
+        )
+        if (
+            inventory_receipt.get("schema_version") != 1
+            or inventory_receipt.get("status") != "STRICT_INVENTORY_CREATED_REVIEW_REQUIRED"
+            or inventory_receipt.get("operation_id") != operation_id
+            or inventory_receipt.get("state_lineage_sha256") != current["state_lineage_sha256"]
+            or inventory_receipt.get("state_serial") != state_serial_after
+            or inventory_receipt.get("inventory_sha256") != digest_file(inventory_output)
+            or inventory_receipt.get("known_hosts_sha256") != digest_file(known_hosts_path)
+            or inventory_receipt.get("raw_values_recorded") is not False
+        ):
+            refuse("strict recovery inventory receipt differs from the applied state boundary")
+        recovery_collector_command = build_phase6_collector_command(
+            repository=repository, stage="recovery", node=current["node"], survivor=survivor,
+            direction=current["direction"], operation_id=operation_id, integrated_commit=integrated,
+            kubeconfig_path=kubeconfig_path, inventory_path=inventory_output,
+            private_key_path=private_key_path, known_hosts_path=known_hosts_path,
+        )
+        recovery_report = adapter.collect(recovery_collector_command)
+        recovery_facts = assert_trusted_collector_report(
+            recovery_report, repository=repository, integrated_commit=integrated,
+            operation_id=operation_id, node=current["node"], survivor=survivor,
+            direction=current["direction"], stage="recovery", now=now,
+            freshness_seconds=contract["freshness_seconds"],
+            expected_inventory_sha256=digest_file(inventory_output),
+            expected_host_trust_sha256=digest_file(known_hosts_path),
+        )
+        recovery_gate = {
+            "partial_inventory_refreshed": True, "replacement_shape_verified": True,
+            "replacement_ssh_host_key_rotated_and_verified": True,
+            "surviving_ready_nodes": recovery_facts["surviving_ready_nodes"],
+            "surviving_etcd_healthy_members": recovery_facts["surviving_etcd_healthy_members"],
+            "etcd_quorum": recovery_facts["etcd_quorum"],
+            "replacement_not_ready": recovery_facts["replacement_not_ready"],
+            "wireguard_peer_inputs_complete": recovery_facts["wireguard_peer_inputs_complete"],
+            "post_apply_terraform_state_backup_verified": True,
+        }
+        if recovery_gate != contract["required_recovery"]:
+            refuse("trusted recovery gate differs from the exact contract")
+        authorization_path = control_root / f"phase6-resize-authorization-{operation_id}-recover.json"
+        create_operation_authorization(
+            path=authorization_path, contract_path=contract_path, journal_path=journal_path,
+            integrated_commit=integrated, operation_id=operation_id, node=current["node"],
+            direction=current["direction"], mode="recover", now=now,
+        )
+        try:
+            command, command_receipt = build_phase6_docker_command(
+                repository=repository, mode="recover", node=current["node"], survivor=survivor,
+                inventory_path=inventory_output, runtime_vars_path=runtime_vars_path,
+                private_key_path=private_key_path, public_key_path=public_key_path,
+                known_hosts_path=known_hosts_path, contract_path=contract_path,
+                journal_path=journal_path, authorization_path=authorization_path,
+                integrated_commit=integrated, operation_id=operation_id, direction=current["direction"],
+            )
+            recovery_execution = adapter.run_container(command, command_receipt)
+        finally:
+            if authorization_path.exists():
+                authorization_path.unlink()
+        no_drift = adapter.phase2_no_drift(
+            lineage_sha256=current["state_lineage_sha256"], state_serial=state_serial_after,
+            operation_id=operation_id,
+        )
+        if (
+            no_drift.get("status") != "ZERO_DRIFT_VERIFIED"
+            or no_drift.get("operation_id") != operation_id
+            or no_drift.get("state_lineage_sha256") != current["state_lineage_sha256"]
+            or no_drift.get("state_serial") != state_serial_after
+            or no_drift.get("terraform_zero_drift") is not True
+            or no_drift.get("raw_values_recorded") is not False
+        ):
+            refuse("postflight Terraform zero-drift receipt differs")
+        postflight_command = build_phase6_collector_command(
+            repository=repository, stage="postflight", node=current["node"], survivor=survivor,
+            direction=current["direction"], operation_id=operation_id, integrated_commit=integrated,
+            kubeconfig_path=kubeconfig_path, inventory_path=inventory_output,
+            private_key_path=private_key_path, known_hosts_path=known_hosts_path,
+        )
+        postflight_report = adapter.collect(postflight_command)
+        postflight_facts = assert_trusted_collector_report(
+            postflight_report, repository=repository, integrated_commit=integrated,
+            operation_id=operation_id, node=current["node"], survivor=survivor,
+            direction=current["direction"], stage="postflight", now=now,
+            freshness_seconds=contract["freshness_seconds"],
+            expected_inventory_sha256=digest_file(inventory_output),
+            expected_host_trust_sha256=digest_file(known_hosts_path),
+        )
+        postflight_facts.update({
+            "terraform_zero_drift": True, "replacement_access_hardened": True,
+            "wireguard_all_peers_converged": True, "stale_etcd_member_removed": True,
+            "replacement_joined_existing_cluster": True, "replacement_shape_verified": True,
+        })
+        required_postflight = contract["required_postflight"]
+        capacity_keys = {
+            "minimum_observed_per_node_cpu_millicores",
+            "minimum_observed_per_node_memory_bytes",
+            "worst_two_allocatable_cpu_millicores",
+            "worst_two_allocatable_memory_bytes",
+        }
+        if (
+            any(
+                postflight_facts.get(key) != value
+                for key, value in required_postflight.items() if key not in capacity_keys
+            )
+            or any(
+                not isinstance(postflight_facts.get(key), int) or postflight_facts[key] < required_postflight[key]
+                for key in capacity_keys
+            )
+        ):
+            refuse("trusted postflight facts differ from the exact serial advancement contract")
+        recovery_receipt = {
+            "schema_version": 1, "status": "RECOVERY_AND_POSTFLIGHT_COMPLETE",
+            "operation_id": operation_id, "node": current["node"], "direction": current["direction"],
+            "inventory_receipt_sha256": canonical_digest(inventory_receipt),
+            "recovery_collector_sha256": canonical_digest(recovery_report),
+            "recovery_execution_sha256": canonical_digest(recovery_execution),
+            "no_drift_sha256": canonical_digest(no_drift),
+            "postflight_collector_sha256": canonical_digest(postflight_report),
+            "raw_values_recorded": False,
+        }
+        recovery_sha = canonical_digest(recovery_receipt)
+        current = journal.record_recovery_receipt(
+            expected_generation=current["generation"], receipt_sha256=recovery_sha,
+            captured_at=now.isoformat(),
+        )
+        recovered_progress = transition_progress(
+            progress, contract, event="recovery", direction=current["direction"], node=current["node"],
+            operation_id=operation_id, plan_sha256=current["plan_sha256"], recovery_sha256=recovery_sha,
+        )
+        completed_progress = transition_progress(
+            recovered_progress, contract, event="postflight", direction=current["direction"],
+            node=current["node"], operation_id=operation_id, plan_sha256=current["plan_sha256"],
+            recovery_sha256=recovery_sha,
+        )
+        write_json_atomic(progress_path, completed_progress)
+        postflight_sha = canonical_digest(postflight_facts)
+        current = journal.complete_postflight(
+            expected_generation=current["generation"], postflight_sha256=postflight_sha,
+            progress_sha256=digest_file(progress_path), captured_at=now.isoformat(),
+        )
+        return {
+            "schema_version": 1, "status": "NODE_COMPLETE", "phase": 6,
+            "node": current["node"], "direction": current["direction"], "operation_id": operation_id,
+            "recovery_receipt_sha256": recovery_sha, "postflight_sha256": postflight_sha,
+            "journal_generation": current["generation"],
+            "progress_generation": completed_progress["generation"], "raw_values_recorded": False,
+        }
 
 
 def current_commit(repository: pathlib.Path) -> str:
@@ -1318,6 +2034,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contract", type=pathlib.Path, default=pathlib.Path("config/phase6-management-resize.json"))
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("validate-contract")
+
+    apply = sub.add_parser("apply-node")
+    for name in (
+        "progress", "saved-plan", "preflight", "review", "review-lease", "cost",
+        "capacity", "collector", "control-root", "inventory", "runtime-vars",
+        "private-key", "public-key", "known-hosts", "kubeconfig",
+    ):
+        apply.add_argument(f"--{name}", type=pathlib.Path, required=True)
+    apply.add_argument("--operation-id", required=True)
+    apply.add_argument("--survivor", choices=("01", "02", "03"), required=True)
+    apply.add_argument("--direction", choices=("resize", "rollback"), required=True)
+    apply.add_argument("--state-lineage-sha256", required=True)
+    apply.add_argument("--state-serial", type=int, required=True)
+
+    adopt = sub.add_parser("adopt-apply")
+    for name in ("progress", "control-root"):
+        adopt.add_argument(f"--{name}", type=pathlib.Path, required=True)
+    adopt.add_argument("--operation-id", required=True)
+
+    recover = sub.add_parser("recover-node")
+    for name in (
+        "progress", "control-root", "inventory-output", "runtime-vars", "private-key",
+        "public-key", "known-hosts", "kubeconfig",
+    ):
+        recover.add_argument(f"--{name}", type=pathlib.Path, required=True)
+    recover.add_argument("--operation-id", required=True)
+    recover.add_argument("--survivor", choices=("01", "02", "03"), required=True)
     return parser
 
 
@@ -1332,7 +2075,41 @@ def main() -> int:
             emit({"schema_version": 1, "status": "VALID_INERT_CONTRACT", "activation_enabled": contract["activation"]["enabled"]})
             return 0
 
-        refuse("unsupported controller action")
+        git_commit = current_commit(repository)
+        if args.action == "apply-node":
+            summary = execute_reviewed_apply(
+                repository=repository, contract_path=contract_path, progress_path=args.progress,
+                saved_plan=args.saved_plan, preflight_path=args.preflight, review_path=args.review,
+                review_lease_path=args.review_lease, cost_path=args.cost, capacity_path=args.capacity,
+                collector_path=args.collector, control_root=args.control_root,
+                inventory_path=args.inventory, runtime_vars_path=args.runtime_vars,
+                private_key_path=args.private_key, public_key_path=args.public_key,
+                known_hosts_path=args.known_hosts, operation_id=args.operation_id,
+                survivor=args.survivor, direction=args.direction,
+                kubeconfig_path=args.kubeconfig,
+                state_lineage_sha256=args.state_lineage_sha256, state_serial=args.state_serial,
+                git_commit=git_commit,
+            )
+        elif args.action == "adopt-apply":
+            summary = adopt_reviewed_apply(
+                repository=repository, contract_path=contract_path, progress_path=args.progress,
+                control_root=args.control_root, operation_id=args.operation_id,
+                git_commit=git_commit,
+            )
+        elif args.action == "recover-node":
+            summary = recover_reviewed_node(
+                repository=repository, contract_path=contract_path, progress_path=args.progress,
+                control_root=args.control_root, operation_id=args.operation_id,
+                survivor=args.survivor, inventory_output=args.inventory_output,
+                runtime_vars_path=args.runtime_vars, private_key_path=args.private_key,
+                public_key_path=args.public_key, known_hosts_path=args.known_hosts,
+                kubeconfig_path=args.kubeconfig, git_commit=git_commit,
+            )
+        else:
+            refuse("unsupported controller action")
+        emit(summary)
+        return 0
+
     except ResizeRefused as error:
         print(f"REFUSED: {error}", file=sys.stderr)
         return 64

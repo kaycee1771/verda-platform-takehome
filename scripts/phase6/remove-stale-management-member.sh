@@ -3,10 +3,53 @@ set -euo pipefail
 
 expected_node="${1:-}"
 other_survivor_address="${2:-}"
+authorization="${3:-}"
+operation_id="${4:-}"
+contract="${5:-}"
+journal="${6:-}"
+integrated_commit="${7:-}"
+direction="${8:-}"
 if [[ ! "${expected_node}" =~ ^verda-mgmt-server-0[1-3]$ ]]; then
   echo '[FAIL] Exact stale management-node name is required.' >&2
   exit 64
 fi
+if [[ ! -f "$authorization" || ! -f "$contract" || ! -f "$journal" ||
+      ! "$operation_id" =~ ^[0-9a-f]{64}$ || ! "$integrated_commit" =~ ^[0-9a-f]{40}$ ||
+      ( "$direction" != resize && "$direction" != rollback ) ||
+      "$(stat -c '%U:%a' "$authorization" 2>/dev/null || true)" != 'root:600' ||
+      "$(stat -c '%U:%a' "$contract" 2>/dev/null || true)" != 'root:600' ||
+      "$(stat -c '%U:%a' "$journal" 2>/dev/null || true)" != 'root:600' ]]; then
+  echo '[FAIL] Protected Phase 6 recovery authorization is absent.' >&2
+  exit 64
+fi
+jq -e --arg operation "$operation_id" --arg node "${expected_node##*-}" '
+  .schema_version == 1 and .phase == 6 and .status == "CONTROLLER_OPERATION_AUTHORIZED" and
+  .operation_id == $operation and .node == $node and .mode == "recover" and
+  .raw_values_recorded == false
+' "$authorization" >/dev/null || { echo '[FAIL] Recovery authorization differs.' >&2; exit 64; }
+contract_sha256="$(sha256sum "$contract" | awk '{print $1}')"
+journal_sha256="$(sha256sum "$journal" | awk '{print $1}')"
+jq -e --arg commit "$integrated_commit" '
+  .phase == 6 and .cluster == "management" and .activation.enabled == true and
+  .activation.writes_allowed == true and .activation.integrated_commit == $commit and
+  .terraform.target_resource_expiry_utc == "2026-08-27T21:00:00Z"
+' "$contract" >/dev/null || { echo '[FAIL] Active Phase 6 contract differs.' >&2; exit 64; }
+jq -e --arg operation "$operation_id" --arg node "${expected_node##*-}" --arg direction "$direction" \
+  --arg commit "$integrated_commit" '
+  .phase == 6 and .integrated_commit == $commit and .operation_id == $operation and
+  .node == $node and .direction == $direction and .state == "APPLIED"
+' "$journal" >/dev/null || { echo '[FAIL] Phase 6 journal state differs.' >&2; exit 64; }
+jq -e --arg contract "$contract_sha256" --arg journal "$journal_sha256" --arg commit "$integrated_commit" \
+  --arg direction "$direction" '
+  .contract_sha256 == $contract and .journal_sha256 == $journal and
+  .integrated_commit == $commit and .direction == $direction
+' "$authorization" >/dev/null || { echo '[FAIL] Authorization hash binding differs.' >&2; exit 64; }
+expires_epoch="$(date -u -d "$(jq -r '.expires_at' "$authorization")" +%s 2>/dev/null || printf 0)"
+now_epoch="$(date -u +%s)"
+(( expires_epoch > now_epoch && expires_epoch - now_epoch <= 600 )) || {
+  echo '[FAIL] Recovery authorization is expired.' >&2
+  exit 64
+}
 if [[ ! "${other_survivor_address}" =~ ^10\.250\.0\.1[123]$ ]]; then
   echo '[FAIL] Exact private address of the other survivor is required.' >&2
   exit 64

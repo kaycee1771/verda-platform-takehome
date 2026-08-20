@@ -12,6 +12,31 @@
       verda-mgmt-server-02: verda-mgmt-server-03
       verda-mgmt-server-03: verda-mgmt-server-02
   tasks:
+    - name: Verify the controller-issued used-once recovery authorization
+      ansible.builtin.command:
+        argv:
+          - python
+          - /workspace/scripts/phase6/assert-operation-authorization.py
+          - --authorization
+          - /run/secrets/phase6-operation-authorization.json
+          - --contract
+          - /run/config/phase6-active-contract.json
+          - --journal
+          - /run/config/phase6-operation-journal.json
+          - --authorization-sha256
+          - "{{ phase6_authorization_sha256 }}"
+          - --operation-id
+          - "{{ phase6_operation_id }}"
+          - --commit
+          - "{{ phase6_integrated_commit }}"
+          - --node
+          - "{{ phase6_resize_target[-2:] }}"
+          - --direction
+          - "{{ phase6_direction }}"
+          - --mode
+          - recover
+      changed_when: false
+
     - name: Refuse an unexpected target or surviving join peer
       ansible.builtin.assert:
         that:
@@ -75,6 +100,29 @@
   gather_facts: false
   any_errors_fatal: true
   tasks:
+    - name: Install the controller-issued recovery authorization
+      ansible.builtin.copy:
+        src: /run/secrets/phase6-operation-authorization.json
+        dest: /run/verda-phase6-operation-authorization.json
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Install the hash-bound active contract and operation journal
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0600"
+      loop:
+        - src: /run/config/phase6-active-contract.json
+          dest: /run/verda-phase6-active-contract.json
+        - src: /run/config/phase6-operation-journal.json
+          dest: /run/verda-phase6-operation-journal.json
+      no_log: true
+
     - name: Install the bounded stale-member removal helper
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../../../scripts/phase6/remove-stale-management-member.sh"
@@ -89,6 +137,12 @@
           - /usr/local/libexec/verda-phase6-remove-stale-member
           - "{{ phase6_resize_target }}"
           - "{{ phase3_wireguard_addresses[phase6_other_survivor] }}"
+          - /run/verda-phase6-operation-authorization.json
+          - "{{ phase6_operation_id }}"
+          - /run/verda-phase6-active-contract.json
+          - /run/verda-phase6-operation-journal.json
+          - "{{ phase6_integrated_commit }}"
+          - "{{ phase6_direction }}"
       register: phase6_stale_member_removal
       changed_when: true
       no_log: true
@@ -140,5 +194,11 @@
           - /usr/local/libexec/verda-phase6-prepare-resize
           - "{{ phase6_resize_target }}"
           - --post-recovery
+          - /run/verda-phase6-operation-authorization.json
+          - "{{ phase6_operation_id }}"
+          - /run/verda-phase6-active-contract.json
+          - /run/verda-phase6-operation-journal.json
+          - "{{ phase6_integrated_commit }}"
+          - "{{ phase6_direction }}"
       changed_when: true
       no_log: true

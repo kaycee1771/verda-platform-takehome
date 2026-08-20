@@ -166,9 +166,10 @@ def ready_nodes(nodes: dict[str, Any]) -> tuple[int, dict[str, int], dict[str, i
     return ready, counts, memory
 
 
-def etcd_facts(status: Any, members: Any, target: str) -> dict[str, Any]:
-    if not isinstance(status, list) or len(status) != 3:
-        raise CollectionError("etcd endpoint status does not contain exactly three endpoints")
+def etcd_facts(status: Any, members: Any, target: str, stage: str = "preflight") -> dict[str, Any]:
+    expected_healthy = 2 if stage == "recovery" else 3
+    if not isinstance(status, list) or len(status) != expected_healthy:
+        raise CollectionError("etcd endpoint status does not contain the stage-specific healthy endpoint count")
     member_list = members.get("members", []) if isinstance(members, dict) else []
     if len(member_list) != 3:
         raise CollectionError("etcd membership does not contain exactly three members")
@@ -189,13 +190,15 @@ def etcd_facts(status: Any, members: Any, target: str) -> dict[str, Any]:
         leaders.add(leader)
         if WG_ADDRESSES[target] in endpoint:
             target_id = member_id
-    if len(healthy_ids) != 3 or len(leaders) != 1 or target_id is None:
+    if len(healthy_ids) != expected_healthy or len(leaders) != 1:
         raise CollectionError("etcd endpoint health/leadership is ambiguous")
+    if stage != "recovery" and target_id is None:
+        raise CollectionError("selected etcd member identity is absent")
     return {
         "etcd_members": 3,
-        "etcd_healthy_members": 3,
+        "etcd_healthy_members": expected_healthy,
         "etcd_quorum": True,
-        "selected_node_is_not_current_etcd_leader": target_id not in leaders,
+        "selected_node_is_not_current_etcd_leader": target_id not in leaders if target_id is not None else True,
     }
 
 
@@ -249,22 +252,30 @@ def argo_facts(applications: dict[str, Any]) -> dict[str, Any]:
     return {"argocd_application_count": len(items), "argocd_all_healthy_synced": not unhealthy}
 
 
-def snapshot_facts(snapshot: Any) -> dict[str, Any]:
+def snapshot_facts(snapshot: Any, *, now: dt.datetime, freshness_seconds: int) -> dict[str, Any]:
     items = snapshot.get("items") if isinstance(snapshot, dict) else snapshot
     if not isinstance(items, list) or not items:
         raise CollectionError("off-cluster snapshot inventory is empty or invalid")
-    verified = [
-        item for item in items
-        if isinstance(item, dict)
-        and isinstance(item.get("spec"), dict)
-        and str(item["spec"].get("location", "")).startswith("s3://")
-        and str(item["spec"].get("snapshotName", "")).endswith(".zip")
-        and isinstance(item.get("status"), dict)
-        and item["status"].get("readyToUse") is True
-        and str(item["status"].get("size", "")) not in {"", "0", "None"}
-        and isinstance(item["status"].get("creationTime"), str)
-        and bool(item["status"]["creationTime"])
-    ]
+    verified = []
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("spec"), dict) or not isinstance(item.get("status"), dict):
+            continue
+        spec, status = item["spec"], item["status"]
+        try:
+            created = dt.datetime.fromisoformat(str(status.get("creationTime", "")).replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                continue
+            age = (now.astimezone(dt.timezone.utc) - created.astimezone(dt.timezone.utc)).total_seconds()
+        except ValueError:
+            continue
+        if (
+            str(spec.get("location", "")).startswith("s3://")
+            and str(spec.get("snapshotName", "")).endswith(".zip")
+            and status.get("readyToUse") is True
+            and str(status.get("size", "")) not in {"", "0", "None"}
+            and -30 <= age <= freshness_seconds
+        ):
+            verified.append(item)
     if not verified:
         raise CollectionError("no successful structured off-cluster snapshot was verified")
     return {"etcd_off_cluster_snapshot_verified": True, "etcd_off_cluster_snapshot_count": len(verified)}
@@ -272,7 +283,9 @@ def snapshot_facts(snapshot: Any) -> dict[str, Any]:
 
 def command_set(
     runner: Runner, kubeconfig: pathlib.Path, inventory: pathlib.Path, target: str, survivor: str, stage: str,
+    *, now: dt.datetime | None = None, freshness_seconds: int = 600,
 ) -> dict[str, Any]:
+    now = now or dt.datetime.now(dt.timezone.utc)
     hosts, known_hosts = read_inventory(inventory)
     if survivor == target or survivor not in NODES:
         raise CollectionError("collector survivor is invalid")
@@ -289,7 +302,8 @@ def command_set(
         "-i", str(survivor_host["ansible_ssh_private_key_file"]),
         f"{survivor_host['ansible_user']}@{survivor_host['ansible_host']}",
     ]
-    endpoints = ",".join(f"https://{WG_ADDRESSES[node]}:2379" for node in NODES)
+    endpoint_nodes = [node for node in NODES if stage != "recovery" or node != target]
+    endpoints = ",".join(f"https://{WG_ADDRESSES[node]}:2379" for node in endpoint_nodes)
     etcd_prefix = (
         "sudo -n /usr/local/libexec/verda-phase4/etcdctl-local "
         f"--endpoints={endpoints} "
@@ -299,7 +313,16 @@ def command_set(
     )
     status = json.loads(runner.run(ssh + [f"{etcd_prefix} endpoint status --write-out=json"]))
     members = json.loads(runner.run(ssh + [f"{etcd_prefix} member list --write-out=json"]))
-    facts = {"ready_nodes": ready, **etcd_facts(status, members, target)}
+    facts = {"ready_nodes": ready, **etcd_facts(status, members, target, stage)}
+    if stage == "recovery":
+        if ready != 2:
+            raise CollectionError("recovery boundary does not contain exactly two Ready survivors")
+        facts.update({
+            "surviving_ready_nodes": 2, "surviving_etcd_healthy_members": 2,
+            "replacement_not_ready": True, "partial_inventory_refreshed": True,
+            "wireguard_peer_inputs_complete": True,
+        })
+        return facts
     cilium = runner.json(["cilium", "status", f"--kubeconfig={kubeconfig}", "--output=json"])
     facts.update(cilium_facts(cilium))
     facts.update(longhorn_facts(
@@ -327,7 +350,7 @@ def command_set(
         snapshot = runner.json(ssh + [
             "sudo -n /usr/local/bin/rke2 etcd-snapshot ls --output=json"
         ])
-        facts.update(snapshot_facts(snapshot))
+        facts.update(snapshot_facts(snapshot, now=now, freshness_seconds=freshness_seconds))
         stateful = runner.json(kubectl + ["get", "statefulsets", "--all-namespaces", "-o", "json"])
         protected_namespaces = {"argocd", "cert-manager", "longhorn-system"}
         unprotected = [
