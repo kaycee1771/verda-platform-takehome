@@ -72,6 +72,26 @@ envelope / balance = 43.66%
 
 The known VM-plus-NVMe run rate is $0.23165/hour or $5.55948/day. A 12-hour infrastructure buffer is $2.78; the remaining balance after the full envelope is materially larger. The $5 allowance is a planning cap, not a fabricated Verda quote: if live object/traffic/registry pricing would exceed it, stop and re-plan before provisioning that service.
 
+## Phase 6 mandatory capacity candidate
+
+The complete rendered Stage A workload does not fit the current three
+`CPU.4V.16G` nodes with the required one-node-loss reserve. A read-only,
+authenticated provider preflight at `2026-08-20T05:54:40Z` confirmed that
+`CPU.8V.32G` was available in `FIN-03` at `$0.0558/instance-hour`; the provider
+reported a `$99.22` balance and the unchanged `$0.23164521/hour` current burn at
+that instant. These facts are time-bound and must be refreshed before each
+replacement.
+
+Replacing the three compute instances while preserving all six volume resources
+would raise the known rate to `$0.31534521/hour`. The seven-day known subtotal is
+`$52.97799528`; adding the existing `$5` unquoted-services allowance and 15%
+contingency gives `$66.674694572`. Including the mandatory 12-hour reserve gives
+a maximum exposure of `$70.458837092`, approximately 71.01% of the authenticated
+balance. This exceeds the currently approved `$50.51` Stage A envelope and the
+70% bonus-expansion cut line. It is therefore **not authorized** by the prior
+cost decision: no replacement may occur until the user approves an exact new
+ceiling and evaluator expiry. Stage B and GPU expansion remain frozen.
+
 ## Conditional Stage B scenario
 
 At the lean blueprint bound, three additional workload nodes with 60 GiB root plus 50 GiB data each cost approximately $29.25 for seven days before an incremental $2.50 unquoted-services allowance and 15% contingency. The resulting incremental envelope is $36.51; combined with Stage A it is $87.02. This is planning evidence only. Stage B requires a new decision using actual remaining credit and elapsed review time after Stage A is green.
