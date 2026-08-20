@@ -233,6 +233,7 @@ required_files:
   - docs/runbooks/sealed-secrets-recovery.md
   - docs/runbooks/kyverno-audit-first.md
   - docs/reports/phase6-capacity-resize-plan.md
+  - docs/reports/phase6-capacity-projection.md
   - docs/runbooks/credential-rotation.md
   - docs/runbooks/teardown.md
   - docs/reports/restore-report-template.md
@@ -452,6 +453,7 @@ required_files:
   - scripts/phase5/verify-argocd-ingress.py
   - scripts/phase5/verify-runtime.sh
   - scripts/phase6/capacity-admission.py
+  - scripts/phase6/render-capacity-inputs.py
   - scripts/phase6/check-root-admission.py
   - scripts/phase6/verify-stage-a.sh
   - scripts/verify.sh

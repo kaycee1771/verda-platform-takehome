@@ -10,6 +10,7 @@ and the exact sanitized baseline are supplied.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -79,6 +80,10 @@ def _construct_mapping(loader: UniqueKeyLoader, node: yaml.Node, deep: bool = Fa
 UniqueKeyLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
     _construct_mapping,
+)
+UniqueKeyLoader.add_constructor(
+    "tag:yaml.org,2002:value",
+    lambda loader, node: loader.construct_scalar(node),
 )
 
 
@@ -213,26 +218,35 @@ def memory_bytes(value: Any, label: str) -> int:
     return int(result)
 
 
-def _container_resources(container: dict[str, Any], label: str) -> PodResources:
-    resources = _mapping(container.get("resources"), f"{label} resources")
+def _container_resources(container: dict[str, Any], label: str, allow_missing_requests: bool = False) -> PodResources:
+    resources_value = container.get("resources")
+    if resources_value is None and allow_missing_requests:
+        resources_value = {}
+    resources = _mapping(resources_value, f"{label} resources")
     required = ("cpu", "memory")
     requests_value = resources.get("requests")
-    limits_value = resources.get("limits")
+    limits_value = resources.get("limits", {})
+    if requests_value is None and allow_missing_requests:
+        requests_value = {}
     if not isinstance(requests_value, dict) or not isinstance(limits_value, dict):
-        raise CapacityAdmissionError(f"{label} must set CPU and memory requests and limits")
+        raise CapacityAdmissionError(f"{label} must set CPU and memory requests; limits must be a mapping when present")
     requests = _mapping(requests_value, f"{label} requests")
     limits = _mapping(limits_value, f"{label} limits")
-    if any(key not in requests or key not in limits for key in required):
-        raise CapacityAdmissionError(f"{label} must set CPU and memory requests and limits")
+    if any(key not in requests for key in required) and not allow_missing_requests:
+        raise CapacityAdmissionError(f"{label} must set CPU and memory requests")
+    request_cpu = cpu_millicores(requests.get("cpu", "0"), f"{label} CPU request")
+    request_memory = memory_bytes(requests.get("memory", "0"), f"{label} memory request")
+    limit_cpu = cpu_millicores(limits["cpu"], f"{label} CPU limit") if "cpu" in limits else 0
+    limit_memory = memory_bytes(limits["memory"], f"{label} memory limit") if "memory" in limits else 0
     result = PodResources(
-        cpu_millicores(requests["cpu"], f"{label} CPU request"),
-        memory_bytes(requests["memory"], f"{label} memory request"),
-        cpu_millicores(limits["cpu"], f"{label} CPU limit"),
-        memory_bytes(limits["memory"], f"{label} memory limit"),
+        request_cpu,
+        request_memory,
+        limit_cpu,
+        limit_memory,
     )
     if (
-        result.limit_cpu_millicores < result.request_cpu_millicores
-        or result.limit_memory_bytes < result.request_memory_bytes
+        ("cpu" in limits and result.limit_cpu_millicores < result.request_cpu_millicores)
+        or ("memory" in limits and result.limit_memory_bytes < result.request_memory_bytes)
     ):
         raise CapacityAdmissionError(f"{label} limit is below its request")
     return result
@@ -247,20 +261,20 @@ def _max_resources(left: PodResources, right: PodResources) -> PodResources:
     )
 
 
-def effective_pod_resources(spec: dict[str, Any], label: str) -> PodResources:
+def effective_pod_resources(spec: dict[str, Any], label: str, allow_missing_requests: bool = False) -> PodResources:
     containers = [_mapping(item, f"{label} container") for item in _list(spec.get("containers"), f"{label} containers")]
     if not containers:
         raise CapacityAdmissionError(f"{label} must contain at least one application container")
     application = ZERO_RESOURCES
     for index, container in enumerate(containers):
-        application = application.plus(_container_resources(container, f"{label} container {index}"))
+        application = application.plus(_container_resources(container, f"{label} container {index}", allow_missing_requests))
 
     restartable = ZERO_RESOURCES
     maximum_init = ZERO_RESOURCES
     init_containers = spec.get("initContainers", [])
     for index, item in enumerate(_list(init_containers, f"{label} initContainers")):
         container = _mapping(item, f"{label} init container")
-        resources = _container_resources(container, f"{label} init container {index}")
+        resources = _container_resources(container, f"{label} init container {index}", allow_missing_requests)
         if container.get("restartPolicy") == "Always":
             restartable = restartable.plus(resources)
             maximum_init = _max_resources(maximum_init, restartable)
@@ -370,6 +384,7 @@ def component_capacity(
     storage_classes: dict[str, dict[str, Any]],
     component: str,
     identities: set[tuple[str, str, str, str]],
+    allow_missing_requests: bool = False,
 ) -> ComponentCapacity:
     steady = ZERO_RESOURCES
     peak = ZERO_RESOURCES
@@ -403,8 +418,14 @@ def component_capacity(
             steady_replicas, peak_replicas, pod_spec = _workload_replicas(
                 document, node_count, f"{component} {kind}"
             )
-            per_pod = effective_pod_resources(pod_spec, f"{component} {kind}")
-            steady = steady.plus(per_pod.scaled(steady_replicas))
+            per_pod = effective_pod_resources(pod_spec, f"{component} {kind}", allow_missing_requests)
+            annotations_value = metadata.get("annotations")
+            annotations = {} if annotations_value is None else _mapping(annotations_value, f"{component} annotations")
+            projection_mode = annotations.get("capacity.platform.verda.io/mode", "normal")
+            if projection_mode not in {"normal", "peak-only"}:
+                raise CapacityAdmissionError(f"{component} has an unsupported capacity projection mode")
+            if projection_mode != "peak-only":
+                steady = steady.plus(per_pod.scaled(steady_replicas))
             peak = peak.plus(per_pod.scaled(peak_replicas))
             if kind == "StatefulSet":
                 spec = _mapping(document.get("spec"), f"{component} StatefulSet spec")
@@ -458,7 +479,7 @@ def component_capacity(
     )
 
 
-def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, int | str]:
+def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, Any]:
     if contract.get("schema_version") != 1:
         raise CapacityAdmissionError("capacity contract schema_version must equal 1")
     if contract.get("admission_status") != "ready":
@@ -500,6 +521,11 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, int | s
     components = _mapping(contract.get("components"), "components")
     if set(components) != REQUIRED_COMPONENTS:
         raise CapacityAdmissionError("capacity contract must contain the exact mandatory Phase 6 component set")
+    chart_components = REQUIRED_COMPONENTS - {"environment_foundations", "platform_demo"}
+    chart_locks = _mapping(
+        _load_one(ROOT / "versions.lock.yaml", "versions lock").get("helm_charts"),
+        "Helm chart locks",
+    )
 
     aggregate_steady = ZERO_RESOURCES
     aggregate_peak = ZERO_RESOURCES
@@ -510,9 +536,54 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, int | s
     raw_pvc_bytes = 0
     loss_pvc_bytes = 0
     identities: set[tuple[str, str, str, str]] = set()
+    projection_only = contract.get("_projection_only") is True
+    unrequested_container_count = 0
+    component_projection: dict[str, dict[str, int]] = {}
     base = contract_path.resolve().parent
     for component in sorted(REQUIRED_COMPONENTS):
         item = _mapping(components[component], f"component {component}")
+        if component in chart_components:
+            chart_lock = _mapping(chart_locks.get(component), f"chart lock {component}")
+            if item.get("chart_archive_sha256") != chart_lock.get("archive_sha256"):
+                raise CapacityAdmissionError(f"component {component} chart checksum differs from versions.lock.yaml")
+        elif "chart_archive_sha256" in item:
+            raise CapacityAdmissionError(f"component {component} unexpectedly claims an external chart")
+        source_inputs = _list(item.get("source_inputs"), f"component {component} source inputs")
+        if not source_inputs:
+            raise CapacityAdmissionError(f"component {component} has no checksum-bound source inputs")
+        for source_index, source_item in enumerate(source_inputs):
+            source = _mapping(source_item, f"component {component} source input {source_index}")
+            source_path_value = source.get("path")
+            source_sha256 = source.get("sha256")
+            recursive = source.get("recursive")
+            if not isinstance(source_path_value, str) or not source_path_value or Path(source_path_value).is_absolute():
+                raise CapacityAdmissionError(f"component {component} has an invalid source path")
+            source_path = (ROOT / source_path_value).resolve()
+            try:
+                source_path.relative_to(ROOT.resolve())
+            except ValueError as exc:
+                raise CapacityAdmissionError(f"component {component} source escapes the repository") from exc
+            if not isinstance(source_sha256, str) or not SHA256.fullmatch(source_sha256):
+                raise CapacityAdmissionError(f"component {component} has an invalid source checksum")
+            if not isinstance(recursive, bool):
+                raise CapacityAdmissionError(f"component {component} source recursion flag is invalid")
+            if recursive:
+                if source_path.is_symlink() or not source_path.is_dir():
+                    raise CapacityAdmissionError(f"component {component} recursive source is not a directory")
+                files = [path for path in sorted(source_path.rglob("*")) if path.is_file()]
+                if not files or any(path.is_symlink() for path in files):
+                    raise CapacityAdmissionError(f"component {component} recursive source is unsafe")
+                digest = hashlib.sha256()
+                for path in files:
+                    digest.update(path.relative_to(source_path).as_posix().encode("utf-8"))
+                    digest.update(b"\0")
+                    digest.update(hashlib.sha256(_read_regular(path, f"component {component} source")).digest())
+                    digest.update(b"\0")
+                actual_source_sha256 = digest.hexdigest()
+            else:
+                actual_source_sha256 = hashlib.sha256(_read_regular(source_path, f"component {component} source")).hexdigest()
+            if actual_source_sha256 != source_sha256:
+                raise CapacityAdmissionError(f"component {component} source checksum changed")
         render_path_value = item.get("render_path")
         render_sha256 = item.get("render_sha256")
         if not isinstance(render_path_value, str) or not render_path_value:
@@ -522,13 +593,28 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, int | s
         render_path = Path(render_path_value)
         if not render_path.is_absolute():
             render_path = (base / render_path).resolve()
+        documents = _load_render(render_path, render_sha256, f"component {component} render")
+        for document in documents:
+            if document.get("kind") not in STANDARD_WORKLOAD_KINDS:
+                continue
+            specification = _mapping(document.get("spec"), f"component {component} workload spec")
+            pod_specification = specification if document.get("kind") == "Pod" else _mapping(
+                _mapping(specification.get("template"), f"component {component} workload template").get("spec"),
+                f"component {component} pod spec",
+            )
+            for container in pod_specification.get("initContainers", []) + pod_specification.get("containers", []):
+                resources = container.get("resources") if isinstance(container, dict) else None
+                requests = resources.get("requests") if isinstance(resources, dict) else None
+                if not isinstance(requests, dict) or "cpu" not in requests or "memory" not in requests:
+                    unrequested_container_count += 1
         capacity = component_capacity(
-            _load_render(render_path, render_sha256, f"component {component} render"),
+            documents,
             item,
             node_count,
             storage_classes,
             component,
             identities,
+            projection_only,
         )
         document_count += capacity.document_count
         workload_count += capacity.workload_count
@@ -538,6 +624,15 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, int | s
         logical_pvc_bytes += capacity.logical_pvc_bytes
         raw_pvc_bytes += capacity.raw_pvc_bytes
         loss_pvc_bytes += capacity.one_node_loss_pvc_bytes
+        component_projection[component] = {
+            "steady_cpu_millicores": capacity.steady.request_cpu_millicores,
+            "rollout_peak_cpu_millicores": capacity.peak.request_cpu_millicores,
+            "steady_memory_bytes": capacity.steady.request_memory_bytes,
+            "rollout_peak_memory_bytes": capacity.peak.request_memory_bytes,
+            "logical_pvc_bytes": capacity.logical_pvc_bytes,
+            "raw_pvc_bytes": capacity.raw_pvc_bytes,
+            "one_node_loss_pvc_bytes": capacity.one_node_loss_pvc_bytes,
+        }
 
     post_steady_cpu = numeric_baseline["existing_requested_cpu_millicores"] + aggregate_steady.request_cpu_millicores
     post_steady_memory = numeric_baseline["existing_requested_memory_bytes"] + aggregate_steady.request_memory_bytes
@@ -547,6 +642,28 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, int | s
     memory_headroom = numeric_baseline["one_node_loss_allocatable_memory_bytes"] - post_peak_memory
     storage_headroom = numeric_baseline["storage_available_bytes"] - raw_pvc_bytes
     loss_storage_headroom = numeric_baseline["worst_two_node_storage_available_bytes"] - loss_pvc_bytes
+
+    tracked_projection = contract.get("projection_result")
+    if tracked_projection is not None:
+        expected_projection = _mapping(tracked_projection, "projection_result")
+        exact_projection = {
+            "rendered_document_count": document_count,
+            "workload_definition_count": workload_count,
+            "pvc_definition_count": pvc_count,
+            "unrequested_container_count": unrequested_container_count,
+            "new_steady_cpu_millicores": aggregate_steady.request_cpu_millicores,
+            "new_rollout_peak_cpu_millicores": aggregate_peak.request_cpu_millicores,
+            "new_steady_memory_bytes": aggregate_steady.request_memory_bytes,
+            "new_rollout_peak_memory_bytes": aggregate_peak.request_memory_bytes,
+            "new_logical_pvc_bytes": logical_pvc_bytes,
+            "new_raw_pvc_bytes": raw_pvc_bytes,
+            "one_node_loss_pvc_bytes": loss_pvc_bytes,
+        }
+        if any(expected_projection.get(key) != value for key, value in exact_projection.items()):
+            raise CapacityAdmissionError("tracked projection_result does not match checksum-bound renders")
+
+    if unrequested_container_count and not projection_only:
+        raise CapacityAdmissionError("rendered workloads contain containers without explicit CPU and memory requests")
 
     if post_steady_cpu > numeric_baseline["allocatable_cpu_millicores"] or post_steady_memory > numeric_baseline["allocatable_memory_bytes"]:
         raise CapacityAdmissionError("steady-state Phase 6 requests exceed total cluster capacity")
@@ -577,12 +694,19 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, int | s
         "one_node_loss_pvc_bytes": loss_pvc_bytes,
         "storage_headroom_bytes": storage_headroom,
         "one_node_loss_storage_headroom_bytes": loss_storage_headroom,
+        "unrequested_container_count": unrequested_container_count,
+        "component_projection": component_projection,
     }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
+    parser.add_argument(
+        "--projection-only",
+        action="store_true",
+        help="verify renders and report component totals without claiming cluster admission",
+    )
     return parser.parse_args()
 
 
@@ -590,7 +714,35 @@ def main() -> int:
     args = parse_args()
     contract_path = args.contract.resolve()
     try:
-        report = evaluate(_load_one(contract_path, "capacity contract"), contract_path)
+        contract = _load_one(contract_path, "capacity contract")
+        if args.projection_only:
+            projected = deepcopy(contract)
+            projected["_projection_only"] = True
+            projected["admission_status"] = "ready"
+            projected["baseline"] = {
+                "node_count": 3,
+                "allocatable_cpu_millicores": 1_000_000_000,
+                "allocatable_memory_bytes": 1_000_000_000_000_000,
+                "one_node_loss_allocatable_cpu_millicores": 999_999_999,
+                "one_node_loss_allocatable_memory_bytes": 999_999_999_999_999,
+                "existing_requested_cpu_millicores": 0,
+                "existing_requested_memory_bytes": 0,
+                "required_cpu_reserve_millicores": 0,
+                "required_memory_reserve_bytes": 0,
+                "storage_available_bytes": 1_000_000_000_000_000,
+                "worst_two_node_storage_available_bytes": 999_999_999_999_999,
+                "required_storage_reserve_bytes": 0,
+            }
+            full = evaluate(projected, contract_path)
+            report = {
+                key: value
+                for key, value in full.items()
+                if key.startswith("new_")
+                or key in {"schema_version", "component_count", "rendered_document_count", "workload_definition_count", "pvc_definition_count", "unrequested_container_count", "one_node_loss_pvc_bytes", "component_projection"}
+            }
+            report["status"] = "PROJECTED"
+        else:
+            report = evaluate(contract, contract_path)
     except (CapacityAdmissionError, OSError) as exc:
         print(f"[FAIL] Phase 6 capacity admission: {exc}", file=sys.stderr)
         return 1

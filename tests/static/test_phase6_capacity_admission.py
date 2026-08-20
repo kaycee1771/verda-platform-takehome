@@ -14,6 +14,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "phase6" / "capacity-admission.py"
+RENDER_SCRIPT = ROOT / "scripts" / "phase6" / "render-capacity-inputs.py"
 CONTRACT = ROOT / "config" / "phase6-capacity-admission.yaml"
 SPEC = importlib.util.spec_from_file_location("phase6_capacity_admission", SCRIPT)
 assert SPEC and SPEC.loader
@@ -108,6 +109,11 @@ def base_documents() -> dict[str, list[dict]]:
 
 
 def write_contract(root: Path, documents: dict[str, list[dict]]) -> tuple[Path, dict]:
+    fixture_source = Path(__file__)
+    fixture_source_hash = hashlib.sha256(fixture_source.read_bytes()).hexdigest()
+    chart_locks = yaml.safe_load((ROOT / "versions.lock.yaml").read_text(encoding="utf-8"))[
+        "helm_charts"
+    ]
     components = {}
     for component in sorted(RUNTIME.REQUIRED_COMPONENTS):
         path = root / f"{component}.yaml"
@@ -129,7 +135,18 @@ def write_contract(root: Path, documents: dict[str, list[dict]]) -> tuple[Path, 
             "expected_document_count": len(documents[component]),
             "expected_workload_count": workloads,
             "expected_pvc_definition_count": pvcs,
+            "source_inputs": [
+                {
+                    "path": fixture_source.relative_to(ROOT).as_posix(),
+                    "recursive": False,
+                    "sha256": fixture_source_hash,
+                }
+            ],
         }
+        if component not in {"environment_foundations", "platform_demo"}:
+            components[component]["chart_archive_sha256"] = chart_locks[component][
+                "archive_sha256"
+            ]
     contract = {
         "schema_version": 1,
         "admission_status": "ready",
@@ -158,6 +175,52 @@ def write_contract(root: Path, documents: dict[str, list[dict]]) -> tuple[Path, 
 
 
 class Phase6CapacityAdmissionTests(unittest.TestCase):
+    def test_tracked_contract_binds_every_projection_and_stays_blocked(self) -> None:
+        contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+        self.assertEqual(contract["admission_status"], "blocked-incomplete-inputs")
+        self.assertEqual(
+            contract["blockers"],
+            [
+                "current-three-node-cpu-envelope-insufficient",
+                "candidate-shape-kubernetes-allocatable-unverified",
+                "rancher-pre-upgrade-hook-has-no-chart-supported-resource-values",
+            ],
+        )
+        self.assertEqual(contract["baseline"]["allocatable_memory_bytes"], 42291773440)
+        self.assertEqual(contract["baseline"]["existing_requested_memory_bytes"], 10122952704)
+        self.assertEqual(
+            contract["baseline_provenance"]["raw_requested_memory_bytes"]
+            + contract["baseline_provenance"]["phase5_render_requested_memory_bytes"],
+            contract["baseline"]["existing_requested_memory_bytes"],
+        )
+        self.assertEqual(contract["baseline"]["required_cpu_reserve_millicores"], 1000)
+        self.assertEqual(contract["baseline"]["required_memory_reserve_bytes"], 4 * GIB)
+        self.assertEqual(contract["baseline"]["required_storage_reserve_bytes"], 50 * GIB)
+        self.assertEqual(contract["projection_result"]["new_steady_cpu_millicores"], 4460)
+        self.assertEqual(contract["projection_result"]["new_rollout_peak_cpu_millicores"], 6550)
+        self.assertEqual(
+            contract["projection_result"]["one_node_loss_cpu_reserve_shortfall_millicores"],
+            7485,
+        )
+        self.assertEqual(
+            contract["projection_result"]["one_node_loss_memory_reserve_headroom_bytes"],
+            1009131520,
+        )
+        self.assertEqual(contract["projection_result"]["unrequested_container_count"], 1)
+        self.assertEqual(set(contract["components"]), RUNTIME.REQUIRED_COMPONENTS)
+        for component in contract["components"].values():
+            self.assertRegex(component["render_sha256"], r"^[0-9a-f]{64}$")
+            self.assertGreater(component["expected_document_count"], 0)
+            self.assertGreater(len(component["source_inputs"]), 0)
+
+    def test_render_helper_covers_exact_component_set_without_live_clients(self) -> None:
+        source = RENDER_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("SYNTHETIC_DIGEST", source)
+        self.assertIn("operator-workloads.capacity-input", source)
+        self.assertIn("velero_generated_projections", source)
+        self.assertNotIn("kubectl get", source)
+        self.assertNotIn("helm install", source)
+
     def test_tracked_contract_is_deliberately_fail_closed(self) -> None:
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--contract", str(CONTRACT)],
@@ -252,7 +315,7 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("unsupported capacity-bearing kind Prometheus", result.stderr)
 
-    def test_missing_container_limits_fail_closed(self) -> None:
+    def test_missing_container_limits_are_allowed_when_requests_remain_exact(self) -> None:
         documents = base_documents()
         del documents["rancher"][0]["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]
         with tempfile.TemporaryDirectory() as directory:
@@ -264,8 +327,43 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_missing_container_requests_fail_closed(self) -> None:
+        documents = base_documents()
+        del documents["rancher"][0]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]
+        with tempfile.TemporaryDirectory() as directory:
+            contract_path, _ = write_contract(Path(directory), documents)
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--contract", str(contract_path)],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
         self.assertEqual(result.returncode, 1)
-        self.assertIn("must set CPU and memory requests and limits", result.stderr)
+        self.assertIn("must set CPU and memory requests", result.stderr)
+
+    def test_peak_only_projection_does_not_inflate_steady_state(self) -> None:
+        document = deployment("generated", 3, "250m", "256Mi")
+        document["spec"]["strategy"] = {"type": "Recreate"}
+        document["metadata"]["annotations"] = {
+            "capacity.platform.verda.io/mode": "peak-only"
+        }
+        result = RUNTIME.component_capacity(
+            [document],
+            {
+                "expected_document_count": 1,
+                "expected_workload_count": 1,
+                "expected_pvc_definition_count": 0,
+            },
+            3,
+            {"longhorn-critical": {"replicas": 3, "replicas_after_one_node_loss": 2}},
+            "generated",
+            set(),
+        )
+        self.assertEqual(result.steady.request_cpu_millicores, 0)
+        self.assertEqual(result.peak.request_cpu_millicores, 750)
 
     def test_restartable_init_resources_follow_scheduler_peak_semantics(self) -> None:
         spec = pod_spec("100m", "100Mi", "200m", "200Mi")
@@ -300,6 +398,21 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 1)
         self.assertIn("checksum does not match", result.stderr)
+
+    def test_source_checksum_is_mandatory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract_path, contract = write_contract(Path(directory), base_documents())
+            contract["components"]["rancher"]["source_inputs"][0]["sha256"] = "0" * 64
+            contract_path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--contract", str(contract_path)],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("source checksum changed", result.stderr)
 
 
 if __name__ == "__main__":
