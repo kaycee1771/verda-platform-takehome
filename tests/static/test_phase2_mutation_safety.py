@@ -7,6 +7,8 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 
 
@@ -32,6 +34,9 @@ class Phase2MutationSafetyTests(unittest.TestCase):
         self.assertNotIn("phase2-live-mutation.lock", source)
         self.assertIn("New-StagedReviewedPlan -Path $paths.PlanPath", source)
         self.assertIn("New-StagedReviewedPlan -Path $Paths.RepairPlanPath", source)
+        self.assertIn("FILE_FLAG_OPEN_REPARSE_POINT", source)
+        self.assertGreaterEqual(source.count("[Phase2NativeFileIdentity]::VerifyDirectory"), 2)
+        self.assertIn("ParentIdentity = $parentIdentity", source)
         self.assertEqual(source.count("Open-ReviewedPlanHandle -Path"), 1)
         self.assertGreaterEqual(source.count("Get-OpenPlanSha256 -Stream"), 3)
         self.assertIn("Exit-Phase2MutationLease -Lease $stateBoundaryLease", source)
@@ -315,6 +320,81 @@ try {{ & '{PHASE2}' -Target apply; exit 81 }} catch {{}}
             self.assertIn("reparse-plan-refused", result.stdout)
             self.assertFalse(reviewed.exists())
             self.assertFalse(applied.exists())
+
+    def test_transient_staging_directory_symlink_never_changes_applied_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            base, backup = root / "base", root / "backup"
+            terraform_dir = base / "terraform"
+            stage_dir = terraform_dir / "reviewed-plans"
+            parked = root / "parked-stage"
+            attacker = root / "attacker-stage"
+            state = terraform_dir / "management.tfstate"
+            plan = terraform_dir / "management.tfplan"
+            applied = root / "applied.txt"
+            terraform_dir.mkdir(parents=True)
+            stage_dir.mkdir()
+            backup.mkdir()
+            attacker.mkdir()
+            state.write_text('{"lineage":"11111111-1111-1111-1111-111111111111","serial":1}', encoding="utf-8")
+            plan.write_text("REVIEWED-PLAN", encoding="utf-8")
+            stop = threading.Event()
+            symlink_worked = threading.Event()
+
+            def toggle() -> None:
+                while not stop.is_set():
+                    try:
+                        if stage_dir.exists() and not stage_dir.is_symlink() and not parked.exists():
+                            os.replace(stage_dir, parked)
+                            stage_dir.symlink_to(attacker, target_is_directory=True)
+                            symlink_worked.set()
+                            for staged in parked.glob("reviewed-*.tfplan"):
+                                (attacker / staged.name).write_text("ATTACKER-PLAN", encoding="utf-8")
+                            stage_dir.unlink()
+                            os.replace(parked, stage_dir)
+                    except OSError:
+                        pass
+                    time.sleep(0.002)
+
+            adversary = threading.Thread(target=toggle, daemon=True)
+            adversary.start()
+            try:
+                result = self.pwsh(rf"""
+$env:VERDA_TAKEHOME_CONFIG_DIR = '{base}'
+$env:VERDA_TF_BACKUP_DIR = '{backup}'
+$env:VERDA_CLIENT_ID = 'test-client'
+$env:VERDA_CLIENT_SECRET = 'test-secret-value'
+function verda {{
+  param([Parameter(ValueFromRemainingArguments=$true)]$Arguments)
+  $joined = $Arguments -join ' '
+  $global:LASTEXITCODE = 0
+  if ($joined -match ' status$| status ') {{ '{{"financials":{{"balance":100}}}}' }}
+  elseif ($joined -match 'availability') {{ '{{"available":true,"spot":false}}' }}
+  elseif ($joined -match 'instance-types') {{ '[{{"instance_type":"CPU.4V.16G","price_per_hour":0.0279}}]' }}
+  elseif ($joined -match 'images') {{ '[{{"id":"77edfb23-bb0d-41cc-a191-dccae45d96fd","image_type":"ubuntu-24.04"}}]' }}
+  else {{ exit 41 }}
+}}
+function python {{ $global:LASTEXITCODE = 0 }}
+function terraform {{
+  param([Parameter(ValueFromRemainingArguments=$true)]$Arguments)
+  if (($Arguments -join ' ') -match ' apply ') {{
+    Get-Content -LiteralPath $Arguments[-1] -Raw | Set-Content -LiteralPath '{applied}' -NoNewline
+  }}
+  $global:LASTEXITCODE = 0
+}}
+try {{ & '{PHASE2}' -Target apply }} catch {{ 'race-refused' }}
+""")
+            finally:
+                stop.set()
+                adversary.join(timeout=5)
+                if stage_dir.is_symlink():
+                    stage_dir.unlink()
+                if parked.exists() and not stage_dir.exists():
+                    os.replace(parked, stage_dir)
+            self.assertTrue(symlink_worked.is_set(), "transient staging symlink adversary did not run")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            if applied.exists():
+                self.assertEqual(applied.read_text(encoding="utf-8"), "REVIEWED-PLAN")
 
 
 if __name__ == "__main__":

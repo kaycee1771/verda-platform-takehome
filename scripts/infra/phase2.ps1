@@ -204,11 +204,37 @@ public static class Phase2NativeFileIdentity {
         const uint FILE_SHARE_READ_WRITE = 0x00000003;
         const uint OPEN_EXISTING = 3;
         const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+        const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
         SafeFileHandle handle = CreateFile(
             path, GENERIC_READ, FILE_SHARE_READ_WRITE, IntPtr.Zero, OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
         return handle;
+    }
+
+    private static string NormalizePath(string path) {
+        if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            return @"\\" + path.Substring(8);
+        if (path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+            return path.Substring(4);
+        return path;
+    }
+
+    public static string VerifyDirectory(SafeFileHandle handle, string intendedPath) {
+        const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
+        const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400;
+        BY_HANDLE_FILE_INFORMATION information;
+        if (!GetFileInformationByHandle(handle, out information))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        if ((information.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+            (information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+            throw new InvalidOperationException("staging handle is not a non-reparse directory");
+        string finalPath = NormalizePath(FinalPath(handle));
+        string expected = System.IO.Path.GetFullPath(intendedPath).TrimEnd('\\');
+        if (!String.Equals(finalPath.TrimEnd('\\'), expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("staging handle final path differs from intended canonical directory");
+        return String.Format("{0:x8}:{1:x8}{2:x8}", information.VolumeSerialNumber,
+            information.FileIndexHigh, information.FileIndexLow);
     }
 
     public static string Identity(SafeFileHandle handle) {
@@ -233,22 +259,26 @@ public static class Phase2NativeFileIdentity {
 function New-StagedReviewedPlan {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Paths)
 
-    $source = Open-ReviewedPlanHandle -Path $Path
     $stagingDirectory = Join-Path (Split-Path -Parent $Paths.PlanPath) 'reviewed-plans'
     Assert-NoReparsePath -Path $stagingDirectory -Label 'Reviewed Terraform plan staging directory'
     Protect-Directory -Path $stagingDirectory
     Assert-NoReparsePath -Path $stagingDirectory -Label 'Reviewed Terraform plan staging directory'
     if (-not $IsWindows) { throw 'Reviewed plan staging requires Windows handle-identity protections.' }
     Initialize-Phase2NativeFileIdentity
+    $parentHandle = $null
     try {
         $parentHandle = [Phase2NativeFileIdentity]::OpenDirectoryNoDelete($stagingDirectory)
+        $parentIdentity = [Phase2NativeFileIdentity]::VerifyDirectory($parentHandle, $stagingDirectory)
     } catch {
+        if ($parentHandle) { $parentHandle.Dispose() }
         throw 'Unable to hold the reviewed-plan staging directory against replacement.'
     }
     $stagedPath = Join-Path $stagingDirectory ("reviewed-{0}.tfplan" -f [Guid]::NewGuid().ToString('N'))
+    $source = $null
     $staged = $null
     $held = $null
     try {
+        $source = Open-ReviewedPlanHandle -Path $Path
         $staged = [IO.File]::Open(
             $stagedPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read
         )
@@ -282,11 +312,13 @@ function New-StagedReviewedPlan {
             Identity = $createdIdentity
             FinalPath = $createdFinalPath
             ParentHandle = $parentHandle
+            ParentIdentity = $parentIdentity
+            ParentPath = [IO.Path]::GetFullPath($stagingDirectory)
         }
         $held = $null
         $parentHandle = $null
     } finally {
-        $source.Dispose()
+        if ($source) { $source.Dispose() }
         if ($staged) { $staged.Dispose() }
         if ($held) { $held.Dispose() }
         if ($parentHandle) { $parentHandle.Dispose() }
@@ -296,6 +328,10 @@ function New-StagedReviewedPlan {
 function Open-VerifiedStagedPlanPath {
     param([Parameter(Mandatory)]$Stage)
 
+    $parentIdentity = [Phase2NativeFileIdentity]::VerifyDirectory($Stage.ParentHandle, $Stage.ParentPath)
+    if ($parentIdentity -ne $Stage.ParentIdentity) {
+        throw 'Reviewed-plan staging directory identity changed before apply.'
+    }
     Assert-NoReparsePath -Path $Stage.Path -Label 'Staged reviewed Terraform plan before apply'
     Assert-SingleFileIdentity -Path $Stage.Path -Label 'Staged reviewed Terraform plan before apply'
     $pathHandle = [IO.File]::Open(
