@@ -313,6 +313,51 @@ def inject_rancher_hook_limit(
     projection_annotations(matches[0], "cattle-system-limit-range-admission")
 
 
+def verify_operator_projections(
+    source_crs: list[dict[str, Any]], projections: list[dict[str, Any]]
+) -> None:
+    """Machine-compare operator workload projections to rendered CR semantics."""
+
+    mapping = {"Prometheus": "prometheus", "Alertmanager": "alertmanager"}
+    if {item.get("kind") for item in source_crs} != set(mapping) or len(source_crs) != 2:
+        raise RenderError("operator source must contain exactly Prometheus and Alertmanager")
+    if len(projections) != 2:
+        raise RenderError("operator projection must contain exactly two workloads")
+    for source in source_crs:
+        kind = source["kind"]
+        container_name = mapping[kind]
+        matches = [
+            item
+            for item in projections
+            if item.get("kind") == "StatefulSet"
+            and any(
+                isinstance(container, dict) and container.get("name") == container_name
+                for container in item.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+            )
+        ]
+        if len(matches) != 1:
+            raise RenderError(f"{kind} must have exactly one StatefulSet projection")
+        projection = matches[0]
+        source_spec = source.get("spec")
+        projection_spec = projection.get("spec")
+        if not isinstance(source_spec, dict) or not isinstance(projection_spec, dict):
+            raise RenderError(f"{kind} projection source spec is invalid")
+        replicas = source_spec.get("replicas", 1)
+        if kind == "Prometheus":
+            replicas *= source_spec.get("shards", 1)
+        if projection_spec.get("replicas") != replicas:
+            raise RenderError(f"{kind} projection replica semantics differ from its source CR")
+        containers = projection_spec.get("template", {}).get("spec", {}).get("containers", [])
+        main = [container for container in containers if isinstance(container, dict) and container.get("name") == container_name]
+        if len(main) != 1 or main[0].get("resources") != source_spec.get("resources"):
+            raise RenderError(f"{kind} projection resource semantics differ from its source CR")
+        storage = source_spec.get("storage")
+        expected_claim = storage.get("volumeClaimTemplate") if isinstance(storage, dict) else None
+        claims = projection_spec.get("volumeClaimTemplates", [])
+        if expected_claim is None or len(claims) != 1 or claims[0].get("spec") != expected_claim.get("spec"):
+            raise RenderError(f"{kind} projection storage semantics differ from its source CR")
+
+
 def render_all(args: argparse.Namespace) -> dict[str, Any]:
     lock = load_one(LOCK)
     output_dir = args.output_dir.resolve()
@@ -351,6 +396,7 @@ def render_all(args: argparse.Namespace) -> dict[str, Any]:
         monitoring_docs = [item for item in monitoring_docs if item not in replaced]
         operator_projection = ROOT / "platform/management/monitoring/capacity/operator-workloads.capacity-input"
         operator_docs = load_many(operator_projection.read_text(encoding="utf-8"), str(operator_projection))
+        verify_operator_projections(replaced, operator_docs)
         monitoring_docs.extend(operator_docs)
         monitoring_out = output_dir / "kube-prometheus-stack.yaml"
         components["kube_prometheus_stack"] = component_entry(monitoring_out, canonical_write(monitoring_out, monitoring_docs), [tracked_source(LOCK), tracked_source(monitoring_source), tracked_source(operator_projection)], chart_archive_sha256=lock["helm_charts"]["kube_prometheus_stack"]["archive_sha256"], projection_semantics="exact chart render with Prometheus and Alertmanager CRs replaced one-for-one by operator StatefulSet projections", operator_projection_replacement_count=2)

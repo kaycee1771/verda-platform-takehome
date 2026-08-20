@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -251,7 +252,7 @@ def positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
-def check_capacity(root: Path) -> None:
+def check_capacity_contract_shape(root: Path) -> None:
     contract = load_yaml(root, "config/phase6-capacity-admission.yaml")
     if contract.get("schema_version") != 1 or contract.get("admission_status") != "ready":
         raise AdmissionError("capacity admission contract is not ready")
@@ -289,6 +290,34 @@ def check_capacity(root: Path) -> None:
             count = component.get(field)
             if not isinstance(count, int) or isinstance(count, bool) or count < 0:
                 raise AdmissionError(f"capacity component {name}.{field} is incomplete")
+
+
+def run_capacity_preflight(root: Path) -> None:
+    """Regenerate exact renders, verify bindings, then run real admission.
+
+    This is deliberately not projection-only. A green ledger cannot substitute
+    for the protected candidate-node evidence or scheduler/storage arithmetic.
+    """
+
+    commands = (
+        [
+            sys.executable,
+            str(root / "scripts/phase6/render-capacity-inputs.py"),
+            "--verify-contract",
+            str(root / "config/phase6-capacity-admission.yaml"),
+        ],
+        [
+            sys.executable,
+            str(root / "scripts/phase6/capacity-admission.py"),
+            "--contract",
+            str(root / "config/phase6-capacity-admission.yaml"),
+        ],
+    )
+    for index, command in enumerate(commands):
+        result = subprocess.run(command, cwd=root, check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            step = "render regeneration" if index == 0 else "non-projection admission"
+            raise AdmissionError(f"capacity {step} did not pass")
 
 
 def all_boolean_gates_ready(document: dict[str, Any], label: str) -> None:
@@ -394,17 +423,18 @@ def check_stage_a(root: Path) -> None:
         raise AdmissionError("Stage A environments do not select one promoted image digest")
 
 
-def evaluate(root: Path) -> tuple[bool, str | None]:
+def evaluate(root: Path, capacity_preflight: Any = run_capacity_preflight) -> tuple[bool, str | None]:
     try:
         included = root_state(root)
     except AdmissionError as exc:
         return False, str(exc)
     try:
         check_ledger(root)
-        check_capacity(root)
+        check_capacity_contract_shape(root)
         check_component_contracts(root)
         check_sealed_environment_credentials(root)
         check_stage_a(root)
+        capacity_preflight(root)
     except AdmissionError as exc:
         if included:
             return False, "Phase 6 candidate is included before every admission gate is satisfied"

@@ -8,6 +8,19 @@ admission_status: blocked-incomplete-inputs
 blockers:
   - current-three-node-cpu-envelope-insufficient
   - candidate-shape-kubernetes-allocatable-unverified
+protected_evidence:
+  baseline:
+    path: phase6-capacity-baseline.identity-free.yaml
+    sha256: 504a8f973544fe8696fe038f8f154ebcf80b97c51f243be59acf6937ed48809b
+  # Written only by the protected live reducer after all three replacement
+  # nodes exist. Null is deliberately invalid for admission.
+  candidate:
+    path: ../.local/phase6/protected/candidate-capacity.identity-free.yaml
+    sha256: null
+required_reserve:
+  cpu_millicores: 1000
+  memory_bytes: 4294967296
+  storage_bytes: 53687091200
 baseline:
   node_count: 3
   allocatable_cpu_millicores: 9000
@@ -38,6 +51,18 @@ baseline_provenance:
   post_phase5_cpu_source: protected-phase5-identity-free-reducer
   post_phase5_memory_source: exact-raw-baseline-plus-checksum-bound-phase5-render-delta
 projection_result:
+  candidate_allocatable_cpu_millicores: null
+  candidate_allocatable_memory_bytes: null
+  candidate_one_node_loss_allocatable_cpu_millicores: null
+  candidate_one_node_loss_allocatable_memory_bytes: null
+  candidate_storage_available_bytes: null
+  candidate_one_node_loss_storage_available_bytes: null
+  candidate_one_node_loss_cpu_headroom_millicores: null
+  candidate_one_node_loss_cpu_reserve_shortfall_millicores: null
+  candidate_one_node_loss_memory_headroom_bytes: null
+  candidate_one_node_loss_memory_reserve_headroom_bytes: null
+  candidate_storage_headroom_bytes: null
+  candidate_one_node_loss_storage_headroom_bytes: null
   rendered_document_count: 350
   workload_definition_count: 34
   pvc_definition_count: 8
@@ -64,9 +89,9 @@ projection_result:
   required_candidate_per_node_memory_bytes: 13659799552
   storage_headroom_bytes: 137719971840
   one_node_loss_storage_headroom_bytes: 96108281856
-storage_classes:
-  longhorn-critical: {replicas: 3, replicas_after_one_node_loss: 2}
-  longhorn-standard: {replicas: 2, replicas_after_one_node_loss: 1}
+storage_class_manifest:
+  path: ../platform/management/longhorn/resources/storageclasses.yaml
+  sha256: 957f80b3a65fce97f29acb683bc1b2a24f2c4ea03558572d48fe8873f7cc8744
 components:
   alloy:
     render_path: ../.local/phase6/renders/alloy.yaml

@@ -46,14 +46,33 @@ REQUIRED_COMPONENTS = frozenset(
     }
 )
 STANDARD_WORKLOAD_KINDS = frozenset({"Deployment", "StatefulSet", "DaemonSet", "Job", "Pod"})
-CAPACITY_BEARING_UNSUPPORTED_KINDS = frozenset(
+ALLOWED_NON_CAPACITY_KINDS = frozenset(
     {
-        ("autoscaling", "HorizontalPodAutoscaler"),
-        ("autoscaling.k8s.io", "VerticalPodAutoscaler"),
-        ("monitoring.coreos.com", "Prometheus"),
-        ("monitoring.coreos.com", "PrometheusAgent"),
-        ("monitoring.coreos.com", "Alertmanager"),
-        ("monitoring.coreos.com", "ThanosRuler"),
+        ("admissionregistration.k8s.io/v1", "MutatingWebhookConfiguration"),
+        ("admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration"),
+        ("apiextensions.k8s.io/v1", "CustomResourceDefinition"),
+        ("bitnami.com/v1alpha1", "SealedSecret"),
+        ("cert-manager.io/v1", "Certificate"),
+        ("cert-manager.io/v1", "Issuer"),
+        ("cilium.io/v2", "CiliumNetworkPolicy"),
+        ("monitoring.coreos.com/v1", "PodMonitor"),
+        ("monitoring.coreos.com/v1", "PrometheusRule"),
+        ("monitoring.coreos.com/v1", "ServiceMonitor"),
+        ("networking.k8s.io/v1", "Ingress"),
+        ("networking.k8s.io/v1", "NetworkPolicy"),
+        ("policy/v1", "PodDisruptionBudget"),
+        ("rbac.authorization.k8s.io/v1", "ClusterRole"),
+        ("rbac.authorization.k8s.io/v1", "ClusterRoleBinding"),
+        ("rbac.authorization.k8s.io/v1", "Role"),
+        ("rbac.authorization.k8s.io/v1", "RoleBinding"),
+        ("scheduling.k8s.io/v1", "PriorityClass"),
+        ("v1", "ConfigMap"),
+        ("v1", "LimitRange"),
+        ("v1", "Namespace"),
+        ("v1", "ResourceQuota"),
+        ("v1", "Secret"),
+        ("v1", "Service"),
+        ("v1", "ServiceAccount"),
     }
 )
 
@@ -126,6 +145,15 @@ class ComponentCapacity:
     one_node_loss_pvc_bytes: int
 
 
+@dataclass(frozen=True)
+class NodeCapacity:
+    cpu_millicores: int
+    memory_bytes: int
+    storage_available_bytes: int
+    labels: dict[str, str]
+    taints: tuple[tuple[str, str, str], ...]
+
+
 def _mapping(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise CapacityAdmissionError(f"{label} must be a mapping")
@@ -177,6 +205,78 @@ def _load_render(path: Path, expected_sha256: str, label: str) -> list[dict[str,
     if not result:
         raise CapacityAdmissionError(f"{label} contains no Kubernetes objects")
     return result
+
+
+def _bound_input(
+    contract_path: Path, binding: Any, label: str
+) -> tuple[Path, dict[str, Any]]:
+    item = _mapping(binding, f"{label} binding")
+    if set(item) != {"path", "sha256"}:
+        raise CapacityAdmissionError(f"{label} binding must contain exactly path and sha256")
+    path_value = item.get("path")
+    expected = item.get("sha256")
+    if not isinstance(path_value, str) or not path_value or Path(path_value).is_absolute():
+        raise CapacityAdmissionError(f"{label} binding path must be relative")
+    if not isinstance(expected, str) or not SHA256.fullmatch(expected) or expected == "0" * 64:
+        raise CapacityAdmissionError(f"{label} binding has no exact SHA-256")
+    path = (contract_path.parent / path_value).resolve()
+    payload = _read_regular(path, label)
+    if hashlib.sha256(payload).hexdigest() != expected:
+        raise CapacityAdmissionError(f"{label} checksum does not match")
+    return path, _load_one(path, label)
+
+
+def _identity_free_nodes(document: dict[str, Any], label: str) -> tuple[list[NodeCapacity], dict[str, int]]:
+    if document.get("schema_version") != 1 or document.get("protection") != "identity-free-sanitized":
+        raise CapacityAdmissionError(f"{label} is not identity-free protected evidence")
+    if set(document) != {"schema_version", "protection", "source_snapshots", "nodes", "existing_requests"}:
+        raise CapacityAdmissionError(f"{label} has missing or unexpected fields")
+    snapshots = _mapping(document.get("source_snapshots"), f"{label} source snapshots")
+    if set(snapshots) != {"node_sha256", "pod_sha256", "phase5_argocd_render_sha256", "phase5_cert_manager_render_sha256", "phase5_longhorn_render_sha256"} or any(
+        not isinstance(value, str) or not SHA256.fullmatch(value) or value == "0" * 64
+        for value in snapshots.values()
+    ):
+        raise CapacityAdmissionError(f"{label} source snapshots are not checksum-bound")
+    forbidden = {"name", "uid", "hostname", "provider_id", "providerID", "address", "ip"}
+    if any(key in document for key in forbidden):
+        raise CapacityAdmissionError(f"{label} contains a forbidden identity field")
+    raw_nodes = _list(document.get("nodes"), f"{label} nodes")
+    if len(raw_nodes) != 3:
+        raise CapacityAdmissionError(f"{label} must contain exactly three anonymous nodes")
+    nodes: list[NodeCapacity] = []
+    for index, raw in enumerate(raw_nodes):
+        node = _mapping(raw, f"{label} node {index}")
+        if any(key in node for key in forbidden):
+            raise CapacityAdmissionError(f"{label} node contains a forbidden identity field")
+        if set(node) != {"allocatable_cpu_millicores", "allocatable_memory_bytes", "storage_available_bytes", "labels", "taints"}:
+            raise CapacityAdmissionError(f"{label} node has missing or unexpected fields")
+        labels = _mapping(node["labels"], f"{label} node labels")
+        if not all(isinstance(key, str) and isinstance(value, str) for key, value in labels.items()):
+            raise CapacityAdmissionError(f"{label} node labels must be strings")
+        taints_raw = _list(node["taints"], f"{label} node taints")
+        taints: list[tuple[str, str, str]] = []
+        for taint_raw in taints_raw:
+            taint = _mapping(taint_raw, f"{label} node taint")
+            if set(taint) != {"key", "value", "effect"} or taint.get("effect") not in {"NoSchedule", "NoExecute", "PreferNoSchedule"}:
+                raise CapacityAdmissionError(f"{label} node taint is unsupported")
+            if not isinstance(taint.get("key"), str) or not isinstance(taint.get("value"), str):
+                raise CapacityAdmissionError(f"{label} node taint is invalid")
+            taints.append((taint["key"], taint["value"], taint["effect"]))
+        nodes.append(
+            NodeCapacity(
+                _integer(node["allocatable_cpu_millicores"], f"{label} node CPU", 1),
+                _integer(node["allocatable_memory_bytes"], f"{label} node memory", 1),
+                _integer(node["storage_available_bytes"], f"{label} node storage", 1),
+                dict(labels),
+                tuple(taints),
+            )
+        )
+    aggregates = _mapping(document.get("existing_requests", {}), f"{label} existing requests")
+    return nodes, {
+        "existing_requested_cpu_millicores": _integer(aggregates.get("cpu_millicores", 0), f"{label} existing CPU"),
+        "raw_requested_memory_bytes": _integer(aggregates.get("raw_memory_bytes", 0), f"{label} raw memory"),
+        "phase5_render_requested_memory_bytes": _integer(aggregates.get("phase5_render_memory_bytes", 0), f"{label} Phase 5 memory"),
+    }
 
 
 def _decimal(value: str, label: str) -> Decimal:
@@ -312,6 +412,125 @@ def _int_or_percentage(value: Any, basis: int, label: str, round_up: bool) -> in
     return math.ceil(scaled) if round_up else math.floor(scaled)
 
 
+def _tolerates(taint: tuple[str, str, str], tolerations: list[Any], label: str) -> bool:
+    key, value, effect = taint
+    if effect == "PreferNoSchedule":
+        return True
+    for raw in tolerations:
+        item = _mapping(raw, f"{label} toleration")
+        operator = item.get("operator", "Equal")
+        if operator not in {"Equal", "Exists"}:
+            raise CapacityAdmissionError(f"{label} has an unsupported toleration operator")
+        if item.get("effect") not in (None, effect) or item.get("key") != key:
+            continue
+        if operator == "Exists" or item.get("value", "") == value:
+            return True
+    return False
+
+
+def _node_term_matches(labels: dict[str, str], raw: Any, label: str) -> bool:
+    term = _mapping(raw, f"{label} node selector term")
+    if term.get("matchFields"):
+        raise CapacityAdmissionError(f"{label} matchFields are unsupported")
+    expressions = _list(term.get("matchExpressions", []), f"{label} matchExpressions")
+    for raw_expression in expressions:
+        expression = _mapping(raw_expression, f"{label} node selector expression")
+        key = expression.get("key")
+        operator = expression.get("operator")
+        values = expression.get("values", [])
+        if not isinstance(key, str) or operator not in {"In", "NotIn", "Exists", "DoesNotExist"}:
+            raise CapacityAdmissionError(f"{label} has an unsupported node-affinity expression")
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            raise CapacityAdmissionError(f"{label} node-affinity values must be strings")
+        present = key in labels
+        if operator == "In" and (not present or labels[key] not in values):
+            return False
+        if operator == "NotIn" and present and labels[key] in values:
+            return False
+        if operator == "Exists" and not present:
+            return False
+        if operator == "DoesNotExist" and present:
+            return False
+    return True
+
+
+def _eligible_nodes(pod_spec: dict[str, Any], nodes: list[NodeCapacity], label: str) -> list[NodeCapacity]:
+    selector = _mapping(pod_spec.get("nodeSelector", {}), f"{label} nodeSelector")
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in selector.items()):
+        raise CapacityAdmissionError(f"{label} nodeSelector must contain strings")
+    tolerations = _list(pod_spec.get("tolerations", []), f"{label} tolerations")
+    for raw in tolerations:
+        item = _mapping(raw, f"{label} toleration")
+        if item.get("operator", "Equal") not in {"Equal", "Exists"}:
+            raise CapacityAdmissionError(f"{label} has an unsupported toleration operator")
+    affinity = _mapping(pod_spec.get("affinity", {}), f"{label} affinity")
+    pod_affinity = affinity.get("podAffinity")
+    if isinstance(pod_affinity, dict) and pod_affinity.get("requiredDuringSchedulingIgnoredDuringExecution"):
+        raise CapacityAdmissionError(f"{label} required podAffinity is unsupported")
+    node_affinity = _mapping(affinity.get("nodeAffinity", {}), f"{label} nodeAffinity")
+    required = node_affinity.get("requiredDuringSchedulingIgnoredDuringExecution")
+    terms: list[Any] | None = None
+    if required is not None:
+        terms = _list(_mapping(required, f"{label} required nodeAffinity").get("nodeSelectorTerms"), f"{label} nodeSelectorTerms")
+        if not terms:
+            raise CapacityAdmissionError(f"{label} required nodeAffinity has no terms")
+    for constraint in _list(pod_spec.get("topologySpreadConstraints", []), f"{label} topologySpreadConstraints"):
+        item = _mapping(constraint, f"{label} topology spread constraint")
+        if item.get("whenUnsatisfiable") == "DoNotSchedule" and (
+            item.get("topologyKey") != "kubernetes.io/hostname"
+            or _integer(item.get("maxSkew"), f"{label} topology maxSkew", 1) != 1
+        ):
+            raise CapacityAdmissionError(f"{label} hard topology spread is unsupported")
+    eligible = []
+    for node in nodes:
+        if any(node.labels.get(key) != value for key, value in selector.items()):
+            continue
+        if any(not _tolerates(taint, tolerations, label) for taint in node.taints):
+            continue
+        if terms is not None and not any(_node_term_matches(node.labels, term, label) for term in terms):
+            continue
+        eligible.append(node)
+    if not eligible:
+        raise CapacityAdmissionError(f"{label} has no eligible candidate node")
+    return eligible
+
+
+def _placement_check(
+    pod: PodResources,
+    steady_replicas: int,
+    peak_replicas: int,
+    pod_spec: dict[str, Any],
+    nodes: list[NodeCapacity],
+    label: str,
+) -> int:
+    eligible = _eligible_nodes(pod_spec, nodes, label)
+    minimum_cpu = min(node.cpu_millicores for node in eligible)
+    minimum_memory = min(node.memory_bytes for node in eligible)
+    if pod.request_cpu_millicores > minimum_cpu or pod.request_memory_bytes > minimum_memory:
+        raise CapacityAdmissionError(f"{label} largest eligible pod does not fit a candidate node")
+    affinity = _mapping(pod_spec.get("affinity", {}), f"{label} affinity")
+    anti = _mapping(affinity.get("podAntiAffinity", {}), f"{label} podAntiAffinity")
+    required_anti = _list(anti.get("requiredDuringSchedulingIgnoredDuringExecution", []), f"{label} required podAntiAffinity")
+    for term_raw in required_anti:
+        term = _mapping(term_raw, f"{label} required podAntiAffinity term")
+        if term.get("topologyKey") != "kubernetes.io/hostname" or not isinstance(term.get("labelSelector"), dict):
+            raise CapacityAdmissionError(f"{label} required podAntiAffinity is unsupported")
+    if required_anti and steady_replicas > len(eligible):
+        raise CapacityAdmissionError(f"{label} required podAntiAffinity is infeasible")
+    per_node = math.ceil(peak_replicas / len(eligible)) if peak_replicas else 0
+    if pod.request_cpu_millicores * per_node > minimum_cpu or pod.request_memory_bytes * per_node > minimum_memory:
+        raise CapacityAdmissionError(f"{label} conservative per-node placement is infeasible")
+    if len(nodes) > 1 and peak_replicas:
+        for lost in nodes:
+            remaining = [node for node in eligible if node is not lost]
+            if not remaining:
+                raise CapacityAdmissionError(f"{label} has no eligible node after one-node loss")
+            loss_per_node = math.ceil(peak_replicas / len(remaining))
+            if pod.request_cpu_millicores * loss_per_node > min(node.cpu_millicores for node in remaining) or pod.request_memory_bytes * loss_per_node > min(node.memory_bytes for node in remaining):
+                raise CapacityAdmissionError(f"{label} one-node-loss placement is infeasible")
+    return len(eligible)
+
+
 def _workload_replicas(document: dict[str, Any], node_count: int, label: str) -> tuple[int, int, dict[str, Any]]:
     kind = document["kind"]
     spec = _mapping(document.get("spec"), f"{label} spec")
@@ -367,14 +586,36 @@ def _pvc_bytes(
     logical = memory_bytes(requests["storage"], f"{label} storage") * multiplicity
     storage = storage_classes[storage_class]
     replicas = _integer(storage.get("replicas"), f"{storage_class} replicas", 1)
-    surviving = _integer(
-        storage.get("replicas_after_one_node_loss"),
-        f"{storage_class} replicas after one-node loss",
-        1,
-    )
-    if surviving >= replicas:
-        raise CapacityAdmissionError(f"{storage_class} must lose at least one replica with one node")
+    surviving = replicas - 1
     return logical, logical * replicas, logical * surviving
+
+
+def _storage_classes(contract: dict[str, Any], contract_path: Path) -> dict[str, dict[str, Any]]:
+    binding = _mapping(contract.get("storage_class_manifest"), "Longhorn StorageClass manifest binding")
+    if set(binding) != {"path", "sha256"}:
+        raise CapacityAdmissionError("Longhorn StorageClass manifest binding must contain exactly path and sha256")
+    if not isinstance(binding.get("path"), str) or Path(binding["path"]).is_absolute():
+        raise CapacityAdmissionError("Longhorn StorageClass manifest path must be relative")
+    if not isinstance(binding.get("sha256"), str) or not SHA256.fullmatch(binding["sha256"]):
+        raise CapacityAdmissionError("Longhorn StorageClass manifest has no exact SHA-256")
+    path = (contract_path.parent / binding["path"]).resolve()
+    documents = _load_render(path, binding["sha256"], "Longhorn StorageClass manifest")
+    result: dict[str, dict[str, Any]] = {}
+    for item in documents:
+        if item.get("apiVersion") != "storage.k8s.io/v1" or item.get("kind") != "StorageClass":
+            raise CapacityAdmissionError("Longhorn StorageClass manifest contains an unexpected kind")
+        metadata = _mapping(item.get("metadata"), "Longhorn StorageClass metadata")
+        name = metadata.get("name")
+        parameters = _mapping(item.get("parameters"), f"StorageClass {name} parameters")
+        if not isinstance(name, str) or name not in {"longhorn-critical", "longhorn-standard"}:
+            raise CapacityAdmissionError("Longhorn StorageClass inventory is unexpected")
+        replicas = parameters.get("numberOfReplicas")
+        if not isinstance(replicas, str) or not replicas.isdigit():
+            raise CapacityAdmissionError(f"StorageClass {name} has no exact replica count")
+        result[name] = {"replicas": int(replicas)}
+    if set(result) != {"longhorn-critical", "longhorn-standard"}:
+        raise CapacityAdmissionError("Longhorn StorageClass inventory is incomplete")
+    return result
 
 
 def component_capacity(
@@ -385,6 +626,7 @@ def component_capacity(
     component: str,
     identities: set[tuple[str, str, str, str]],
     allow_missing_requests: bool = False,
+    candidate_nodes: list[NodeCapacity] | None = None,
 ) -> ComponentCapacity:
     steady = ZERO_RESOURCES
     peak = ZERO_RESOURCES
@@ -402,23 +644,26 @@ def component_capacity(
         namespace = metadata.get("namespace", "")
         if not all(isinstance(value, str) and value for value in (api_version, kind, name)):
             raise CapacityAdmissionError(f"{component} render contains an object without exact identity")
-        group = api_version.split("/", 1)[0] if "/" in api_version else "core"
         identity = (api_version, kind, str(namespace), name)
         if identity in identities:
             raise CapacityAdmissionError("rendered Kubernetes object has more than one owner")
         identities.add(identity)
-        if (group, kind) in CAPACITY_BEARING_UNSUPPORTED_KINDS:
-            raise CapacityAdmissionError(
-                f"{component} render contains unsupported capacity-bearing kind {kind}"
-            )
-        if kind in ("CronJob", "ReplicationController", "ReplicaSet"):
-            raise CapacityAdmissionError(f"{component} render contains unsupported workload kind {kind}")
+        if kind == "List" or (kind not in STANDARD_WORKLOAD_KINDS and kind != "PersistentVolumeClaim" and (api_version, kind) not in ALLOWED_NON_CAPACITY_KINDS):
+            raise CapacityAdmissionError(f"{component} render contains unknown or workload-producing kind {kind}")
         if kind in STANDARD_WORKLOAD_KINDS:
             workload_count += 1
             steady_replicas, peak_replicas, pod_spec = _workload_replicas(
                 document, node_count, f"{component} {kind}"
             )
             per_pod = effective_pod_resources(pod_spec, f"{component} {kind}", allow_missing_requests)
+            if candidate_nodes is not None:
+                eligible_count = _placement_check(per_pod, steady_replicas, peak_replicas, pod_spec, candidate_nodes, f"{component} {kind}")
+                if kind == "DaemonSet":
+                    steady_replicas = eligible_count
+                    strategy = _mapping(_mapping(document.get("spec"), f"{component} DaemonSet spec").get("updateStrategy", {}), f"{component} DaemonSet strategy")
+                    rolling = _mapping(strategy.get("rollingUpdate", {}), f"{component} DaemonSet rollingUpdate")
+                    peak_replicas = eligible_count + _int_or_percentage(rolling.get("maxSurge", 0), eligible_count, f"{component} DaemonSet maxSurge", True)
+                    _placement_check(per_pod, steady_replicas, peak_replicas, pod_spec, candidate_nodes, f"{component} DaemonSet")
             annotations_value = metadata.get("annotations")
             annotations = {} if annotations_value is None else _mapping(annotations_value, f"{component} annotations")
             projection_mode = annotations.get("capacity.platform.verda.io/mode", "normal")
@@ -486,38 +731,64 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, Any]:
         raise CapacityAdmissionError(
             "admission_status must equal ready after every render and baseline input is verified"
         )
+    projection_only = contract.get("_projection_only") is True
+    evidence_bindings = _mapping(contract.get("protected_evidence"), "protected_evidence")
+    if set(evidence_bindings) != {"baseline", "candidate"}:
+        raise CapacityAdmissionError("protected_evidence must bind baseline and candidate inputs")
+    _, baseline_evidence = _bound_input(contract_path, evidence_bindings["baseline"], "protected baseline evidence")
+    baseline_nodes, observed = _identity_free_nodes(baseline_evidence, "protected baseline evidence")
+    if projection_only:
+        candidate_nodes = baseline_nodes
+    else:
+        _, candidate_evidence = _bound_input(contract_path, evidence_bindings["candidate"], "protected candidate evidence")
+        candidate_nodes, _ = _identity_free_nodes(candidate_evidence, "protected candidate evidence")
+    node_count = len(baseline_nodes)
+    if len(candidate_nodes) != node_count:
+        raise CapacityAdmissionError("candidate evidence must contain the same three-node topology")
+    required_reserve = _mapping(contract.get("required_reserve"), "required_reserve")
+    if set(required_reserve) != {"cpu_millicores", "memory_bytes", "storage_bytes"}:
+        raise CapacityAdmissionError("required_reserve has missing or unexpected fields")
     baseline = _mapping(contract.get("baseline"), "baseline")
-    node_count = _integer(baseline.get("node_count"), "baseline node count", 1)
-    if node_count != 3:
-        raise CapacityAdmissionError("Phase 6 Stage A baseline must contain exactly three nodes")
-    numeric_baseline = {
-        key: _integer(baseline.get(key), f"baseline {key}")
-        for key in (
-            "allocatable_cpu_millicores",
-            "allocatable_memory_bytes",
-            "one_node_loss_allocatable_cpu_millicores",
-            "one_node_loss_allocatable_memory_bytes",
-            "existing_requested_cpu_millicores",
-            "existing_requested_memory_bytes",
-            "required_cpu_reserve_millicores",
-            "required_memory_reserve_bytes",
-            "storage_available_bytes",
-            "worst_two_node_storage_available_bytes",
-            "required_storage_reserve_bytes",
-        )
+    derived_baseline = {
+        "node_count": node_count,
+        "allocatable_cpu_millicores": sum(node.cpu_millicores for node in baseline_nodes),
+        "allocatable_memory_bytes": sum(node.memory_bytes for node in baseline_nodes),
+        "one_node_loss_allocatable_cpu_millicores": sum(sorted(node.cpu_millicores for node in baseline_nodes)[:2]),
+        "one_node_loss_allocatable_memory_bytes": sum(sorted(node.memory_bytes for node in baseline_nodes)[:2]),
+        "existing_requested_cpu_millicores": observed["existing_requested_cpu_millicores"],
+        "existing_requested_memory_bytes": observed["raw_requested_memory_bytes"] + observed["phase5_render_requested_memory_bytes"],
+        "required_cpu_reserve_millicores": _integer(required_reserve["cpu_millicores"], "required CPU reserve"),
+        "required_memory_reserve_bytes": _integer(required_reserve["memory_bytes"], "required memory reserve"),
+        "storage_available_bytes": sum(node.storage_available_bytes for node in baseline_nodes),
+        "worst_two_node_storage_available_bytes": sum(sorted(node.storage_available_bytes for node in baseline_nodes)[:2]),
+        "required_storage_reserve_bytes": _integer(required_reserve["storage_bytes"], "required storage reserve"),
     }
+    if baseline != derived_baseline:
+        raise CapacityAdmissionError("baseline does not match checksum-bound protected evidence")
+    numeric_baseline = derived_baseline
+    snapshots = _mapping(baseline_evidence["source_snapshots"], "protected baseline source snapshots")
+    derived_provenance = {
+        "raw_snapshot_kind": "sanitized-phase5-node-and-pod-json",
+        "node_snapshot_sha256": snapshots["node_sha256"],
+        "pod_snapshot_sha256": snapshots["pod_sha256"],
+        "raw_requested_memory_bytes": observed["raw_requested_memory_bytes"],
+        "phase5_render_requested_memory_bytes": observed["phase5_render_requested_memory_bytes"],
+        "phase5_render_sha256": {
+            "argocd": snapshots["phase5_argocd_render_sha256"],
+            "cert_manager": snapshots["phase5_cert_manager_render_sha256"],
+            "longhorn": snapshots["phase5_longhorn_render_sha256"],
+        },
+        "post_phase5_cpu_source": "protected-phase5-identity-free-reducer",
+        "post_phase5_memory_source": "exact-raw-baseline-plus-checksum-bound-phase5-render-delta",
+    }
+    if _mapping(contract.get("baseline_provenance"), "baseline_provenance") != derived_provenance:
+        raise CapacityAdmissionError("baseline_provenance does not match protected evidence")
     if numeric_baseline["one_node_loss_allocatable_cpu_millicores"] >= numeric_baseline["allocatable_cpu_millicores"]:
         raise CapacityAdmissionError("one-node-loss CPU capacity must be below total capacity")
     if numeric_baseline["one_node_loss_allocatable_memory_bytes"] >= numeric_baseline["allocatable_memory_bytes"]:
         raise CapacityAdmissionError("one-node-loss memory capacity must be below total capacity")
 
-    storage_classes_document = _mapping(contract.get("storage_classes"), "storage_classes")
-    if not storage_classes_document:
-        raise CapacityAdmissionError("at least one StorageClass capacity model is required")
-    storage_classes = {
-        str(name): _mapping(item, f"StorageClass {name}")
-        for name, item in storage_classes_document.items()
-    }
+    storage_classes = _storage_classes(contract, contract_path)
     components = _mapping(contract.get("components"), "components")
     if set(components) != REQUIRED_COMPONENTS:
         raise CapacityAdmissionError("capacity contract must contain the exact mandatory Phase 6 component set")
@@ -536,7 +807,6 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, Any]:
     raw_pvc_bytes = 0
     loss_pvc_bytes = 0
     identities: set[tuple[str, str, str, str]] = set()
-    projection_only = contract.get("_projection_only") is True
     unrequested_container_count = 0
     component_projection: dict[str, dict[str, int]] = {}
     base = contract_path.resolve().parent
@@ -615,6 +885,7 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, Any]:
             component,
             identities,
             projection_only,
+            candidate_nodes,
         )
         document_count += capacity.document_count
         workload_count += capacity.workload_count
@@ -644,38 +915,82 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, Any]:
     loss_storage_headroom = numeric_baseline["worst_two_node_storage_available_bytes"] - loss_pvc_bytes
 
     tracked_projection = contract.get("projection_result")
-    if tracked_projection is not None:
-        expected_projection = _mapping(tracked_projection, "projection_result")
-        exact_projection = {
-            "rendered_document_count": document_count,
-            "workload_definition_count": workload_count,
-            "pvc_definition_count": pvc_count,
-            "unrequested_container_count": unrequested_container_count,
-            "new_steady_cpu_millicores": aggregate_steady.request_cpu_millicores,
-            "new_rollout_peak_cpu_millicores": aggregate_peak.request_cpu_millicores,
-            "new_steady_memory_bytes": aggregate_steady.request_memory_bytes,
-            "new_rollout_peak_memory_bytes": aggregate_peak.request_memory_bytes,
-            "new_logical_pvc_bytes": logical_pvc_bytes,
-            "new_raw_pvc_bytes": raw_pvc_bytes,
-            "one_node_loss_pvc_bytes": loss_pvc_bytes,
-        }
-        if any(expected_projection.get(key) != value for key, value in exact_projection.items()):
-            raise CapacityAdmissionError("tracked projection_result does not match checksum-bound renders")
+    expected_projection = _mapping(tracked_projection, "projection_result")
+    candidate_cpu = sum(node.cpu_millicores for node in candidate_nodes)
+    candidate_memory = sum(node.memory_bytes for node in candidate_nodes)
+    candidate_loss_cpu = sum(sorted(node.cpu_millicores for node in candidate_nodes)[:2])
+    candidate_loss_memory = sum(sorted(node.memory_bytes for node in candidate_nodes)[:2])
+    candidate_storage = sum(node.storage_available_bytes for node in candidate_nodes)
+    candidate_loss_storage = sum(sorted(node.storage_available_bytes for node in candidate_nodes)[:2])
+    candidate_cpu_headroom = candidate_loss_cpu - post_peak_cpu
+    candidate_memory_headroom = candidate_loss_memory - post_peak_memory
+    candidate_storage_headroom = candidate_storage - raw_pvc_bytes
+    candidate_loss_storage_headroom = candidate_loss_storage - loss_pvc_bytes
+    exact_projection = {
+        "candidate_allocatable_cpu_millicores": candidate_cpu,
+        "candidate_allocatable_memory_bytes": candidate_memory,
+        "candidate_one_node_loss_allocatable_cpu_millicores": candidate_loss_cpu,
+        "candidate_one_node_loss_allocatable_memory_bytes": candidate_loss_memory,
+        "candidate_storage_available_bytes": candidate_storage,
+        "candidate_one_node_loss_storage_available_bytes": candidate_loss_storage,
+        "candidate_one_node_loss_cpu_headroom_millicores": candidate_cpu_headroom,
+        "candidate_one_node_loss_cpu_reserve_shortfall_millicores": max(0, numeric_baseline["required_cpu_reserve_millicores"] - candidate_cpu_headroom),
+        "candidate_one_node_loss_memory_headroom_bytes": candidate_memory_headroom,
+        "candidate_one_node_loss_memory_reserve_headroom_bytes": candidate_memory_headroom - numeric_baseline["required_memory_reserve_bytes"],
+        "candidate_storage_headroom_bytes": candidate_storage_headroom,
+        "candidate_one_node_loss_storage_headroom_bytes": candidate_loss_storage_headroom,
+        "rendered_document_count": document_count,
+        "workload_definition_count": workload_count,
+        "pvc_definition_count": pvc_count,
+        "unrequested_container_count": unrequested_container_count,
+        "new_steady_cpu_millicores": aggregate_steady.request_cpu_millicores,
+        "new_rollout_peak_cpu_millicores": aggregate_peak.request_cpu_millicores,
+        "new_steady_memory_bytes": aggregate_steady.request_memory_bytes,
+        "new_rollout_peak_memory_bytes": aggregate_peak.request_memory_bytes,
+        "new_logical_pvc_bytes": logical_pvc_bytes,
+        "new_raw_pvc_bytes": raw_pvc_bytes,
+        "one_node_loss_pvc_bytes": loss_pvc_bytes,
+        "post_steady_cpu_millicores": post_steady_cpu,
+        "post_rollout_peak_cpu_millicores": post_peak_cpu,
+        "post_steady_memory_bytes": post_steady_memory,
+        "post_rollout_peak_memory_bytes": post_peak_memory,
+        "total_cpu_shortfall_millicores": max(0, post_steady_cpu - numeric_baseline["allocatable_cpu_millicores"]),
+        "one_node_loss_cpu_headroom_millicores": cpu_headroom,
+        "one_node_loss_cpu_reserve_shortfall_millicores": max(0, numeric_baseline["required_cpu_reserve_millicores"] - cpu_headroom),
+        "one_node_loss_memory_headroom_bytes": memory_headroom,
+        "one_node_loss_memory_reserve_headroom_bytes": memory_headroom - numeric_baseline["required_memory_reserve_bytes"],
+        "required_candidate_two_node_cpu_millicores": post_peak_cpu + numeric_baseline["required_cpu_reserve_millicores"],
+        "required_candidate_per_node_cpu_millicores": math.ceil((post_peak_cpu + numeric_baseline["required_cpu_reserve_millicores"]) / 2),
+        "required_candidate_two_node_memory_bytes": post_peak_memory + numeric_baseline["required_memory_reserve_bytes"],
+        "required_candidate_per_node_memory_bytes": math.ceil((post_peak_memory + numeric_baseline["required_memory_reserve_bytes"]) / 2),
+        "storage_headroom_bytes": storage_headroom,
+        "one_node_loss_storage_headroom_bytes": loss_storage_headroom,
+    }
+    if projection_only:
+        for key in tuple(exact_projection):
+            if key.startswith("candidate_"):
+                exact_projection[key] = None
+    if set(expected_projection) != set(exact_projection) or expected_projection != exact_projection:
+        raise CapacityAdmissionError("tracked projection_result does not exactly match recomputed protected inputs and renders")
 
     if unrequested_container_count and not projection_only:
         raise CapacityAdmissionError("rendered workloads contain containers without explicit CPU and memory requests")
 
-    if post_steady_cpu > numeric_baseline["allocatable_cpu_millicores"] or post_steady_memory > numeric_baseline["allocatable_memory_bytes"]:
-        raise CapacityAdmissionError("steady-state Phase 6 requests exceed total cluster capacity")
-    if cpu_headroom < numeric_baseline["required_cpu_reserve_millicores"]:
-        raise CapacityAdmissionError("rollout peak violates one-node-loss CPU reserve")
-    if memory_headroom < numeric_baseline["required_memory_reserve_bytes"]:
-        raise CapacityAdmissionError("rollout peak violates one-node-loss memory reserve")
-    if storage_headroom < numeric_baseline["required_storage_reserve_bytes"]:
-        raise CapacityAdmissionError("PVC replicas violate total storage reserve")
-    if loss_storage_headroom < numeric_baseline["required_storage_reserve_bytes"]:
-        raise CapacityAdmissionError("PVC replicas violate one-node-loss storage reserve")
+    if not projection_only and (post_steady_cpu > candidate_cpu or post_steady_memory > candidate_memory):
+        raise CapacityAdmissionError("steady-state Phase 6 requests exceed candidate cluster capacity")
+    if not projection_only and candidate_cpu_headroom < numeric_baseline["required_cpu_reserve_millicores"]:
+        raise CapacityAdmissionError("rollout peak violates candidate one-node-loss CPU reserve")
+    if not projection_only and candidate_memory_headroom < numeric_baseline["required_memory_reserve_bytes"]:
+        raise CapacityAdmissionError("rollout peak violates candidate one-node-loss memory reserve")
+    if not projection_only and candidate_storage_headroom < numeric_baseline["required_storage_reserve_bytes"]:
+        raise CapacityAdmissionError("PVC replicas violate candidate total storage reserve")
+    if not projection_only and candidate_loss_storage_headroom < numeric_baseline["required_storage_reserve_bytes"]:
+        raise CapacityAdmissionError("PVC replicas violate candidate one-node-loss storage reserve")
 
+    reported_cpu_headroom = cpu_headroom if projection_only else candidate_cpu_headroom
+    reported_memory_headroom = memory_headroom if projection_only else candidate_memory_headroom
+    reported_storage_headroom = storage_headroom if projection_only else candidate_storage_headroom
+    reported_loss_storage_headroom = loss_storage_headroom if projection_only else candidate_loss_storage_headroom
     return {
         "schema_version": 1,
         "status": "PASS",
@@ -685,15 +1000,16 @@ def evaluate(contract: dict[str, Any], contract_path: Path) -> dict[str, Any]:
         "pvc_definition_count": pvc_count,
         "new_steady_cpu_millicores": aggregate_steady.request_cpu_millicores,
         "new_rollout_peak_cpu_millicores": aggregate_peak.request_cpu_millicores,
-        "one_node_loss_rollout_cpu_headroom_millicores": cpu_headroom,
+        "capacity_source": "baseline-projection" if projection_only else "protected-candidate-evidence",
+        "one_node_loss_rollout_cpu_headroom_millicores": reported_cpu_headroom,
         "new_steady_memory_bytes": aggregate_steady.request_memory_bytes,
         "new_rollout_peak_memory_bytes": aggregate_peak.request_memory_bytes,
-        "one_node_loss_rollout_memory_headroom_bytes": memory_headroom,
+        "one_node_loss_rollout_memory_headroom_bytes": reported_memory_headroom,
         "new_logical_pvc_bytes": logical_pvc_bytes,
         "new_raw_pvc_bytes": raw_pvc_bytes,
         "one_node_loss_pvc_bytes": loss_pvc_bytes,
-        "storage_headroom_bytes": storage_headroom,
-        "one_node_loss_storage_headroom_bytes": loss_storage_headroom,
+        "storage_headroom_bytes": reported_storage_headroom,
+        "one_node_loss_storage_headroom_bytes": reported_loss_storage_headroom,
         "unrequested_container_count": unrequested_container_count,
         "component_projection": component_projection,
     }
@@ -719,20 +1035,6 @@ def main() -> int:
             projected = deepcopy(contract)
             projected["_projection_only"] = True
             projected["admission_status"] = "ready"
-            projected["baseline"] = {
-                "node_count": 3,
-                "allocatable_cpu_millicores": 1_000_000_000,
-                "allocatable_memory_bytes": 1_000_000_000_000_000,
-                "one_node_loss_allocatable_cpu_millicores": 999_999_999,
-                "one_node_loss_allocatable_memory_bytes": 999_999_999_999_999,
-                "existing_requested_cpu_millicores": 0,
-                "existing_requested_memory_bytes": 0,
-                "required_cpu_reserve_millicores": 0,
-                "required_memory_reserve_bytes": 0,
-                "storage_available_bytes": 1_000_000_000_000_000,
-                "worst_two_node_storage_available_bytes": 999_999_999_999_999,
-                "required_storage_reserve_bytes": 0,
-            }
             full = evaluate(projected, contract_path)
             report = {
                 key: value

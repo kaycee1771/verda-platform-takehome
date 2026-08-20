@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "phase6" / "check-root-admission.py"
+SPEC = importlib.util.spec_from_file_location("phase6_root_admission", SCRIPT)
+assert SPEC and SPEC.loader
+RUNTIME = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(RUNTIME)
 
 FIXTURE_FILES = (
     "config/phase6-root-admission.yaml",
@@ -167,10 +172,29 @@ class Phase6RootAdmissionTests(unittest.TestCase):
         temporary, root = self.fixture()
         self.addCleanup(temporary.cleanup)
         fully_admit(root)
-        result = run_checker(root)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), '{"admission":"passed","phase":6,"root_included":true}')
-        self.assertEqual(result.stderr, "")
+        calls = []
+        passed, reason = RUNTIME.evaluate(root, lambda candidate: calls.append(candidate))
+        self.assertTrue(passed, reason)
+        self.assertEqual(calls, [root])
+
+    def test_root_cannot_pass_without_regeneration_and_non_projection_admission(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("render-capacity-inputs.py", source)
+        self.assertIn("--verify-contract", source)
+        self.assertIn("capacity-admission.py", source)
+        self.assertNotIn("--projection-only", source)
+
+    def test_capacity_preflight_failure_blocks_otherwise_admitted_root(self) -> None:
+        temporary, root = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        fully_admit(root)
+
+        def fail_preflight(_root: Path) -> None:
+            raise RUNTIME.AdmissionError("capacity non-projection admission did not pass")
+
+        passed, reason = RUNTIME.evaluate(root, fail_preflight)
+        self.assertFalse(passed)
+        self.assertEqual(reason, "Phase 6 candidate is included before every admission gate is satisfied")
 
     def test_premature_root_inclusion_is_rejected_without_gate_details(self) -> None:
         temporary, root = self.fixture()
@@ -253,9 +277,9 @@ class Phase6RootAdmissionTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("unresolved sentinel", result.stderr)
 
-    def test_script_is_read_only_and_has_no_live_client_surface(self) -> None:
+    def test_script_has_no_live_client_surface(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
-        for forbidden in ("subprocess", "kubectl", "helm ", "curl ", "requests.", "boto", "ssh "):
+        for forbidden in ("kubectl", "helm install", "curl ", "requests.", "boto", "ssh "):
             self.assertNotIn(forbidden, source)
 
 

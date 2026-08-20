@@ -21,6 +21,10 @@ assert SPEC and SPEC.loader
 RUNTIME = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = RUNTIME
 SPEC.loader.exec_module(RUNTIME)
+RENDER_SPEC = importlib.util.spec_from_file_location("phase6_capacity_renderer", RENDER_SCRIPT)
+assert RENDER_SPEC and RENDER_SPEC.loader
+RENDER_RUNTIME = importlib.util.module_from_spec(RENDER_SPEC)
+RENDER_SPEC.loader.exec_module(RENDER_RUNTIME)
 GIB = 1024**3
 MIB = 1024**2
 
@@ -147,9 +151,68 @@ def write_contract(root: Path, documents: dict[str, list[dict]]) -> tuple[Path, 
             components[component]["chart_archive_sha256"] = chart_locks[component][
                 "archive_sha256"
             ]
+    protected = {
+        "schema_version": 1,
+        "protection": "identity-free-sanitized",
+        "source_snapshots": {
+            "node_sha256": "1" * 64,
+            "pod_sha256": "2" * 64,
+            "phase5_argocd_render_sha256": "3" * 64,
+            "phase5_cert_manager_render_sha256": "4" * 64,
+            "phase5_longhorn_render_sha256": "5" * 64,
+        },
+        "nodes": [
+            {
+                "allocatable_cpu_millicores": 4000,
+                "allocatable_memory_bytes": 16 * GIB,
+                "storage_available_bytes": 100 * GIB // 3,
+                "labels": {"kubernetes.io/os": "linux", "pool": "management"},
+                "taints": [],
+            },
+            {
+                "allocatable_cpu_millicores": 4000,
+                "allocatable_memory_bytes": 16 * GIB,
+                "storage_available_bytes": 100 * GIB // 3,
+                "labels": {"kubernetes.io/os": "linux", "pool": "management"},
+                "taints": [],
+            },
+            {
+                "allocatable_cpu_millicores": 4000,
+                "allocatable_memory_bytes": 16 * GIB,
+                "storage_available_bytes": 100 * GIB - 2 * (100 * GIB // 3),
+                "labels": {"kubernetes.io/os": "linux", "pool": "management"},
+                "taints": [],
+            },
+        ],
+        "existing_requests": {
+            "cpu_millicores": 2000,
+            "raw_memory_bytes": 4 * GIB,
+            "phase5_render_memory_bytes": 0,
+        },
+    }
+    baseline_evidence = root / "baseline.yaml"
+    candidate_evidence = root / "candidate.yaml"
+    evidence_payload = yaml.safe_dump(protected, sort_keys=False).encode()
+    baseline_evidence.write_bytes(evidence_payload)
+    candidate_evidence.write_bytes(evidence_payload)
+    storage_classes = root / "storageclasses.yaml"
+    storage_payload = yaml.safe_dump_all(
+        [
+            {"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass", "metadata": {"name": "longhorn-critical"}, "parameters": {"numberOfReplicas": "3"}},
+            {"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass", "metadata": {"name": "longhorn-standard"}, "parameters": {"numberOfReplicas": "2"}},
+        ],
+        explicit_start=True,
+        sort_keys=False,
+    ).encode()
+    storage_classes.write_bytes(storage_payload)
     contract = {
         "schema_version": 1,
         "admission_status": "ready",
+        "protected_evidence": {
+            "baseline": {"path": baseline_evidence.name, "sha256": hashlib.sha256(evidence_payload).hexdigest()},
+            "candidate": {"path": candidate_evidence.name, "sha256": hashlib.sha256(evidence_payload).hexdigest()},
+        },
+        "required_reserve": {"cpu_millicores": 100, "memory_bytes": GIB, "storage_bytes": 10 * GIB},
         "baseline": {
             "node_count": 3,
             "allocatable_cpu_millicores": 12000,
@@ -161,11 +224,59 @@ def write_contract(root: Path, documents: dict[str, list[dict]]) -> tuple[Path, 
             "required_cpu_reserve_millicores": 100,
             "required_memory_reserve_bytes": 1 * GIB,
             "storage_available_bytes": 100 * GIB,
-            "worst_two_node_storage_available_bytes": 70 * GIB,
+            "worst_two_node_storage_available_bytes": 2 * (100 * GIB // 3),
             "required_storage_reserve_bytes": 10 * GIB,
         },
-        "storage_classes": {
-            "longhorn-critical": {"replicas": 3, "replicas_after_one_node_loss": 2}
+        "baseline_provenance": {
+            "raw_snapshot_kind": "sanitized-phase5-node-and-pod-json",
+            "node_snapshot_sha256": "1" * 64,
+            "pod_snapshot_sha256": "2" * 64,
+            "raw_requested_memory_bytes": 4 * GIB,
+            "phase5_render_requested_memory_bytes": 0,
+            "phase5_render_sha256": {"argocd": "3" * 64, "cert_manager": "4" * 64, "longhorn": "5" * 64},
+            "post_phase5_cpu_source": "protected-phase5-identity-free-reducer",
+            "post_phase5_memory_source": "exact-raw-baseline-plus-checksum-bound-phase5-render-delta",
+        },
+        "storage_class_manifest": {"path": storage_classes.name, "sha256": hashlib.sha256(storage_payload).hexdigest()},
+        "projection_result": {
+            "candidate_allocatable_cpu_millicores": 12000,
+            "candidate_allocatable_memory_bytes": 48 * GIB,
+            "candidate_one_node_loss_allocatable_cpu_millicores": 8000,
+            "candidate_one_node_loss_allocatable_memory_bytes": 32 * GIB,
+            "candidate_storage_available_bytes": 100 * GIB,
+            "candidate_one_node_loss_storage_available_bytes": 2 * (100 * GIB // 3),
+            "candidate_one_node_loss_cpu_headroom_millicores": 4900,
+            "candidate_one_node_loss_cpu_reserve_shortfall_millicores": 0,
+            "candidate_one_node_loss_memory_headroom_bytes": 32 * GIB - (4 * GIB + 1408 * MIB),
+            "candidate_one_node_loss_memory_reserve_headroom_bytes": 31 * GIB - (4 * GIB + 1408 * MIB),
+            "candidate_storage_headroom_bytes": 97 * GIB,
+            "candidate_one_node_loss_storage_headroom_bytes": 2 * (100 * GIB // 3) - 2 * GIB,
+            "rendered_document_count": sum(len(value) for value in documents.values()),
+            "workload_definition_count": 4,
+            "pvc_definition_count": 1,
+            "unrequested_container_count": 0,
+            "new_steady_cpu_millicores": 850,
+            "new_rollout_peak_cpu_millicores": 1100,
+            "new_steady_memory_bytes": 1088 * MIB,
+            "new_rollout_peak_memory_bytes": 1408 * MIB,
+            "new_logical_pvc_bytes": GIB,
+            "new_raw_pvc_bytes": 3 * GIB,
+            "one_node_loss_pvc_bytes": 2 * GIB,
+            "post_steady_cpu_millicores": 2850,
+            "post_rollout_peak_cpu_millicores": 3100,
+            "post_steady_memory_bytes": 4 * GIB + 1088 * MIB,
+            "post_rollout_peak_memory_bytes": 4 * GIB + 1408 * MIB,
+            "total_cpu_shortfall_millicores": 0,
+            "one_node_loss_cpu_headroom_millicores": 4900,
+            "one_node_loss_cpu_reserve_shortfall_millicores": 0,
+            "one_node_loss_memory_headroom_bytes": 32 * GIB - (4 * GIB + 1408 * MIB),
+            "one_node_loss_memory_reserve_headroom_bytes": 31 * GIB - (4 * GIB + 1408 * MIB),
+            "required_candidate_two_node_cpu_millicores": 3200,
+            "required_candidate_per_node_cpu_millicores": 1600,
+            "required_candidate_two_node_memory_bytes": 5 * GIB + 1408 * MIB,
+            "required_candidate_per_node_memory_bytes": (5 * GIB + 1408 * MIB) // 2,
+            "storage_headroom_bytes": 97 * GIB,
+            "one_node_loss_storage_headroom_bytes": 2 * (100 * GIB // 3) - 2 * GIB,
         },
         "components": components,
     }
@@ -255,6 +366,7 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["capacity_source"], "protected-candidate-evidence")
         self.assertEqual(report["component_count"], 10)
         self.assertEqual(report["workload_definition_count"], 4)
         self.assertEqual(report["pvc_definition_count"], 1)
@@ -280,7 +392,7 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
                 text=True,
             )
         self.assertEqual(result.returncode, 1)
-        self.assertIn("rollout peak violates one-node-loss CPU reserve", result.stderr)
+        self.assertIn("baseline does not match checksum-bound protected evidence", result.stderr)
 
     def test_storage_replication_and_loss_reserve_are_mandatory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -296,7 +408,7 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
                 text=True,
             )
         self.assertEqual(result.returncode, 1)
-        self.assertIn("PVC replicas violate total storage reserve", result.stderr)
+        self.assertIn("baseline does not match checksum-bound protected evidence", result.stderr)
 
     def test_operator_generated_workload_is_rejected_until_modeled(self) -> None:
         documents = base_documents()
@@ -318,7 +430,139 @@ class Phase6CapacityAdmissionTests(unittest.TestCase):
                 text=True,
             )
         self.assertEqual(result.returncode, 1)
-        self.assertIn("unsupported capacity-bearing kind Prometheus", result.stderr)
+        self.assertIn("unknown or workload-producing kind Prometheus", result.stderr)
+
+    def test_operator_projection_is_machine_compared_to_source_cr(self) -> None:
+        source = [
+            {"kind": "Prometheus", "spec": {"replicas": 1, "shards": 1, "resources": resources("250m", "512Mi", "1", "1536Mi"), "storage": {"volumeClaimTemplate": {"spec": {"storageClassName": "longhorn-critical"}}}}},
+            {"kind": "Alertmanager", "spec": {"replicas": 1, "resources": resources("50m", "128Mi", "200m", "256Mi"), "storage": {"volumeClaimTemplate": {"spec": {"storageClassName": "longhorn-critical"}}}}},
+        ]
+        projections = []
+        for item, name in zip(source, ("prometheus", "alertmanager")):
+            projections.append({"kind": "StatefulSet", "spec": {"replicas": 1, "template": {"spec": {"containers": [{"name": name, "resources": item["spec"]["resources"]}]}}, "volumeClaimTemplates": [{"spec": {"storageClassName": "longhorn-critical"}}]}})
+        RENDER_RUNTIME.verify_operator_projections(source, projections)
+        projections[0]["spec"]["replicas"] = 2
+        with self.assertRaisesRegex(RENDER_RUNTIME.RenderError, "replica semantics differ"):
+            RENDER_RUNTIME.verify_operator_projections(source, projections)
+
+    def test_unknown_list_and_custom_kinds_fail_closed(self) -> None:
+        for kind, api_version in (("List", "v1"), ("WidgetController", "example.io/v1")):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                documents = base_documents()
+                documents["environment_foundations"] = [
+                    {"apiVersion": api_version, "kind": kind, "metadata": {"name": "unknown"}}
+                ]
+                contract_path, _ = write_contract(Path(directory), documents)
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--contract", str(contract_path)],
+                    cwd=ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"unknown or workload-producing kind {kind}", result.stderr)
+
+    def test_candidate_evidence_and_complete_projection_are_mandatory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract_path, contract = write_contract(Path(directory), base_documents())
+            contract["protected_evidence"]["candidate"]["sha256"] = None
+            contract_path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(SCRIPT), "--contract", str(contract_path)], cwd=ROOT, check=False, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("candidate evidence binding has no exact SHA-256", result.stderr)
+
+            contract_path, contract = write_contract(Path(directory), base_documents())
+            del contract["projection_result"]["post_rollout_peak_cpu_millicores"]
+            contract_path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(SCRIPT), "--contract", str(contract_path)], cwd=ROOT, check=False, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("does not exactly match recomputed", result.stderr)
+
+    def test_baseline_provenance_is_recomputed_not_asserted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract_path, contract = write_contract(Path(directory), base_documents())
+            contract["baseline_provenance"]["raw_requested_memory_bytes"] += 1
+            contract_path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(SCRIPT), "--contract", str(contract_path)], cwd=ROOT, check=False, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("baseline_provenance does not match protected evidence", result.stderr)
+
+    def test_selectors_taints_and_largest_pod_are_fail_closed(self) -> None:
+        mutations = []
+        no_pool = base_documents()
+        no_pool["rancher"][0]["spec"]["template"]["spec"]["nodeSelector"] = {"pool": "absent"}
+        mutations.append((no_pool, "has no eligible candidate node"))
+        affinity = base_documents()
+        affinity["rancher"][0]["spec"]["template"]["spec"]["affinity"] = {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [{"matchExpressions": [{"key": "pool", "operator": "In", "values": ["absent"]}]}]}}}
+        mutations.append((affinity, "has no eligible candidate node"))
+        toleration = base_documents()
+        toleration["rancher"][0]["spec"]["template"]["spec"]["tolerations"] = [{"key": "dedicated", "operator": "GreaterThan"}]
+        mutations.append((toleration, "unsupported toleration operator"))
+        oversized = base_documents()
+        oversized["rancher"][0]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["cpu"] = "5000m"
+        oversized["rancher"][0]["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["cpu"] = "6000m"
+        mutations.append((oversized, "largest eligible pod does not fit"))
+        for documents, message in mutations:
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                contract_path, _ = write_contract(Path(directory), documents)
+                result = subprocess.run([sys.executable, str(SCRIPT), "--contract", str(contract_path)], cwd=ROOT, check=False, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(message, result.stderr)
+
+    def test_storageclass_manifest_is_bound_and_loss_replication_is_derived(self) -> None:
+        logical, raw, loss = RUNTIME._pvc_bytes(
+            {"storageClassName": "longhorn-critical", "resources": {"requests": {"storage": "1Gi"}}},
+            {"longhorn-critical": {"replicas": 3, "replicas_after_one_node_loss": 99}},
+            1,
+            "fixture PVC",
+        )
+        self.assertEqual((logical, raw, loss), (GIB, 3 * GIB, 2 * GIB))
+        with tempfile.TemporaryDirectory() as directory:
+            contract_path, contract = write_contract(Path(directory), base_documents())
+            Path(directory, "storageclasses.yaml").write_text("tampered\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(SCRIPT), "--contract", str(contract_path)], cwd=ROOT, check=False, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("StorageClass manifest checksum does not match", result.stderr)
+
+    def test_low_candidate_cpu_memory_and_storage_reach_normal_reserve_gates(self) -> None:
+        cases = (
+            ("cpu", 1500, 16 * GIB, 100 * GIB // 3, "candidate one-node-loss CPU reserve"),
+            ("memory", 4000, 3 * GIB, 100 * GIB // 3, "candidate one-node-loss memory reserve"),
+            ("storage", 4000, 16 * GIB, 5 * GIB, "candidate one-node-loss storage reserve"),
+        )
+        for _, cpu, memory, storage, expected in cases:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                contract_path, contract = write_contract(root, base_documents())
+                candidate_path = root / "candidate.yaml"
+                candidate = yaml.safe_load(candidate_path.read_text(encoding="utf-8"))
+                for node in candidate["nodes"]:
+                    node["allocatable_cpu_millicores"] = cpu
+                    node["allocatable_memory_bytes"] = memory
+                    node["storage_available_bytes"] = storage
+                payload = yaml.safe_dump(candidate, sort_keys=False).encode()
+                candidate_path.write_bytes(payload)
+                contract["protected_evidence"]["candidate"]["sha256"] = hashlib.sha256(payload).hexdigest()
+                projection = contract["projection_result"]
+                projection["candidate_allocatable_cpu_millicores"] = 3 * cpu
+                projection["candidate_one_node_loss_allocatable_cpu_millicores"] = 2 * cpu
+                projection["candidate_allocatable_memory_bytes"] = 3 * memory
+                projection["candidate_one_node_loss_allocatable_memory_bytes"] = 2 * memory
+                projection["candidate_storage_available_bytes"] = 3 * storage
+                projection["candidate_one_node_loss_storage_available_bytes"] = 2 * storage
+                post_peak_cpu = projection["post_rollout_peak_cpu_millicores"]
+                post_peak_memory = projection["post_rollout_peak_memory_bytes"]
+                projection["candidate_one_node_loss_cpu_headroom_millicores"] = 2 * cpu - post_peak_cpu
+                projection["candidate_one_node_loss_cpu_reserve_shortfall_millicores"] = max(0, 100 - (2 * cpu - post_peak_cpu))
+                projection["candidate_one_node_loss_memory_headroom_bytes"] = 2 * memory - post_peak_memory
+                projection["candidate_one_node_loss_memory_reserve_headroom_bytes"] = 2 * memory - post_peak_memory - GIB
+                projection["candidate_storage_headroom_bytes"] = 3 * storage - 3 * GIB
+                projection["candidate_one_node_loss_storage_headroom_bytes"] = 2 * storage - 2 * GIB
+                contract_path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+                result = subprocess.run([sys.executable, str(SCRIPT), "--contract", str(contract_path)], cwd=ROOT, check=False, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(expected, result.stderr)
 
     def test_missing_container_limits_are_allowed_when_requests_remain_exact(self) -> None:
         documents = base_documents()

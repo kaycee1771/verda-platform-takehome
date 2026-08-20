@@ -1,0 +1,29 @@
+---
+schema_version: 1
+protection: identity-free-sanitized
+source_snapshots:
+  node_sha256: a9164bfe8ed82398a38d83130b3a643355916f7ac7be79d907840e0eea371281
+  pod_sha256: 3f2b6463d1ffa2dea99772e5b0f47140b0054a9accf948cbea6bf054a2e6dc94
+  phase5_argocd_render_sha256: 5348a5ac48041c169cb07847b54bbd7c224bb592005d3c9b42005fc09a19e119
+  phase5_cert_manager_render_sha256: 6a4a3813206e958a404966a8a517c7b0e784ceb8dd7c951f89c83a79b3853897
+  phase5_longhorn_render_sha256: 8275b7773f73aedbfb409e0f6202e1f3e7b166cea79b684e8faf92714e848ab0
+nodes:
+  - allocatable_cpu_millicores: 3000
+    allocatable_memory_bytes: 14097256448
+    storage_available_bytes: 104962457600
+    labels: {kubernetes.io/os: linux, node-role.kubernetes.io/control-plane: "true"}
+    taints: []
+  - allocatable_cpu_millicores: 3000
+    allocatable_memory_bytes: 14097256448
+    storage_available_bytes: 104962457600
+    labels: {kubernetes.io/os: linux, node-role.kubernetes.io/control-plane: "true"}
+    taints: []
+  - allocatable_cpu_millicores: 3000
+    allocatable_memory_bytes: 14097260544
+    storage_available_bytes: 104962457600
+    labels: {kubernetes.io/os: linux, node-role.kubernetes.io/control-plane: "true"}
+    taints: []
+existing_requests:
+  cpu_millicores: 5935
+  raw_memory_bytes: 7371489280
+  phase5_render_memory_bytes: 2751463424

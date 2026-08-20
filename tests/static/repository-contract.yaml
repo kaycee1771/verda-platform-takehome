@@ -184,6 +184,7 @@ required_files:
   - config/phase-map.json
   - config/firewall-port-matrix.yaml
   - config/phase6-capacity-admission.yaml
+  - config/phase6-capacity-baseline.identity-free.yaml
   - config/phase6-root-admission.yaml
   - .github/pull_request_template.md
   - .github/ISSUE_TEMPLATE/bug.yml
@@ -357,6 +358,8 @@ required_files:
   - gitops/root/phase6/harbor-monitoring.yaml
   - gitops/root/phase6/longhorn-monitoring.yaml
   - gitops/root/phase6/rancher-monitoring.yaml
+  - gitops/root/phase6/sealed-secrets.yaml
+  - gitops/root/phase6/sealed-secrets-monitoring.yaml
   - gitops/root/phase6/traefik-monitoring.yaml
   - platform/management/monitoring/targets/argocd/kustomization.yaml
   - platform/management/monitoring/targets/argocd/monitoring.yaml
