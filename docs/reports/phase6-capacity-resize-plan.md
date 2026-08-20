@@ -1,6 +1,6 @@
 # Phase 6 Capacity Resize Decision
 
-Status: **PROPOSED — live mutation remains fail closed**
+Status: **PARTIAL — provider preflight passed; live mutation remains fail closed**
 
 ## Trigger
 
@@ -15,10 +15,14 @@ resize-free Phase 6 deployment is not admissible.
 
 The [official Verda public catalog](https://verda.com/pricing?currency=usd),
 rechecked on 2026-08-20, lists `CPU.8V.32G` with 8 vCPU, 32 GiB memory, and an
-on-demand price of `$0.0558` per instance-hour. This is a planning input, not
-proof of current project entitlement or location stock. Before mutation, an
-authenticated read-only catalog check must prove that the exact shape is
-available in every required location and that the project quote agrees.
+on-demand price of `$0.0558` per instance-hour. An authenticated console and
+provider-CLI preflight at `2026-08-20T05:54:40Z` independently confirmed that
+the exact on-demand shape was available in `FIN-03` at `$0.0558/hour`. The
+provider API reported three current instances, six volumes, a reconciled
+`$0.23164521/hour` burn rate, and a `$99.22` balance. The ignored sanitized
+preflight records only these aggregate scalars and no resource identifiers or
+endpoints. Availability, price, and balance must still be refreshed immediately
+before each saved-plan apply because they are time-varying provider facts.
 
 Replacing all three current `CPU.4V.16G` instances with the candidate changes
 the compute portion from `$0.08370/hour` to `$0.16740/hour`. Keeping the current
@@ -26,11 +30,15 @@ volume model unchanged produces a known infrastructure planning rate of
 `$0.31535/hour` or `$7.56840/day`, excluding measured-positive but currently
 unitemized object-storage charges.
 
-For seven days, the known compute plus NVMe estimate becomes `$52.9780`. Adding
-the existing `$5` unquoted-services allowance and 15% contingency produces a
-planning envelope of `$66.6747`. This remains below the 70% expansion trigger
-against the originally verified `$115.67` balance, but it must be reconciled
-against a fresh authenticated balance immediately before any replacement.
+For seven days, the known compute plus NVMe estimate becomes `$52.97799528`.
+Adding the existing `$5` unquoted-services allowance and 15% contingency
+produces a planning envelope of `$66.674694572`. Adding the required 12-hour
+reserve at the candidate rate produces a maximum exposure of `$70.458837092`.
+Against the authenticated `$99.22` balance, that is approximately 71.01% and
+therefore crosses the 70% expansion trigger. It is affordable but not yet
+authorized: an explicit user-approved ceiling and evaluator expiry are required
+before any replacement, followed by a fresh authenticated balance, price, and
+availability check before each saved-plan apply.
 
 ## Replacement semantics
 
@@ -104,9 +112,9 @@ reducer observes at least the thresholds above after each replacement.
 
 ## Remaining decision inputs
 
-- Authenticated `CPU.8V.32G` availability in the three selected locations.
-- Fresh project price and balance.
-- Exact Terraform single-node replacement plans.
+- Exact Terraform single-node replacement plans from the integrated resize
+  controller and a fresh balance/availability recheck immediately before each
+  apply.
 - Fresh identity-free per-node allocatable CPU/memory after the first candidate
   boots; abort if the minimum is below the capacity contract.
 - Reviewed endpoint/certificate reconciliation sequence for the primary node.
