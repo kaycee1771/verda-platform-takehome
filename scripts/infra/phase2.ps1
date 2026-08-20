@@ -113,8 +113,33 @@ function Enter-Phase2MutationLease {
     param([Parameter(Mandatory)]$Paths)
 
     $leaseDirectory = Join-Path $Paths.Base 'locks'
-    Protect-Directory -Path $leaseDirectory
     $leasePath = Join-Path $leaseDirectory 'phase2-live-mutation.lock'
+    Assert-NoReparsePath -Path $Paths.Base -Label 'Phase 2 lease base'
+    Protect-Directory -Path $Paths.Base
+    Assert-NoReparsePath -Path $Paths.Base -Label 'Phase 2 lease base'
+    Assert-NoReparsePath -Path $leaseDirectory -Label 'Phase 2 lease directory'
+    Protect-Directory -Path $leaseDirectory
+    Assert-NoReparsePath -Path $leaseDirectory -Label 'Phase 2 lease directory'
+    Assert-NoReparsePath -Path $leasePath -Label 'Phase 2 lease file'
+    Assert-SingleFileIdentity -Path $leasePath -Label 'Phase 2 lease file'
+    $leaseCanonical = Get-CanonicalBoundaryPath -Path $leasePath
+    foreach ($protected in @(
+        $Paths.StatePath, $Paths.EncryptedStatePath, "$($Paths.StatePath).dpapi.new",
+        "$($Paths.StatePath).backup", "$($Paths.StatePath).backup.dpapi",
+        $Paths.SshPrivateKey, $Paths.SshPublicKey, $Paths.KnownHosts
+    )) {
+        if ($leaseCanonical.Equals(
+            (Get-CanonicalBoundaryPath -Path $protected), [StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw 'Phase 2 lease file aliases a protected state, key, or known-hosts asset.'
+        }
+    }
+    $backupCanonical = Get-CanonicalBoundaryPath -Path $Paths.BackupDirectory
+    $backupPrefix = $backupCanonical.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if ($leaseCanonical.Equals($backupCanonical, [StringComparison]::OrdinalIgnoreCase) -or
+        $leaseCanonical.StartsWith($backupPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Phase 2 lease file aliases the protected backup tree.'
+    }
     try {
         $stream = [IO.File]::Open(
             $leasePath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None
@@ -122,19 +147,22 @@ function Enter-Phase2MutationLease {
     } catch {
         throw 'Another Phase 2 process holds the OS-exclusive live-mutation lease.'
     }
-    $metadata = [Text.Encoding]::UTF8.GetBytes(
-        ([ordered]@{ schema_version = 1; pid = $PID; target = $Target } | ConvertTo-Json -Compress)
-    )
-    $stream.SetLength(0)
-    $stream.Write($metadata, 0, $metadata.Length)
-    $stream.Flush($true)
-    $stream.Position = 0
+    try {
+        Assert-NoReparsePath -Path $leasePath -Label 'Phase 2 lease file'
+        Assert-SingleFileIdentity -Path $leasePath -Label 'Phase 2 lease file'
+    } catch {
+        $stream.Dispose()
+        throw
+    }
     $stream
 }
 
 function Open-ReviewedPlanHandle {
     param([Parameter(Mandatory)][string]$Path)
 
+    Assert-NoReparsePath -Path (Split-Path -Parent $Path) -Label 'Reviewed Terraform plan directory'
+    Assert-NoReparsePath -Path $Path -Label 'Reviewed Terraform saved plan'
+    Assert-SingleFileIdentity -Path $Path -Label 'Reviewed Terraform saved plan'
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw 'The reviewed Terraform saved plan is absent.'
     }
@@ -944,18 +972,17 @@ if ($phase6ProtectedTarget -and -not $IsWindows) {
 $paths = Get-ExternalPaths
 $phase6StateOpened = $false
 $mutationTarget = $Target -in @('apply', 'repair-node-02-apply', 'destroy')
-$mutationLease = $null
-if ($phase6ProtectedTarget) {
-    Assert-Phase6StateBoundary -Paths $paths
+$stateBoundaryLease = $null
+Assert-Phase6StateBoundary -Paths $paths
+if ($mutationTarget -and -not $IsWindows) {
+    throw 'Phase 2 apply/destroy targets require Windows file-share and DPAPI protections.'
 }
 if (-not $phase6ProtectedTarget) {
     Write-Host "[phase 2] target=$Target cluster=$Cluster credentials=process-only cloud-mutation=$($Target -in @('apply', 'repair-node-02-apply', 'destroy'))"
 }
 
 try {
-if ($mutationTarget) {
-    $mutationLease = Enter-Phase2MutationLease -Paths $paths
-}
+$stateBoundaryLease = Enter-Phase2MutationLease -Paths $paths
 switch ($Target) {
     'phase6-resize-plan' {
         Assert-Credentials
@@ -1122,6 +1149,6 @@ switch ($Target) {
             Close-SealedState -Paths $paths
         }
     } finally {
-        if ($mutationLease) { $mutationLease.Dispose() }
+        if ($stateBoundaryLease) { $stateBoundaryLease.Dispose() }
     }
 }
