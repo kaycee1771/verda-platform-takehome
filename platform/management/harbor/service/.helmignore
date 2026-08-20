@@ -1,0 +1,5 @@
+.git/
+.local/
+*.log
+*.tmp
+README.md

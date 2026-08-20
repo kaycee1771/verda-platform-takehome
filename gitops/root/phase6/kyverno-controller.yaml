@@ -1,0 +1,23 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-controller
+  namespace: argocd
+  annotations: {argocd.argoproj.io/sync-wave: "-12"}
+spec:
+  project: security
+  sources:
+    - repoURL: https://kyverno.github.io/kyverno
+      chart: kyverno
+      targetRevision: 3.8.2
+      helm:
+        releaseName: kyverno
+        valueFiles: [$values/platform/management/kyverno/values.yaml]
+    - repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+      targetRevision: main
+      ref: values
+  destination: {server: https://kubernetes.default.svc, namespace: kyverno}
+  syncPolicy:
+    automated: {prune: false, selfHeal: true, allowEmpty: false}
+    syncOptions: [ServerSideApply=true, PruneLast=true]

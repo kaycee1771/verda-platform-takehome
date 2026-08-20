@@ -1,0 +1,47 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: harbor-letsencrypt-staging
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  acme:
+    email: {{ required "certificate.acmeEmail is required" .Values.certificate.acmeEmail | quote }}
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: harbor-letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: {{ .Values.certificate.ingressClassName | quote }}
+            ingressTemplate:
+              metadata:
+                annotations:
+                  traefik.ingress.kubernetes.io/router.entrypoints: web
+{{- if .Values.gates.stagingCertificateVerified }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: harbor-letsencrypt-production
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+    verda.platform/staging-proof: verified
+spec:
+  acme:
+    email: {{ .Values.certificate.acmeEmail | quote }}
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: harbor-letsencrypt-production-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: {{ .Values.certificate.ingressClassName | quote }}
+            ingressTemplate:
+              metadata:
+                annotations:
+                  traefik.ingress.kubernetes.io/router.entrypoints: web
+{{- end }}

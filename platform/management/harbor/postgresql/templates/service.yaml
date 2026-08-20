@@ -1,0 +1,22 @@
+{{- if .Values.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-postgresql
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "verdaHarborPostgresql.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: false
+  selector:
+    app.kubernetes.io/name: harbor-postgresql
+    app.kubernetes.io/instance: harbor-postgresql
+  ports:
+    - name: postgresql
+      protocol: TCP
+      port: 5432
+      targetPort: postgresql
+{{- end }}

@@ -1,0 +1,83 @@
+---
+schema_version: 1
+# This stays blocked until the coordinator records exact sanitized baseline
+# bytes, selects explicit reserves, and checksum-binds every final render.
+admission_status: blocked-incomplete-inputs
+baseline:
+  node_count: 3
+  allocatable_cpu_millicores: 9000
+  allocatable_memory_bytes: null
+  one_node_loss_allocatable_cpu_millicores: 6000
+  one_node_loss_allocatable_memory_bytes: null
+  existing_requested_cpu_millicores: 5935
+  existing_requested_memory_bytes: null
+  required_cpu_reserve_millicores: null
+  required_memory_reserve_bytes: null
+  storage_available_bytes: 314887372800
+  worst_two_node_storage_available_bytes: 209924915200
+  required_storage_reserve_bytes: null
+storage_classes:
+  longhorn-critical:
+    replicas: 3
+    replicas_after_one_node_loss: 2
+components:
+  rancher:
+    render_path: ../.local/phase6/renders/rancher.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null
+  harbor:
+    render_path: ../.local/phase6/renders/harbor.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null
+  kube_prometheus_stack:
+    render_path: ../.local/phase6/renders/kube-prometheus-stack.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null
+  loki:
+    render_path: ../.local/phase6/renders/loki.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null
+  alloy:
+    render_path: ../.local/phase6/renders/alloy.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null
+  sealed_secrets:
+    render_path: ../.local/phase6/renders/sealed-secrets.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null
+  kyverno:
+    render_path: ../.local/phase6/renders/kyverno.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null
+  velero:
+    render_path: ../.local/phase6/renders/velero.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null
+  environment_foundations:
+    render_path: ../.local/phase6/renders/environment-foundations.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null
+  platform_demo:
+    render_path: ../.local/phase6/renders/platform-demo.yaml
+    render_sha256: null
+    expected_document_count: null
+    expected_workload_count: null
+    expected_pvc_definition_count: null

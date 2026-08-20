@@ -1,0 +1,8 @@
+---
+apiVersion: v2
+name: verda-harbor-postgresql
+description: Single-instance PostgreSQL dependency with Longhorn persistence for Harbor
+type: application
+version: 0.1.0
+appVersion: "15.10"
+kubeVersion: ">=1.35.0-0 <1.36.0-0"

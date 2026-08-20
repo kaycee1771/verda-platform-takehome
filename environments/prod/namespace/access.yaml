@@ -1,0 +1,21 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: platform-demo, namespace: demo-prod}
+automountServiceAccountToken: false
+imagePullSecrets: [{name: platform-demo-registry}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: verda-reviewers-view, namespace: demo-prod}
+subjects:
+  - {kind: Group, apiGroup: rbac.authorization.k8s.io, name: verda-reviewers}
+roleRef: {kind: ClusterRole, apiGroup: rbac.authorization.k8s.io, name: view}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: velero-backup-reader, namespace: demo-prod}
+subjects:
+  - {kind: ServiceAccount, name: velero, namespace: velero}
+roleRef:
+  {kind: ClusterRole, apiGroup: rbac.authorization.k8s.io, name: velero-namespaced-backup-reader}

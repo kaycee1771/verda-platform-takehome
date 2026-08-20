@@ -1,0 +1,23 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: stage-a-smoke-prod
+  namespace: argocd
+  annotations: {argocd.argoproj.io/sync-wave: "20"}
+spec:
+  project: prod
+  sources:
+    - repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+      targetRevision: main
+      path: applications/stage-a-smoke/chart
+      helm:
+        releaseName: stage-a-smoke
+        valueFiles: [$values/applications/stage-a-smoke/values-prod.yaml]
+    - repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+      targetRevision: main
+      ref: values
+  destination: {server: https://kubernetes.default.svc, namespace: demo-prod}
+  syncPolicy:
+    automated: {prune: true, selfHeal: true, allowEmpty: false}
+    syncOptions: [PruneLast=true]

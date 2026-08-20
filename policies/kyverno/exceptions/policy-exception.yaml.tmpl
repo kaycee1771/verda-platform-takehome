@@ -1,0 +1,34 @@
+---
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: __EXCEPTION_NAME__
+  namespace: kyverno
+  annotations:
+    platform.verda-demo.io/exception-owner: __OWNER__
+    platform.verda-demo.io/exception-reason: __REASON__
+    platform.verda-demo.io/exception-review-by: __REVIEW_BY_YYYY_MM_DD__
+spec:
+  exceptions:
+    - policyName: __POLICY_NAME__
+      ruleNames:
+        - __RULE_NAME__
+  match:
+    any:
+      - resources:
+          kinds:
+            - __RESOURCE_KIND__
+          namespaces:
+            - __RESOURCE_NAMESPACE__
+          names:
+            - __RESOURCE_NAME__
+        subjects:
+          - kind: ServiceAccount
+            name: __SERVICE_ACCOUNT__
+            namespace: __RESOURCE_NAMESPACE__
+  conditions:
+    all:
+      - key: "{{ request.object.spec.containers[].image }}"
+        operator: AnyIn
+        value:
+          - __IMAGE_REFERENCE_AT_SHA256_DIGEST__

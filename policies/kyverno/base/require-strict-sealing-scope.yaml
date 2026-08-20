@@ -1,0 +1,49 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: sealed-secret-strict-scope
+  annotations:
+    policies.kyverno.io/title: Require strict SealedSecret scope
+    policies.kyverno.io/category: Secret Management
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: SealedSecret
+    platform.verda-demo.io/owner: platform-operations
+    platform.verda-demo.io/review-by: "2026-09-03"
+spec:
+  validationFailureAction: Audit
+  background: true
+  failurePolicy: Ignore
+  emitWarning: true
+  rules:
+    - name: reject-cluster-wide-scope
+      match:
+        any:
+          - resources:
+              kinds:
+                - bitnami.com/v1alpha1/SealedSecret
+      validate:
+        message: Cluster-wide SealedSecrets are prohibited; use strict name/namespace scope.
+        deny:
+          conditions:
+            any:
+              - key: >-
+                  {{ request.object.metadata.annotations."sealedsecrets.bitnami.com/cluster-wide" || 'false' }}
+                operator: Equals
+                value: "true"
+
+    - name: reject-namespace-wide-scope
+      match:
+        any:
+          - resources:
+              kinds:
+                - bitnami.com/v1alpha1/SealedSecret
+      validate:
+        message: Namespace-wide SealedSecrets are prohibited; use strict name/namespace scope.
+        deny:
+          conditions:
+            any:
+              - key: >-
+                  {{ request.object.metadata.annotations."sealedsecrets.bitnami.com/namespace-wide" || 'false' }}
+                operator: Equals
+                value: "true"

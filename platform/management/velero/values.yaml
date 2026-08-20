@@ -1,0 +1,281 @@
+---
+# Chart 12.1.0 / Velero 1.18.1. Activation remains blocked by
+# activation-contract.yaml until every image digest and live gate is proven.
+image:
+  repository: docker.io/velero/velero
+  tag: v1.18.1
+  digest: sha256:11459094b1b21ec7c817b08f8067d9e89380835547915cac9c4132ff05b55b90
+  pullPolicy: IfNotPresent
+
+revisionHistoryLimit: 2
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+extraVolumes:
+  - name: udmrepo
+    emptyDir:
+      sizeLimit: 256Mi
+  - name: cache
+    emptyDir:
+      sizeLimit: 256Mi
+extraVolumeMounts:
+  - name: udmrepo
+    mountPath: /home/cnb/udmrepo
+  - name: cache
+    mountPath: /home/cnb/.cache
+
+initContainers:
+  - name: velero-plugin-for-aws
+    image: >-
+      docker.io/velero/velero-plugin-for-aws@sha256:7e82f717f44e89671212e0dfce7e061321c386ea84a33bca64a671670ca6c278
+    imagePullPolicy: IfNotPresent
+    volumeMounts:
+      - name: plugins
+        mountPath: /target
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      privileged: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+
+# CRDs are installed from the chart's crds/ directory on first installation.
+# The hook-based upgrade job is intentionally disabled; future chart upgrades
+# require a separately reviewed CRD migration rather than an implicit hook.
+upgradeCRDs: false
+cleanUpCRDs: false
+
+# Location and schedule CRs are owned by resources/ after the CRDs/controller.
+backupsEnabled: false
+snapshotsEnabled: false
+schedules: {}
+
+credentials:
+  useSecret: true
+  existingSecret: velero-management-s3
+  secretContents: {}
+  extraEnvVars: {}
+  extraSecretRef: ""
+
+configuration:
+  uploaderType: kopia
+  backupSyncPeriod: 5m
+  storeValidationFrequency: 1m
+  defaultBackupStorageLocation: management-s3
+  defaultBackupTTL: 168h
+  defaultVolumesToFsBackup: false
+  fsBackupTimeout: 4h
+  defaultItemOperationTimeout: 4h
+  garbageCollectionFrequency: 1h
+  itemBlockWorkerCount: 1
+  logFormat: json
+  logLevel: info
+  repositoryMaintenanceJob:
+    repositoryConfigData:
+      name: velero-repo-maintenance
+      global:
+        priorityClassName: platform-workload
+        podResources:
+          cpuRequest: 50m
+          cpuLimit: 250m
+          memoryRequest: 128Mi
+          memoryLimit: 256Mi
+          ephemeralStorageRequest: 256Mi
+          ephemeralStorageLimit: 1Gi
+        keepLatestMaintenanceJobs: 1
+      repositories: {}
+
+configMaps:
+  node-agent-config:
+    labels:
+      app.kubernetes.io/component: node-agent
+    data:
+      node-agent.json: |-
+        {
+          "loadConcurrency": {
+            "globalConfig": 1,
+            "prepareQueueLength": 3
+          },
+          "podResources": {
+            "cpuRequest": "250m",
+            "cpuLimit": "750m",
+            "memoryRequest": "256Mi",
+            "memoryLimit": "1Gi",
+            "ephemeralStorageRequest": "1Gi",
+            "ephemeralStorageLimit": "4Gi"
+          },
+          "priorityClassName": "platform-workload"
+        }
+
+deployNodeAgent: true
+nodeAgent:
+  disableHostPath: false
+  podVolumePath: /var/lib/kubelet/pods
+  pluginVolumePath: /var/lib/kubelet/plugins
+  priorityClassName: platform-important
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  useScratchEmptyDir: true
+  extraVolumes:
+    - name: udmrepo
+      emptyDir:
+        sizeLimit: 256Mi
+    - name: cache
+      emptyDir:
+        sizeLimit: 256Mi
+  extraVolumeMounts:
+    - name: udmrepo
+      mountPath: /home/cnb/udmrepo
+    - name: cache
+      mountPath: /home/cnb/.cache
+  extraArgs:
+    - --node-agent-configmap=velero-node-agent-config
+  podSecurityContext:
+    runAsUser: 0
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    privileged: false
+    readOnlyRootFilesystem: true
+    runAsUser: 0
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+
+metrics:
+  enabled: true
+  scrapeInterval: 30s
+  scrapeTimeout: 10s
+  service:
+    type: ClusterIP
+  serviceMonitor:
+    autodetect: false
+    enabled: true
+    additionalLabels:
+      app.kubernetes.io/part-of: stage-a-observability
+      platform.verda-demo.io/monitor: "true"
+  nodeAgentPodMonitor:
+    autodetect: false
+    enabled: true
+    additionalLabels:
+      app.kubernetes.io/part-of: stage-a-observability
+      platform.verda-demo.io/monitor: "true"
+  prometheusRule:
+    autodetect: false
+    enabled: true
+    additionalLabels:
+      app.kubernetes.io/part-of: stage-a-observability
+    spec:
+      - alert: VeleroBackupFailed
+        expr: increase(velero_backup_failure_total{schedule!=""}[30m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: A scheduled Velero backup failed.
+      - alert: VeleroNoRecentSuccessfulBackup
+        expr: >-
+          (time() - velero_backup_last_successful_timestamp{schedule!=""}) > 90000
+          or absent(velero_backup_last_successful_timestamp{schedule!=""})
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: No successful scheduled Velero backup exists in the expected window.
+
+extraObjects:
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: velero-cluster-metadata-reader
+    rules:
+      - apiGroups:
+          - ""
+        resources:
+          - namespaces
+          - persistentvolumes
+        verbs:
+          - get
+          - list
+          - watch
+      - apiGroups:
+          - apiextensions.k8s.io
+        resources:
+          - customresourcedefinitions
+        verbs:
+          - get
+          - list
+          - watch
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: velero-cluster-metadata-reader
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: velero-cluster-metadata-reader
+    subjects:
+      - kind: ServiceAccount
+        name: velero
+        namespace: velero
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: velero-namespaced-backup-reader
+    rules:
+      - apiGroups:
+          - "*"
+        resources:
+          - "*"
+        verbs:
+          - get
+          - list
+          - watch
+
+rbac:
+  create: true
+  clusterAdministrator: false
+  clusterAdministratorName: cluster-admin
+serviceAccount:
+  server:
+    create: true
+    automountServiceAccountToken: true

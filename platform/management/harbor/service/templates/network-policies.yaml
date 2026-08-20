@@ -1,0 +1,309 @@
+{{- if .Values.harbor.enabled }}
+{{- $admission := include "verdaHarbor.assertAdmission" . -}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-default-deny
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+    verda.platform/admission: {{ $admission | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: harbor
+      app.kubernetes.io/name: harbor
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-dns-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: harbor
+      app.kubernetes.io/name: harbor
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-traefik-ingress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: harbor
+      app.kubernetes.io/name: harbor
+    matchExpressions:
+      - key: component
+        operator: In
+        values: [core, portal]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rke2-traefik
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-core-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: core}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor-postgresql, app.kubernetes.io/name: harbor-postgresql}
+      ports: [{protocol: TCP, port: 5432}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: redis}
+      ports: [{protocol: TCP, port: 6379}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: jobservice}
+      ports: [{protocol: TCP, port: 8080}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: registry}
+      ports: [{protocol: TCP, port: 5000}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: trivy}
+      ports: [{protocol: TCP, port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-jobservice-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: jobservice}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: core}
+      ports: [{protocol: TCP, port: 8080}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: registry}
+      ports: [{protocol: TCP, port: 5000}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: redis}
+      ports: [{protocol: TCP, port: 6379}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-registry-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: registry}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: core}
+      ports: [{protocol: TCP, port: 8080}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: redis}
+      ports: [{protocol: TCP, port: 6379}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-trivy-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: trivy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: core}
+      ports: [{protocol: TCP, port: 8080}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: redis}
+      ports: [{protocol: TCP, port: 6379}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-exporter-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: exporter}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: core}
+      ports: [{protocol: TCP, port: 8080}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor-postgresql, app.kubernetes.io/name: harbor-postgresql}
+      ports: [{protocol: TCP, port: 5432}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-core-internal-ingress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: harbor
+      app.kubernetes.io/name: harbor
+      component: core
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: harbor
+              app.kubernetes.io/name: harbor
+            matchExpressions:
+              - key: component
+                operator: In
+                values: [exporter, jobservice, registry, trivy]
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-jobservice-internal-ingress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: jobservice}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: core}
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-registry-internal-ingress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: registry}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: harbor
+              app.kubernetes.io/name: harbor
+            matchExpressions:
+              - key: component
+                operator: In
+                values: [core, jobservice]
+      ports:
+        - {protocol: TCP, port: 5000}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-trivy-internal-ingress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: trivy}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: core}
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-valkey-internal-ingress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: redis}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: harbor
+              app.kubernetes.io/name: harbor
+            matchExpressions:
+              - key: component
+                operator: In
+                values: [core, jobservice, registry, trivy]
+      ports:
+        - {protocol: TCP, port: 6379}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: harbor-trivy-database-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/instance: harbor
+      k8s:app.kubernetes.io/name: harbor
+      k8s:component: trivy
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: ANY}
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - {matchName: mirror.gcr.io}
+        - {matchName: ghcr.io}
+        - {matchName: pkg-containers.githubusercontent.com}
+      toPorts:
+        - ports:
+            - {port: "443", protocol: TCP}
+{{- end }}

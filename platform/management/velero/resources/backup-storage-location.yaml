@@ -1,0 +1,27 @@
+---
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  name: management-s3
+  namespace: velero
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+  labels:
+    app.kubernetes.io/part-of: stage-a-backup
+spec:
+  provider: aws
+  default: true
+  accessMode: ReadWrite
+  validationFrequency: 1m
+  backupSyncPeriod: 5m
+  credential:
+    name: velero-management-s3
+    key: cloud
+  objectStorage:
+    bucket: verda-takehome-velero
+    prefix: mgmt
+  config:
+    region: us-east-1
+    s3Url: https://objects.fin-03.verda.storage
+    s3ForcePathStyle: "true"
+    checksumAlgorithm: ""

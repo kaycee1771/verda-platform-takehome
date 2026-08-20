@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["gates", "certificate", "harbor"],
+  "properties": {
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stagingCertificateVerified", "sealedSecretsReady", "postgresqlReady", "capacityAdmitted", "imageDigestsLocked"],
+      "properties": {
+        "stagingCertificateVerified": {"type": "boolean"},
+        "sealedSecretsReady": {"type": "boolean"},
+        "postgresqlReady": {"type": "boolean"},
+        "capacityAdmitted": {"type": "boolean"},
+        "imageDigestsLocked": {"type": "boolean"}
+      }
+    },
+    "certificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["acmeEmail", "ingressClassName", "stagingSecretName", "productionSecretName"],
+      "properties": {
+        "acmeEmail": {"type": "string", "format": "email"},
+        "ingressClassName": {"type": "string", "const": "traefik"},
+        "stagingSecretName": {"type": "string", "const": "harbor-staging-tls"},
+        "productionSecretName": {"type": "string", "const": "tls-harbor-ingress"}
+      }
+    },
+    "harbor": {
+      "type": "object",
+      "required": ["enabled", "fullnameOverride", "externalURL", "expose", "trivy", "database", "metrics"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "fullnameOverride": {"type": "string", "const": "harbor"},
+        "externalURL": {"type": "string", "pattern": "^https://harbor\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.sslip\\.io$"},
+        "expose": {
+          "type": "object",
+          "properties": {
+            "type": {"const": "ingress"},
+            "ingress": {
+              "type": "object",
+              "properties": {
+                "className": {"const": "traefik"},
+                "hosts": {
+                  "type": "object",
+                  "properties": {
+                    "core": {"type": "string", "pattern": "^harbor\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.sslip\\.io$"}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "trivy": {"type": "object", "properties": {"enabled": {"const": true}, "insecure": {"const": false}}},
+        "database": {"type": "object", "properties": {"type": {"const": "external"}}},
+        "metrics": {"type": "object", "properties": {"enabled": {"const": true}}}
+      }
+    }
+  }
+}

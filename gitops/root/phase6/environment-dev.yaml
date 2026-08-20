@@ -1,0 +1,17 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-dev-foundation
+  namespace: argocd
+  annotations: {argocd.argoproj.io/sync-wave: "0"}
+spec:
+  project: foundation
+  source:
+    repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+    targetRevision: main
+    path: environments/dev/namespace
+  destination: {server: https://kubernetes.default.svc, namespace: demo-dev}
+  syncPolicy:
+    automated: {prune: false, selfHeal: true, allowEmpty: false}
+    syncOptions: [SkipDryRunOnMissingResource=true, PruneLast=true]

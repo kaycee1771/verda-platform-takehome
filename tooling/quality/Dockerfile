@@ -1,8 +1,9 @@
-# syntax=docker/dockerfile:1.7
 FROM python:3.13.11-slim-bookworm@sha256:20080e807bfc404f8450b185cf0fc95d553462673598549613735f70a5b4d5d0
 
 ARG AQUA_VERSION=2.62.3
 ARG AQUA_SHA256=89cb081adb19e425b1dca6b16d912c349a43535ce88d8713050738c9263618d0
+ARG GO_VERSION=1.26.0
+ARG GO_LINUX_AMD64_SHA256=aac1b08a0fb0c4e0a7c1555beb7b59180b05dfc5a3d62e40e9de90cd42f88235
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -28,8 +29,15 @@ RUN curl --fail --silent --show-error --location \
     && tar --extract --gzip --file /tmp/aqua.tar.gz --directory /usr/local/bin aqua \
     && rm /tmp/aqua.tar.gz
 
+RUN curl --fail --silent --show-error --location \
+      "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+      --output /tmp/go.tar.gz \
+    && echo "${GO_LINUX_AMD64_SHA256}  /tmp/go.tar.gz" | sha256sum --check --strict \
+    && tar --extract --gzip --file /tmp/go.tar.gz --directory /usr/local \
+    && rm /tmp/go.tar.gz
+
 ENV AQUA_ROOT_DIR=/opt/aqua
-ENV PATH=/opt/aqua/bin:${PATH}
+ENV PATH=/usr/local/go/bin:/opt/aqua/bin:${PATH}
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV DEBIAN_FRONTEND=noninteractive
 

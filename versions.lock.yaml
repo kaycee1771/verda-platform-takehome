@@ -2,6 +2,7 @@
 schema_version: 2
 as_of: "2026-08-19"
 compatibility_review_status: "phase-5-live-verified"
+phase6_image_manifests_verified_at: "2026-08-20"
 
 platform:
   project: "verda-platform-takehome"
@@ -118,6 +119,24 @@ helm_charts:
     version: "2.14.3"
     app_version: "v2.14.3"
     source: "https://releases.rancher.com/server-charts/stable/index.yaml"
+    archive_url: >-
+      https://releases.rancher.com/server-charts/stable/rancher-2.14.3.tgz
+    archive_sha256: "65d4505a3547e7ee5179f14345377137e826541b4daf19c6a7575517f992daf6"
+    archive_digest_source: "https://releases.rancher.com/server-charts/stable/index.yaml"
+    kube_version_constraint: "<1.36.0-0"
+    compatibility_source: >-
+      https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/rancher-v2-14-3/
+    selection_status: "phase-6-provenance-verified-capacity-and-live-compatibility-pending"
+    images:
+      rancher:
+        reference: docker.io/rancher/rancher:v2.14.3
+        digest: sha256:5d0354e95d55f92da0f3c0fdcf59c07dacfe5bda886aac5273da4ca98c8c1376
+      audit:
+        reference: docker.io/rancher/mirrored-bci-micro:15.6.24.2
+        digest: sha256:6d9cbebabbf60987f7976263b193337bbb69d8408c5ed89df56c09ef30cece9f
+      shell:
+        reference: docker.io/rancher/shell:v0.7.1
+        digest: sha256:f2326fe57fd60b11543dc04718d3fa56dad975a89b60c7550fceac9c22269a60
   longhorn:
     version: "1.12.1"
     app_version: "v1.12.1"
@@ -171,23 +190,180 @@ helm_charts:
   harbor:
     version: "1.19.2"
     app_version: "2.15.2"
-    source: "https://github.com/goharbor/harbor-helm/releases/tag/v1.19.2"
+    source: "https://helm.goharbor.io/index.yaml"
+    archive_url: "https://helm.goharbor.io/harbor-1.19.2.tgz"
+    archive_sha256: "36d8eeb41b4df1aeff18c9af7709110a2fac2194b491d37957822b3359cd5e9a"
+    archive_digest_source: "https://helm.goharbor.io/index.yaml"
+    kube_version_constraint: null
+    compatibility_source: >-
+      https://raw.githubusercontent.com/goharbor/harbor-helm/v1.19.2/Chart.yaml
+    selection_status: "phase-6-provenance-verified-capacity-and-live-compatibility-pending"
+    images:
+      portal:
+        reference: docker.io/goharbor/harbor-portal:v2.15.2
+        digest: sha256:b811b67f7a7f6f1614e4bdf7478b207d13e8aa3f815ff6ad84f216a5098d213d
+      core:
+        reference: docker.io/goharbor/harbor-core:v2.15.2
+        digest: sha256:d7b780d23721a000f0fb8e181add6675eafa336de5d033b77fd7da0c171ff7f7
+      jobservice:
+        reference: docker.io/goharbor/harbor-jobservice:v2.15.2
+        digest: sha256:f71a4452a095bcd2a8f0683648a3ae28415432df87ccfb00ec7625f3e340a598
+      registry:
+        reference: docker.io/goharbor/registry-photon:v2.15.2
+        digest: sha256:c4ebef61ceb50a3d8bc21d149bc280422db20a1e69df317b64b74098c3615855
+      registryctl:
+        reference: docker.io/goharbor/harbor-registryctl:v2.15.2
+        digest: sha256:223d5cb49d5dbf0ba4ae022e7dd9775fa459904112dc12084d3aaa36c1408362
+      trivy:
+        reference: docker.io/goharbor/trivy-adapter-photon:v2.15.2
+        digest: sha256:215c07b71c37fc7fc16e02d9185d936dcb8884a80e810817c2cd058bbd7c4e98
+      valkey:
+        reference: docker.io/goharbor/valkey-photon:v2.15.2
+        digest: sha256:7337783e8148f01a25b113f5c7b1d640f78b1860fcaf80a33d0dbb294f7b99d0
+      exporter:
+        reference: docker.io/goharbor/harbor-exporter:v2.15.2
+        digest: sha256:e1b0a248f61aad5084c5d1612d5f1da89f99c23ce743eaf8cba913d6d00c0547
+      postgresql:
+        reference: docker.io/library/postgres:15.10-bookworm
+        digest: sha256:d609c3005478af92bddad773423df829b7402ea0b356d5b72edd2fd54d1ad3ea
   kube_prometheus_stack:
     version: "88.3.0"
     app_version: "v0.93.0"
     source: "https://prometheus-community.github.io/helm-charts/index.yaml"
-  loki: {version: "7.3.0", app_version: "3.6.12", source: "https://grafana.github.io/helm-charts/index.yaml"}
-  alloy: {version: "1.11.1", app_version: "v1.18.1", source: "https://grafana.github.io/helm-charts/index.yaml"}
+    archive_url: >-
+      https://github.com/prometheus-community/helm-charts/releases/download/kube-prometheus-stack-88.3.0/kube-prometheus-stack-88.3.0.tgz
+    archive_sha256: "5609de52e7af33792e6c6678b9443cacaec0cd81feacc956f6da0209a7463cba"
+    archive_digest_source: "https://prometheus-community.github.io/helm-charts/index.yaml"
+    kube_version_constraint: ">=1.25.0-0"
+    compatibility_source: >-
+      https://raw.githubusercontent.com/prometheus-community/helm-charts/kube-prometheus-stack-88.3.0/charts/kube-prometheus-stack/Chart.yaml
+    selection_status: "phase-6-provenance-verified-capacity-and-live-compatibility-pending"
+    images:
+      alertmanager:
+        reference: quay.io/prometheus/alertmanager:v0.33.1
+        digest: sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d
+      grafana:
+        reference: docker.io/grafana/grafana:13.1.3
+        digest: sha256:ab5cb380e3ff3172d6c8bd2e7cfd31cce977d2881b260e1f5bc089bf0b759b43
+      grafana_sidecar:
+        reference: quay.io/kiwigrid/k8s-sidecar:2.10.1
+        digest: sha256:7eac5c4fed714a18d038fc9fea57d8744d113367935dac0ea4eb6a87cef704a3
+      kube_state_metrics:
+        reference: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1
+        digest: sha256:85108987d044b18a098126732f98602df408888c0f7d456241f5abefb9744bc1
+      node_exporter:
+        reference: quay.io/prometheus/node-exporter:v1.12.1-distroless
+        digest: sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106
+      prometheus:
+        reference: quay.io/prometheus/prometheus:v3.13.2-distroless
+        digest: sha256:64f71bb84e03c855948418b0fc5dea53e9543d8e3fc9931598f583805507f05e
+      config_reloader:
+        reference: quay.io/prometheus-operator/prometheus-config-reloader:v0.93.0
+        digest: sha256:0ccb22ca9f3f6fd9f76ce95585d18bd2e363d421c534dde710be4bd13caa551d
+      operator:
+        reference: quay.io/prometheus-operator/prometheus-operator:v0.93.0
+        digest: sha256:a001ed10a3823bbf2410ea347796d0e35ff8decd24fb98acbe7ab9e98d431c39
+      thanos:
+        reference: quay.io/thanos/thanos:v0.42.4
+        digest: sha256:b567818fe608067eb0f1d7c2c4fe361e7ad83c8a256234c97685f1d0bf670cc8
+  loki:
+    version: "7.3.0"
+    app_version: "3.6.12"
+    source: "https://grafana.github.io/helm-charts/index.yaml"
+    archive_url: >-
+      https://github.com/grafana/helm-charts/releases/download/helm-loki-7.3.0/loki-7.3.0.tgz
+    archive_sha256: "04a339f712d770a1f599f05fc0a5a3cde18e43914e49ae6a49f7171be86bcc09"
+    archive_digest_source: "https://grafana.github.io/helm-charts/index.yaml"
+    kube_version_constraint: null
+    compatibility_source: >-
+      https://raw.githubusercontent.com/grafana/loki/helm-loki-7.3.0/production/helm/loki/Chart.yaml
+    selection_status: "phase-6-provenance-verified-capacity-and-live-compatibility-pending"
+    images:
+      loki:
+        reference: docker.io/grafana/loki:3.6.12
+        digest: sha256:2483b71b28b15dee230f85512cae2b20c4b5f6e98a6eabe686cbccfa5ea3ba4a
+      gateway:
+        reference: docker.io/nginxinc/nginx-unprivileged:1.29-alpine
+        digest: sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+  alloy:
+    version: "1.11.1"
+    app_version: "v1.18.1"
+    source: "https://grafana.github.io/helm-charts/index.yaml"
+    archive_url: >-
+      https://github.com/grafana/helm-charts/releases/download/alloy-1.11.1/alloy-1.11.1.tgz
+    archive_sha256: "cc4cd48a885c070fe8b2929971552852375c11e92d95fc6337d0c3fa277ac575"
+    archive_digest_source: "https://grafana.github.io/helm-charts/index.yaml"
+    kube_version_constraint: null
+    compatibility_source: >-
+      https://raw.githubusercontent.com/grafana/alloy/v1.18.1/operations/helm/charts/alloy/Chart.yaml
+    selection_status: "phase-6-provenance-verified-capacity-and-live-compatibility-pending"
+    images:
+      alloy:
+        reference: docker.io/grafana/alloy:v1.18.1
+        digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
   sealed_secrets:
     version: "2.19.0"
     app_version: "0.38.1"
-    source_ref: "v0.38.1"
-    source: "https://github.com/bitnami-labs/sealed-secrets/releases/tag/v0.38.1"
+    source_ref: "helm-v2.19.0"
+    source: "https://bitnami.github.io/sealed-secrets/index.yaml"
+    archive_url: >-
+      https://github.com/bitnami/sealed-secrets/releases/download/helm-v2.19.0/sealed-secrets-2.19.0.tgz
+    archive_sha256: "b624623176637273e584791b7bc13b0357dbeca999e4a96ba4013440bb7699b6"
+    archive_digest_source: "https://bitnami.github.io/sealed-secrets/index.yaml"
+    kube_version_constraint: ">=1.16.0-0"
+    compatibility_source: >-
+      https://raw.githubusercontent.com/bitnami/sealed-secrets/helm-v2.19.0/helm/sealed-secrets/Chart.yaml
+    selection_status: "phase-6-provenance-verified-capacity-and-live-compatibility-pending"
+    images:
+      controller:
+        reference: ghcr.io/bitnami/sealed-secrets-controller:0.38.1
+        digest: sha256:2d18b78e3410c80e6d4163def168a774f36fda74f3b3ea225f0547f99a08e23b
   kyverno:
     version: "3.8.2"
     app_version: "v1.18.2"
-    source: "https://raw.githubusercontent.com/kyverno/kyverno/v1.18.2/charts/kyverno/Chart.yaml"
-  velero: {version: "12.1.0", app_version: "1.18.1", source: "https://vmware-tanzu.github.io/helm-charts/index.yaml"}
+    source: "https://kyverno.github.io/kyverno/index.yaml"
+    archive_url: "https://kyverno.github.io/kyverno/kyverno-3.8.2.tgz"
+    archive_sha256: "f4fc787cf1d6781eefb9e9b45837edcddcfae984c872888289914e97207cc5de"
+    archive_digest_source: "https://kyverno.github.io/kyverno/index.yaml"
+    kube_version_constraint: ">=1.25.0-0"
+    compatibility_source: >-
+      https://raw.githubusercontent.com/kyverno/kyverno/v1.18.2/charts/kyverno/Chart.yaml
+    selection_status: "phase-6-provenance-verified-capacity-and-live-compatibility-pending"
+    images:
+      admission_init:
+        reference: reg.kyverno.io/kyverno/kyvernopre:v1.18.2
+        digest: sha256:cd8cb4a31d25b3992734fb8f24a90ef691c90ce49338c89bea96792160eacb98
+      admission:
+        reference: reg.kyverno.io/kyverno/kyverno:v1.18.2
+        digest: sha256:0a540e2ddf74d0d2d3d45f9ef248d7dbc96576accdbcc6a2dd7eaff9fea56504
+      background:
+        reference: reg.kyverno.io/kyverno/background-controller:v1.18.2
+        digest: sha256:d62566ce41bd0d4a32bf2cf44b9ebfc02c36374f821f83070890287f62f68671
+      reports:
+        reference: reg.kyverno.io/kyverno/reports-controller:v1.18.2
+        digest: sha256:f09cf305170014e191b94e1c54f5be73163d8824eefad49349675c4efe43159a
+      readiness_checker:
+        reference: ghcr.io/kyverno/readiness-checker:v1.18.2
+        digest: sha256:4fb1870b1a4adfed0fa7a32b7c3bcaf736fb889c7e1947ee8b20710bc2f5a5ce
+  velero:
+    version: "12.1.0"
+    app_version: "1.18.1"
+    source: "https://vmware-tanzu.github.io/helm-charts/index.yaml"
+    archive_url: >-
+      https://github.com/vmware-tanzu/helm-charts/releases/download/velero-12.1.0/velero-12.1.0.tgz
+    archive_sha256: "cd23589ad1b2d25cdd3220f6866b3f6f4c5683c4c09494e76a14700b33f81f83"
+    archive_digest_source: "https://vmware-tanzu.github.io/helm-charts/index.yaml"
+    kube_version_constraint: ">=1.16.0-0"
+    compatibility_source: >-
+      https://raw.githubusercontent.com/vmware-tanzu/helm-charts/velero-12.1.0/charts/velero/Chart.yaml
+    selection_status: "phase-6-provenance-verified-capacity-and-live-compatibility-pending"
+    images:
+      controller_and_node_agent:
+        reference: docker.io/velero/velero:v1.18.1
+        digest: sha256:11459094b1b21ec7c817b08f8067d9e89380835547915cac9c4132ff05b55b90
+      aws_plugin:
+        reference: docker.io/velero/velero-plugin-for-aws:v1.14.0
+        digest: sha256:7e82f717f44e89671212e0dfce7e061321c386ea84a33bca64a671670ca6c278
   kueue:
     version: "0.19.1"
     app_version: "v0.19.1"
@@ -195,6 +371,7 @@ helm_charts:
 
 quality_tools:
   aqua: {version: "2.62.3", command: "aqua", version_args: ["--version"]}
+  go: {version: "1.26.0", command: "go", version_args: ["version"]}
   terraform: {version: "1.15.8", command: "terraform", version_args: ["version"]}
   tflint: {version: "0.64.0", command: "tflint", version_args: ["--version"]}
   trivy: {version: "0.74.0", command: "trivy", version_args: ["--version"]}
@@ -216,6 +393,10 @@ quality_tools:
 tool_delivery:
   quality_image: "verda-platform-quality:phase1-2026-08-16"
   base_image: "python:3.13.11-slim-bookworm@sha256:20080e807bfc404f8450b185cf0fc95d553462673598549613735f70a5b4d5d0"
+  go_toolchain:
+    version: "1.26.0"
+    source: "https://go.dev/dl/go1.26.0.linux-amd64.tar.gz"
+    linux_amd64_sha256: aac1b08a0fb0c4e0a7c1555beb7b59180b05dfc5a3d62e40e9de90cd42f88235
   aqua_registry_ref: "v4.552.0"
   aqua_registry_commit: "2dd9bbf64c7a550c0cbf45fabde630797efc001f"
   validation_network: "none"
@@ -237,6 +418,9 @@ images:
   verda_os_image_name: "Ubuntu 24.04 LTS Minimal"
   demo_base_reference: null
   demo_base_status: "deferred-until-application-build-phase"
+  stage_a_smoke_builder_reference: >-
+    docker.io/library/golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c
+  stage_a_smoke_builder_status: "phase-6-registry-manifest-verified"
 
 ci_actions:
   checkout:

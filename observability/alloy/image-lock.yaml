@@ -1,0 +1,22 @@
+---
+schema_version: 1
+activation_status: blocked
+chart:
+  name: alloy
+  version: 1.11.1
+  app_version: v1.18.1
+  archive_sha256: cc4cd48a885c070fe8b2929971552852375c11e92d95fc6337d0c3fa277ac575
+required_images:
+  - role: alloy
+    repository: docker.io/grafana/alloy
+    tag: v1.18.1
+    digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
+    digest_provenance: registry-v2-manifest-response-2026-08-20
+blocking_gates:
+  immutable_image_digest_locked: true
+  immutable_image_provenance_recorded: true
+  loki_activation_contract_ready: false
+  live_api_server_egress_destination_proven: false
+  logging_namespace_default_deny_proven: false
+  capacity_admission_passed: false
+  root_application_allowed: false
