@@ -8,8 +8,10 @@ import datetime as dt
 import importlib.util
 import json
 import pathlib
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).parents[2]
@@ -19,6 +21,16 @@ SPEC = importlib.util.spec_from_file_location("phase6_resize", SCRIPT)
 assert SPEC and SPEC.loader
 RESIZE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RESIZE)
+COLLECTOR_SCRIPT = ROOT / "scripts" / "phase6" / "management-resize-collector.py"
+COLLECTOR_SPEC = importlib.util.spec_from_file_location("phase6_resize_collector", COLLECTOR_SCRIPT)
+assert COLLECTOR_SPEC and COLLECTOR_SPEC.loader
+COLLECTOR = importlib.util.module_from_spec(COLLECTOR_SPEC)
+COLLECTOR_SPEC.loader.exec_module(COLLECTOR)
+INVENTORY_SCRIPT = ROOT / "scripts" / "phase6" / "generate-resize-inventory.py"
+INVENTORY_SPEC = importlib.util.spec_from_file_location("phase6_resize_inventory", INVENTORY_SCRIPT)
+assert INVENTORY_SPEC and INVENTORY_SPEC.loader
+INVENTORY = importlib.util.module_from_spec(INVENTORY_SPEC)
+INVENTORY_SPEC.loader.exec_module(INVENTORY)
 NOW = dt.datetime(2026, 8, 20, 12, 0, tzinfo=dt.timezone.utc)
 COMMIT = "a" * 40
 AUTHOR = "b" * 64
@@ -59,6 +71,14 @@ def plan(node: str = "03", direction: str = "resize") -> dict:
         }
 
     return {
+        "complete": True,
+        "applyable": True,
+        "errored": False,
+        "resource_drift": [],
+        "timestamp": NOW.isoformat(),
+        "terraform_version": "1.15.8",
+        "configuration": {"root_module": {"module_calls": {}}},
+        "prior_state": {"format_version": "1.0", "values": {}},
         "resource_changes": [
             {
                 "address": f'module.management.module.node["{node}"].verda_instance.this',
@@ -74,13 +94,20 @@ def plan(node: str = "03", direction: str = "resize") -> dict:
 
 
 def progress(resized: list[str] | None = None, rolled_back: list[str] | None = None, in_flight: str | None = None) -> dict:
+    operation_id = "e" * 64 if in_flight else None
     return {
         "schema_version": 1,
         "integrated_commit": COMMIT,
         "completed_resize_nodes": resized or [],
         "completed_rollback_nodes": rolled_back or [],
+        "generation": 1,
+        "used_operation_ids": [operation_id] if operation_id else [],
         "in_flight_node": in_flight,
         "in_flight_direction": "resize" if in_flight else None,
+        "in_flight_operation_id": operation_id,
+        "in_flight_plan_sha256": "f" * 64 if in_flight else None,
+        "in_flight_recovery_sha256": None,
+        "in_flight_started_at": NOW.isoformat() if in_flight else None,
     }
 
 
@@ -146,8 +173,8 @@ class SerialProgressTests(unittest.TestCase):
 
 class PlanTests(unittest.TestCase):
     def test_exact_single_node_resize_and_rollback_pass(self) -> None:
-        resized = RESIZE.assert_plan(plan(), active_contract(), "03", "resize")
-        rolled_back = RESIZE.assert_plan(plan("01", "rollback"), active_contract(), "01", "rollback")
+        resized = RESIZE.assert_plan(plan(), active_contract(), "03", "resize", NOW)
+        rolled_back = RESIZE.assert_plan(plan("01", "rollback"), active_contract(), "01", "rollback", NOW)
         self.assertEqual(resized["target_instance_type"], "CPU.8V.32G")
         self.assertEqual(rolled_back["target_instance_type"], "CPU.4V.16G")
 
@@ -155,25 +182,134 @@ class PlanTests(unittest.TestCase):
         candidate = plan()
         candidate["resource_changes"].append(copy.deepcopy(candidate["resource_changes"][0]))
         with self.assertRaisesRegex(RESIZE.ResizeRefused, "exactly one"):
-            RESIZE.assert_plan(candidate, active_contract(), "03", "resize")
+            RESIZE.assert_plan(candidate, active_contract(), "03", "resize", NOW)
 
     def test_wrong_node_or_shape_is_rejected(self) -> None:
         with self.assertRaises(RESIZE.ResizeRefused):
-            RESIZE.assert_plan(plan("02"), active_contract(), "03", "resize")
+            RESIZE.assert_plan(plan("02"), active_contract(), "03", "resize", NOW)
         candidate = plan()
         candidate["resource_changes"][0]["change"]["after"]["instance_type"] = "CPU.16V.64G"
         with self.assertRaises(RESIZE.ResizeRefused):
-            RESIZE.assert_plan(candidate, active_contract(), "03", "resize")
+            RESIZE.assert_plan(candidate, active_contract(), "03", "resize", NOW)
 
     def test_data_volume_or_ssh_key_change_is_rejected(self) -> None:
         candidate = plan()
         candidate["resource_changes"][0]["change"]["after"]["existing_volumes"] = ["other"]
         with self.assertRaisesRegex(RESIZE.ResizeRefused, "data volume"):
-            RESIZE.assert_plan(candidate, active_contract(), "03", "resize")
+            RESIZE.assert_plan(candidate, active_contract(), "03", "resize", NOW)
         candidate = plan()
         candidate["resource_changes"][0]["change"]["after"]["ssh_key_ids"] = ["other"]
         with self.assertRaisesRegex(RESIZE.ResizeRefused, "SSH key"):
-            RESIZE.assert_plan(candidate, active_contract(), "03", "resize")
+            RESIZE.assert_plan(candidate, active_contract(), "03", "resize", NOW)
+
+    def test_incomplete_drifted_targeted_or_stale_plan_is_rejected(self) -> None:
+        defects = [
+            ("complete", False),
+            ("applyable", False),
+            ("errored", True),
+            ("resource_drift", [{"address": "redacted"}]),
+            ("target_addrs", ["redacted"]),
+            ("timestamp", (NOW - dt.timedelta(hours=2)).isoformat()),
+            ("terraform_version", "1.14.9"),
+        ]
+        for key, value in defects:
+            with self.subTest(key=key):
+                candidate = plan()
+                candidate[key] = value
+                with self.assertRaises(RESIZE.ResizeRefused):
+                    RESIZE.assert_plan(candidate, active_contract(), "03", "resize", NOW)
+
+    def test_create_before_delete_and_missing_configuration_are_rejected(self) -> None:
+        candidate = plan()
+        candidate["resource_changes"][0]["change"]["actions"] = ["create", "delete"]
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "delete-then-create"):
+            RESIZE.assert_plan(candidate, active_contract(), "03", "resize", NOW)
+        candidate = plan()
+        candidate["configuration"] = {}
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "configuration"):
+            RESIZE.assert_plan(candidate, active_contract(), "03", "resize", NOW)
+
+
+class JournalAndLeaseTests(unittest.TestCase):
+    def test_nonce_is_used_once_and_postflight_is_hash_bound(self) -> None:
+        contract = active_contract()
+        operation = "1" * 64
+        plan_sha = "2" * 64
+        recovery_sha = "3" * 64
+        applied = RESIZE.transition_progress(
+            progress(), contract, event="apply", direction="resize", node="03",
+            operation_id=operation, plan_sha256=plan_sha, captured_at=NOW.isoformat(),
+        )
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "consumed"):
+            RESIZE.transition_progress(
+                applied, contract, event="apply", direction="resize", node="03",
+                operation_id=operation, plan_sha256=plan_sha,
+            )
+        recovered = RESIZE.transition_progress(
+            applied, contract, event="recovery", direction="resize", node="03",
+            operation_id=operation, plan_sha256=plan_sha, recovery_sha256=recovery_sha,
+        )
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "stale"):
+            RESIZE.transition_progress(
+                recovered, contract, event="postflight", direction="resize", node="03",
+                operation_id=operation, plan_sha256="4" * 64, recovery_sha256=recovery_sha,
+            )
+        completed = RESIZE.transition_progress(
+            recovered, contract, event="postflight", direction="resize", node="03",
+            operation_id=operation, plan_sha256=plan_sha, recovery_sha256=recovery_sha,
+        )
+        self.assertEqual(completed["completed_resize_nodes"], ["03"])
+        self.assertIsNone(completed["in_flight_node"])
+
+    def test_immediate_rollback_transition_is_reachable(self) -> None:
+        contract = active_contract()
+        applied = RESIZE.transition_progress(
+            progress(), contract, event="apply", direction="resize", node="03",
+            operation_id="1" * 64, plan_sha256="2" * 64, captured_at=NOW.isoformat(),
+        )
+        rollback = RESIZE.transition_progress(
+            applied, contract, event="apply", direction="rollback", node="03",
+            operation_id="3" * 64, plan_sha256="4" * 64, captured_at=NOW.isoformat(),
+        )
+        self.assertEqual(rollback["in_flight_direction"], "rollback")
+        self.assertEqual(rollback["in_flight_node"], "03")
+        recovered = RESIZE.transition_progress(
+            rollback, contract, event="recovery", direction="rollback", node="03",
+            operation_id="3" * 64, plan_sha256="4" * 64, recovery_sha256="5" * 64,
+        )
+        completed = RESIZE.transition_progress(
+            recovered, contract, event="postflight", direction="rollback", node="03",
+            operation_id="3" * 64, plan_sha256="4" * 64, recovery_sha256="5" * 64,
+        )
+        self.assertEqual(completed["completed_resize_nodes"], [])
+        self.assertEqual(completed["completed_rollback_nodes"], [])
+        self.assertEqual(RESIZE.expected_node(contract, completed, "resize"), "03")
+
+    def test_os_exclusive_lease_rejects_a_second_holder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "phase6.lock"
+            with RESIZE.ExclusiveLease(path, "1" * 64):
+                with self.assertRaisesRegex(RESIZE.ResizeRefused, "OS-exclusive"):
+                    with RESIZE.ExclusiveLease(path, "2" * 64):
+                        self.fail("second lock unexpectedly acquired")
+
+    def test_reviewed_worktree_must_be_exactly_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = pathlib.Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+            subprocess.run(["git", "config", "user.email", "phase6@example.invalid"], cwd=repository, check=True)
+            subprocess.run(["git", "config", "user.name", "Phase6 Test"], cwd=repository, check=True)
+            tracked = repository / "critical.txt"
+            tracked.write_text("reviewed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "critical.txt"], cwd=repository, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=repository, check=True)
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True,
+            ).stdout.strip()
+            RESIZE.assert_clean_reviewed_worktree(repository, commit)
+            tracked.write_text("dirty\n", encoding="utf-8")
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "not exactly clean"):
+                RESIZE.assert_clean_reviewed_worktree(repository, commit)
 
 
 class GateTests(unittest.TestCase):
@@ -313,61 +449,121 @@ class RecoverySourceTests(unittest.TestCase):
         self.assertNotIn('"-target', controller)
         self.assertNotIn('"-replace', controller)
 
-    def test_recovery_admission_binds_strict_external_inventory(self) -> None:
-        with tempfile.TemporaryDirectory() as repo_name, tempfile.TemporaryDirectory() as external_name:
-            repo = pathlib.Path(repo_name)
-            external = pathlib.Path(external_name)
-            contract = active_contract()
-            contract_path = repo / "contract.json"
-            progress_path = repo / "progress.json"
-            recovery_path = repo / "recovery.json"
-            lease_path = repo / "lease.json"
-            inventory_path = external / "inventory.yml"
-            private_key = external / "id_ed25519"
-            known_hosts = external / "known_hosts"
-            runtime_vars = external / "runtime.yml"
-            contract_path.write_text(json.dumps(contract), encoding="utf-8")
-            in_flight = progress(in_flight="03")
-            progress_path.write_text(json.dumps(in_flight), encoding="utf-8")
-            recovery = {
-                "schema_version": 1, "phase": 6, "cluster": "management", "integrated_commit": COMMIT,
-                "node": "03", "captured_at": NOW.isoformat(), "checks": contract["required_recovery"],
+    def test_live_recovery_is_unconditionally_disabled(self) -> None:
+        with self.assertRaisesRegex(RESIZE.ResizeRefused, "pinned container runner"):
+            RESIZE.recovery_admission(
+                contract_path=pathlib.Path("unused"), progress_path=pathlib.Path("unused"),
+                recovery_path=pathlib.Path("unused"), lease_path=pathlib.Path("unused"),
+                direction="resize", git_commit=COMMIT, repository=ROOT,
+                inventory_path=pathlib.Path("unused"), private_key_path=pathlib.Path("unused"),
+                known_hosts_path=pathlib.Path("unused"), runtime_vars_path=pathlib.Path("unused"), now=NOW,
+            )
+
+    def test_cli_exposes_no_mutating_or_recovery_action(self) -> None:
+        parser = RESIZE.build_parser()
+        choices = next(action.choices for action in parser._actions if getattr(action, "choices", None))
+        self.assertEqual(set(choices), {"validate-contract"})
+        phase2 = (ROOT / "scripts" / "infra" / "phase2.ps1").read_text()
+        apply_case = phase2.split("'phase6-resize-apply' {", 1)[1].split("}", 1)[0]
+        self.assertIn("intentionally disabled", apply_case)
+        self.assertNotIn("Invoke-Phase6ResizeApply", apply_case)
+
+
+class ProtectedStateSourceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = (ROOT / "scripts" / "infra" / "phase2.ps1").read_text(encoding="utf-8")
+
+    def section(self, start: str, end: str) -> str:
+        return self.source.split(start, 1)[1].split(end, 1)[0]
+
+    def test_phase6_has_explicit_plan_apply_output_boundaries(self) -> None:
+        self.assertIn("'phase6-resize-plan'", self.source)
+        self.assertIn("'phase6-resize-apply'", self.source)
+        self.assertIn("'phase6-resize-output'", self.source)
+        self.assertIn("Assert-OutsideRepository -Path $statePath", self.source)
+        self.assertIn("Close-SealedState -Paths $paths", self.source)
+        self.assertIn("$phase6ProtectedTarget -and $phase6StateOpened", self.source)
+
+    def test_plan_is_ordinary_saved_plan_and_exit_zero_is_refused(self) -> None:
+        section = self.section("function Invoke-Phase6ResizePlan", "function Invoke-Phase6ResizeApply")
+        self.assertIn("'-detailed-exitcode'", section)
+        self.assertIn("-AcceptedExitCodes @(2)", section)
+        self.assertNotIn("-target=", section)
+        self.assertNotIn("-replace=", section)
+
+    def test_apply_implementation_binds_open_plan_and_state_lifecycle(self) -> None:
+        section = self.section("function Invoke-Phase6ResizeApply", "function Invoke-Phase6ResizeOutput")
+        self.assertIn("[IO.FileShare]::Read", section)
+        self.assertIn("if ($planHash -ne $ExpectedPlanSha256)", section)
+        self.assertGreaterEqual(section.count("Backup-State -Paths $Paths"), 2)
+        self.assertIn("finally", section)
+        self.assertIn("$after.serial -le $before.serial", section)
+
+    def test_protected_terraform_does_not_tee_raw_output(self) -> None:
+        section = self.section("function Invoke-Phase6Terraform", "function Invoke-Phase6ResizePlan")
+        self.assertIn("*> $logPath", section)
+        self.assertNotIn("Tee-Object", section)
+        self.assertIn("raw diagnostic withheld", section)
+        self.assertIn("'init', '-reconfigure', '-input=false', '-lockfile=readonly'", section)
+        self.assertIn('"-backend-config=path=$($Paths.StatePath)"', section)
+
+    def test_output_is_state_bound_and_hashes_nonsecret_descriptors(self) -> None:
+        section = self.section("function Invoke-Phase6ResizeOutput", "function Invoke-Inventory")
+        for marker in (
+            "state_lineage_sha256", "state_serial", "inventory_sha256",
+            "known_hosts_sha256", "private_key_public_sha256",
+        ):
+            self.assertIn(marker, section)
+
+
+class TrustedInputAndCollectorTests(unittest.TestCase):
+    @staticmethod
+    def canonical_inventory() -> dict:
+        hosts = {}
+        for index in range(1, 4):
+            name = f"verda-mgmt-server-{index:02d}"
+            hosts[name] = {
+                "ansible_host": f"192.0.2.{index}", "ansible_user": "root", "node_name": name,
+                "role": "server", "internal_ip": f"10.0.0.{index}", "wireguard_ip": f"10.250.0.1{index}",
+                "data_volume_id": f"volume-{index}", "attached_device_id": f"volume-{index}",
+                "data_volume_size_gib": 100,
             }
-            recovery_path.write_text(json.dumps(recovery), encoding="utf-8")
-            lease_path.write_text(json.dumps({
-                "schema_version": 1, "phase": 6, "integrated_commit": COMMIT, "owner_digest": OWNER,
-                "writes_allowed": True, "expires_at": (NOW + dt.timedelta(minutes=5)).isoformat(),
-            }), encoding="utf-8")
-            private_key.write_text("opaque", encoding="utf-8")
-            known_hosts.write_text("hashed-host-key", encoding="utf-8")
-            runtime_vars.write_text("---\nphase3_admin_cidrs_v4: [192.0.2.1/32]\n", encoding="utf-8")
-            host_lines = []
-            for ordinal in ("01", "02", "03"):
-                host_lines.append(f"      verda-mgmt-server-{ordinal}:\n")
-            inventory_path.write_text(
-                "---\nall:\n  children:\n    management_servers:\n      hosts:\n"
-                + "".join(host_lines)
-                + f"ansible_ssh_private_key_file: {private_key.resolve()}\n"
-                + f"ansible_ssh_common_args: -o StrictHostKeyChecking=yes -o UserKnownHostsFile={known_hosts.resolve()}\n",
-                encoding="utf-8",
-            )
-            summary, command = RESIZE.recovery_admission(
-                contract_path=contract_path, progress_path=progress_path, recovery_path=recovery_path,
-                lease_path=lease_path, direction="resize", git_commit=COMMIT, repository=repo,
-                inventory_path=inventory_path, private_key_path=private_key, known_hosts_path=known_hosts,
-                runtime_vars_path=runtime_vars, now=NOW,
-            )
-            self.assertEqual(summary["node"], "03")
-            self.assertIn("recover-resized-management-node.yml", " ".join(command))
-            unsafe = inventory_path.read_text().replace("StrictHostKeyChecking=yes", "StrictHostKeyChecking=accept-new")
-            inventory_path.write_text(unsafe, encoding="utf-8")
-            with self.assertRaisesRegex(RESIZE.ResizeRefused, "host-key"):
-                RESIZE.recovery_admission(
-                    contract_path=contract_path, progress_path=progress_path, recovery_path=recovery_path,
-                    lease_path=lease_path, direction="resize", git_commit=COMMIT, repository=repo,
-                    inventory_path=inventory_path, private_key_path=private_key, known_hosts_path=known_hosts,
-                    runtime_vars_path=runtime_vars, now=NOW,
-                )
+        return {"all": {"children": {"management_servers": {"hosts": hosts}}}}
+
+    @mock.patch.object(INVENTORY.subprocess, "run")
+    def test_inventory_validation_rejects_duplicate_ip_and_attachment_drift(self, run: mock.Mock) -> None:
+        run.return_value.returncode = 0
+        candidate = self.canonical_inventory()
+        known_hosts = pathlib.Path("/protected/known_hosts")
+        INVENTORY.validate_inventory(candidate, known_hosts)
+        duplicate = copy.deepcopy(candidate)
+        duplicate["all"]["children"]["management_servers"]["hosts"]["verda-mgmt-server-03"]["ansible_host"] = "192.0.2.1"
+        with self.assertRaisesRegex(ValueError, "not unique"):
+            INVENTORY.validate_inventory(duplicate, known_hosts)
+        detached = copy.deepcopy(candidate)
+        detached["all"]["children"]["management_servers"]["hosts"]["verda-mgmt-server-03"]["attached_device_id"] = "other"
+        with self.assertRaisesRegex(ValueError, "attachment continuity"):
+            INVENTORY.validate_inventory(detached, known_hosts)
+
+    def test_collector_rejects_duplicate_yaml_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            inventory = pathlib.Path(directory) / "inventory.yml"
+            inventory.write_text("all:\n  all: duplicate\n", encoding="utf-8")
+            with self.assertRaises(COLLECTOR.CollectionError):
+                COLLECTOR.read_inventory(inventory)
+
+    def test_etcd_collector_proves_nonleader_from_fixed_topology(self) -> None:
+        members = {"members": [{"name": name} for name in COLLECTOR.NODES]}
+        statuses = []
+        for index, name in enumerate(COLLECTOR.NODES, start=1):
+            statuses.append({
+                "Endpoint": f"https://{COLLECTOR.WG_ADDRESSES[name]}:2379",
+                "Status": {"header": {"member_id": index}, "leader": 1},
+            })
+        facts = COLLECTOR.etcd_facts(statuses, members, "verda-mgmt-server-03")
+        self.assertTrue(facts["selected_node_is_not_current_etcd_leader"])
+        self.assertEqual(facts["etcd_healthy_members"], 3)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,18 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('init', 'plan', 'apply', 'repair-node-02-plan', 'repair-node-02-apply', 'inventory', 'verify-hosts', 'lifecycle-check', 'cost-report', 'state-audit', 'destroy')]
+    [ValidateSet('init', 'plan', 'apply', 'repair-node-02-plan', 'repair-node-02-apply', 'inventory', 'verify-hosts', 'lifecycle-check', 'cost-report', 'state-audit', 'destroy', 'phase6-resize-plan', 'phase6-resize-apply', 'phase6-resize-output')]
     [string]$Target,
     [ValidateSet('management')]
     [string]$Cluster = 'management',
-    [switch]$Confirm
+    [switch]$Confirm,
+    [string]$SavedPlan = '',
+    [string]$ExpectedPlanSha256 = '',
+    [string]$ExpectedStateLineageSha256 = '',
+    [long]$ExpectedStateSerial = -1,
+    [string]$OperationId = '',
+    [string]$InventoryOutput = '',
+    [string]$KnownHosts = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +30,32 @@ $noDriftSummary = Join-Path $reportRoot 'no-drift-summary.json'
 $rollbackSummary = Join-Path $reportRoot 'compute-rollback-summary.json'
 $repairSummary = Join-Path $reportRoot 'node-02-replacement-summary.json'
 New-Item -ItemType Directory -Force -Path $reportRoot, $logRoot | Out-Null
+
+function Get-CanonicalBoundaryPath {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $full = [IO.Path]::GetFullPath($Path)
+    $ancestor = $full
+    while (-not (Test-Path -LiteralPath $ancestor) -and $ancestor -ne [IO.Path]::GetPathRoot($ancestor)) {
+        $ancestor = Split-Path -Parent $ancestor
+    }
+    $resolvedAncestor = (Resolve-Path -LiteralPath $ancestor).Path
+    $relative = [IO.Path]::GetRelativePath($ancestor, $full)
+    [IO.Path]::GetFullPath((Join-Path $resolvedAncestor $relative))
+}
+
+function Assert-OutsideRepository {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Label)
+
+    $repo = Get-CanonicalBoundaryPath -Path $repoRoot
+    foreach ($candidate in @([IO.Path]::GetFullPath($Path), (Get-CanonicalBoundaryPath -Path $Path))) {
+        $prefix = $repo.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($candidate.Equals($repo, [StringComparison]::OrdinalIgnoreCase) -or
+            $candidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "$Label must resolve outside the repository."
+        }
+    }
+}
 
 function Get-ExternalPaths {
     if ($IsWindows) {
@@ -53,18 +86,15 @@ function Get-ExternalPaths {
 
     $base = [IO.Path]::GetFullPath($base)
     $backupBase = [IO.Path]::GetFullPath($backupBase)
-    $repoPrefix = $repoRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-    foreach ($candidate in @($base, $backupBase)) {
-        if ($candidate.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Phase 2 state, keys, and backups must resolve outside the repository."
-        }
-    }
+    Assert-OutsideRepository -Path $base -Label 'Phase 2 state/key base'
+    Assert-OutsideRepository -Path $backupBase -Label 'Phase 2 backup directory'
 
     $statePath = if ($env:VERDA_TF_STATE_PATH) {
         [IO.Path]::GetFullPath($env:VERDA_TF_STATE_PATH)
     } else {
         Join-Path $base 'terraform\management.tfstate'
     }
+    Assert-OutsideRepository -Path $statePath -Label 'Terraform state'
     $planPath = Join-Path $base 'terraform\management.tfplan'
     $rollbackPlanPath = Join-Path $base 'terraform\management-compute-rollback.tfplan'
     $repairPlanPath = Join-Path $base 'terraform\management-node-02-replacement.tfplan'
@@ -428,8 +458,9 @@ function Backup-State {
         throw "Terraform state is absent; encrypted backup cannot be created."
     }
     $stateBytes = [IO.File]::ReadAllBytes($Paths.StatePath)
-    $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
-    $backupPath = Join-Path $Paths.BackupDirectory "management-$timestamp.tfstate.dpapi"
+    $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ')
+    $backupNonce = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    $backupPath = Join-Path $Paths.BackupDirectory "management-$timestamp-$backupNonce.tfstate.dpapi"
     if ($IsWindows) {
         $encrypted = Protect-BytesForCurrentUser -Bytes $stateBytes
         [IO.File]::WriteAllBytes($backupPath, $encrypted)
@@ -449,6 +480,204 @@ function Backup-State {
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $backupPath).Hash.ToLowerInvariant()
     Set-Content -LiteralPath "$backupPath.sha256" -Value "$hash  $(Split-Path -Leaf $backupPath)" -Encoding utf8NoBOM
     Write-Host "[PASS] Independent encrypted state backup created and round-trip verified; path/value withheld."
+}
+
+function Get-Phase6StateReceipt {
+    param([Parameter(Mandatory)]$Paths)
+
+    if (-not (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf)) {
+        throw 'Terraform state is absent.'
+    }
+    $bytes = [IO.File]::ReadAllBytes($Paths.StatePath)
+    try {
+        $document = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json -Depth 100
+    } catch {
+        throw 'Terraform state is not valid JSON.'
+    }
+    if ($document.lineage -notmatch '^[0-9a-f-]{36}$' -or [int64]$document.serial -lt 0) {
+        throw 'Terraform state lineage or serial is invalid.'
+    }
+    [ordered]@{
+        state_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        lineage_sha256 = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes([string]$document.lineage))
+        ).ToLowerInvariant()
+        serial = [int64]$document.serial
+    }
+}
+
+function Assert-Phase6ControlArguments {
+    param([switch]$RequirePlanHash)
+    if ($OperationId -notmatch '^[0-9a-f]{64}$') { throw 'Phase 6 operation ID must be a SHA-256 nonce.' }
+    if (-not $SavedPlan) { throw 'An external Phase 6 saved plan path is required.' }
+    $script:SavedPlan = [IO.Path]::GetFullPath($SavedPlan)
+    Assert-OutsideRepository -Path $script:SavedPlan -Label 'Phase 6 saved plan'
+    if ($RequirePlanHash -and $ExpectedPlanSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'Expected plan SHA-256 is invalid.'
+    }
+    if ($ExpectedStateLineageSha256 -notmatch '^[0-9a-f]{64}$' -or $ExpectedStateSerial -lt 0) {
+        throw 'Expected Terraform state lineage/serial is invalid.'
+    }
+}
+
+function Invoke-Phase6Terraform {
+    param(
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][string]$LogName,
+        [int[]]$AcceptedExitCodes = @(0)
+    )
+
+    Protect-Directory -Path $logRoot
+    $env:NO_COLOR = '1'
+    $logPath = Join-Path $logRoot $LogName
+    & terraform "-chdir=$terraformRoot" @Arguments *> $logPath
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -notin $AcceptedExitCodes) {
+        throw "Protected Terraform command failed with exit code $exitCode; raw diagnostic withheld."
+    }
+    $exitCode
+}
+
+function Initialize-Phase6Terraform {
+    param([Parameter(Mandatory)]$Paths)
+
+    $env:TF_PLUGIN_CACHE_DIR = Join-Path $repoRoot '.local\terraform-plugin-cache'
+    New-Item -ItemType Directory -Force -Path $env:TF_PLUGIN_CACHE_DIR | Out-Null
+    Invoke-Phase6Terraform -Arguments @(
+        'init', '-reconfigure', '-input=false', '-lockfile=readonly',
+        "-backend-config=path=$($Paths.StatePath)"
+    ) -LogName 'phase6-init.log' | Out-Null
+}
+
+function Invoke-Phase6ResizePlan {
+    param([Parameter(Mandatory)]$Paths)
+
+    Assert-Phase6ControlArguments
+    Assert-Credentials
+    $receipt = Get-Phase6StateReceipt -Paths $Paths
+    if ($receipt.lineage_sha256 -ne $ExpectedStateLineageSha256 -or $receipt.serial -ne $ExpectedStateSerial) {
+        throw 'Terraform state lineage/serial differs from the reviewed planning boundary.'
+    }
+    Backup-State -Paths $Paths
+    $exitCode = Invoke-Phase6Terraform -Arguments @(
+        'plan', '-input=false', '-lock-timeout=60s', '-detailed-exitcode', "-out=$SavedPlan"
+    ) -LogName "phase6-plan-$OperationId.log" -AcceptedExitCodes @(2)
+    if ($exitCode -ne 2) { throw 'Phase 6 plan must contain exactly the reviewed non-empty change.' }
+    $planHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $SavedPlan).Hash.ToLowerInvariant()
+    [ordered]@{
+        schema_version = 1
+        status = 'PLAN_CREATED_REVIEW_REQUIRED'
+        operation_id = $OperationId
+        plan_sha256 = $planHash
+        state_lineage_sha256 = $receipt.lineage_sha256
+        state_serial = $receipt.serial
+        raw_values_recorded = $false
+    } | ConvertTo-Json -Compress
+}
+
+function Invoke-Phase6ResizeApply {
+    param([Parameter(Mandatory)]$Paths)
+
+    Assert-Phase6ControlArguments -RequirePlanHash
+    Assert-DestructiveConfirmation
+    Assert-Credentials
+    if (-not (Test-Path -LiteralPath $SavedPlan -PathType Leaf)) { throw 'Reviewed saved plan is absent.' }
+    $planStream = [IO.File]::Open($SavedPlan, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $planHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($planStream)).ToLowerInvariant()
+        if ($planHash -ne $ExpectedPlanSha256) { throw 'Saved plan bytes differ from independent review.' }
+        $before = Get-Phase6StateReceipt -Paths $Paths
+        if ($before.lineage_sha256 -ne $ExpectedStateLineageSha256 -or $before.serial -ne $ExpectedStateSerial) {
+            throw 'Terraform state lineage/serial differs from the reviewed apply boundary.'
+        }
+        Backup-State -Paths $Paths
+        try {
+            Invoke-Phase6Terraform -Arguments @(
+                'apply', '-input=false', '-lock-timeout=60s', $SavedPlan
+            ) -LogName "phase6-apply-$OperationId.log" | Out-Null
+        } finally {
+            if (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf) { Backup-State -Paths $Paths }
+        }
+        $after = Get-Phase6StateReceipt -Paths $Paths
+        if ($after.lineage_sha256 -ne $before.lineage_sha256 -or $after.serial -le $before.serial) {
+            throw 'Post-apply state lineage changed or serial did not advance.'
+        }
+        [ordered]@{
+            schema_version = 1
+            status = 'APPLY_COMPLETE_RECOVERY_REQUIRED'
+            operation_id = $OperationId
+            plan_sha256 = $planHash
+            state_lineage_sha256 = $after.lineage_sha256
+            state_serial_before = $before.serial
+            state_serial_after = $after.serial
+            raw_values_recorded = $false
+        } | ConvertTo-Json -Compress
+    } finally {
+        $planStream.Dispose()
+    }
+}
+
+function Invoke-Phase6ResizeOutput {
+    param([Parameter(Mandatory)]$Paths)
+
+    if ($OperationId -notmatch '^[0-9a-f]{64}$') { throw 'Phase 6 operation ID must be a SHA-256 nonce.' }
+    if ($ExpectedStateLineageSha256 -notmatch '^[0-9a-f]{64}$' -or $ExpectedStateSerial -lt 0) {
+        throw 'Expected Terraform state lineage/serial is invalid.'
+    }
+    if (-not $InventoryOutput -or -not $KnownHosts) { throw 'External inventory and known-hosts paths are required.' }
+    $inventoryDestination = [IO.Path]::GetFullPath($InventoryOutput)
+    $knownHostsPath = [IO.Path]::GetFullPath($KnownHosts)
+    Assert-OutsideRepository -Path $inventoryDestination -Label 'Phase 6 recovery inventory'
+    Assert-OutsideRepository -Path $knownHostsPath -Label 'Phase 6 known-hosts file'
+    Protect-Directory -Path (Split-Path -Parent $inventoryDestination)
+    if (-not (Test-Path -LiteralPath $knownHostsPath -PathType Leaf)) { throw 'Verified known-hosts file is absent.' }
+    if (-not (Test-Path -LiteralPath $Paths.SshPrivateKey -PathType Leaf)) { throw 'Protected SSH private key is absent.' }
+    if ($IsWindows) {
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $acl = Get-Acl -LiteralPath $Paths.SshPrivateKey
+        if (-not $acl.Owner.Equals($identity, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'SSH private-key ownership differs from the protected operator identity.'
+        }
+        $unexpectedAllow = @($acl.Access | Where-Object {
+            $_.AccessControlType -eq 'Allow' -and
+            $_.IdentityReference.Value -notin @($identity, 'NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')
+        })
+        if ($acl.AreAccessRulesProtected -ne $true -or $unexpectedAllow.Count -ne 0) {
+            throw 'SSH private-key ACL is not owner-exclusive.'
+        }
+    } else {
+        $protection = (& stat -c '%u:%a' -- $Paths.SshPrivateKey 2>$null).Trim()
+        $statExit = $LASTEXITCODE
+        $currentUid = (& id -u 2>$null).Trim()
+        $idExit = $LASTEXITCODE
+        if ($statExit -ne 0 -or $idExit -ne 0 -or $protection -notin @("${currentUid}:600", "${currentUid}:400")) {
+            throw 'SSH private-key owner or mode is not exact 0600/0400.'
+        }
+    }
+    $receipt = Get-Phase6StateReceipt -Paths $Paths
+    if ($receipt.lineage_sha256 -ne $ExpectedStateLineageSha256 -or $receipt.serial -ne $ExpectedStateSerial) {
+        throw 'Terraform state lineage/serial differs from the reviewed inventory boundary.'
+    }
+    $generatorOutput = & python (Join-Path $repoRoot 'scripts\phase6\generate-resize-inventory.py') `
+        --repository $repoRoot --terraform-root $terraformRoot --output $inventoryDestination `
+        --private-key $Paths.SshPrivateKey --known-hosts $knownHostsPath 2>&1
+    if ($LASTEXITCODE -ne 0) { throw 'Strict post-replacement inventory generation failed; raw diagnostic withheld.' }
+    $publicKey = & ssh-keygen -y -f $Paths.SshPrivateKey 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $publicKey) { throw 'Unable to derive SSH public-key metadata.' }
+    $publicKeyFingerprint = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($publicKey -join "`n").Trim()))
+    ).ToLowerInvariant()
+    [ordered]@{
+        schema_version = 1
+        status = 'STRICT_INVENTORY_CREATED_REVIEW_REQUIRED'
+        operation_id = $OperationId
+        state_lineage_sha256 = $receipt.lineage_sha256
+        state_serial = $receipt.serial
+        inventory_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $inventoryDestination).Hash.ToLowerInvariant()
+        known_hosts_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $knownHostsPath).Hash.ToLowerInvariant()
+        private_key_public_sha256 = $publicKeyFingerprint
+        raw_values_recorded = $false
+    } | ConvertTo-Json -Compress
 }
 
 function Invoke-Inventory {
@@ -536,10 +765,33 @@ function Write-LiveCostReport {
 }
 
 $paths = Get-ExternalPaths
-Write-Host "[phase 2] target=$Target cluster=$Cluster credentials=process-only cloud-mutation=$($Target -in @('apply', 'repair-node-02-apply', 'destroy'))"
+$phase6ProtectedTarget = $Target -in @('phase6-resize-plan', 'phase6-resize-apply', 'phase6-resize-output')
+$phase6StateOpened = $false
+if (-not $phase6ProtectedTarget) {
+    Write-Host "[phase 2] target=$Target cluster=$Cluster credentials=process-only cloud-mutation=$($Target -in @('apply', 'repair-node-02-apply', 'destroy'))"
+}
 
 try {
 switch ($Target) {
+    'phase6-resize-plan' {
+        Assert-Credentials
+        Initialize-LocalBoundary -Paths $paths 6>$null
+        Open-SealedState -Paths $paths 6>$null
+        $phase6StateOpened = $true
+        Initialize-Phase6Terraform -Paths $paths 6>$null
+        Invoke-Phase6ResizePlan -Paths $paths 6>$null
+    }
+    'phase6-resize-apply' {
+        throw 'Phase 6 apply is intentionally disabled until trusted collectors, pinned container recovery, and journal integration are complete.'
+    }
+    'phase6-resize-output' {
+        Assert-Credentials
+        Initialize-LocalBoundary -Paths $paths 6>$null
+        Open-SealedState -Paths $paths 6>$null
+        $phase6StateOpened = $true
+        Initialize-Phase6Terraform -Paths $paths 6>$null
+        Invoke-Phase6ResizeOutput -Paths $paths 6>$null
+    }
     'init' {
         Assert-Credentials
         Initialize-LocalBoundary -Paths $paths
@@ -671,5 +923,9 @@ switch ($Target) {
     }
 }
 } finally {
-    Close-SealedState -Paths $paths
+    if ($phase6ProtectedTarget -and $phase6StateOpened) {
+        Close-SealedState -Paths $paths 6>$null
+    } elseif (-not $phase6ProtectedTarget) {
+        Close-SealedState -Paths $paths
+    }
 }

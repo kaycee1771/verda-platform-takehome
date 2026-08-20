@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Fail-closed admission and execution boundary for a serial management resize.
+"""Fail-closed preparatory boundary for a future serial management resize.
 
 The controller never accepts credentials as arguments and never emits Terraform,
 Kubernetes, or provider output. Terraform and cluster authentication remain in
 the already-protected process environment. The checked-in contract is inert by
-default; activation requires an exact integrated commit and independent review.
+default. The CLI intentionally exposes contract validation only; no live
+mutation, recovery, or progress-advancement action is registered.
 """
 
 from __future__ import annotations
@@ -13,21 +14,83 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
 
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 NODE_RE = re.compile(r"^0[1-3]$")
-ALLOWED_ACTIONS = {("delete", "create"), ("create", "delete")}
 
 
 class ResizeRefused(RuntimeError):
     """A fail-closed admission refusal safe to present to an operator."""
+
+
+class ExclusiveLease:
+    """A real non-blocking OS lock, not an authorization JSON assertion."""
+
+    def __init__(self, path: pathlib.Path, operation_id: str) -> None:
+        self.path = path
+        self.operation_id = operation_id
+        self.handle: Any = None
+
+    def __enter__(self) -> "ExclusiveLease":
+        if not DIGEST_RE.fullmatch(self.operation_id):
+            refuse("OS-exclusive lease operation nonce is invalid")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = self.path.open("a+b")
+        self.handle.seek(0, os.SEEK_END)
+        if self.handle.tell() == 0:
+            self.handle.write(b"\0")
+            self.handle.flush()
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                self.handle.seek(0)
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, BlockingIOError) as error:
+            self.handle.close()
+            self.handle = None
+            refuse("another controller holds the OS-exclusive live-mutation lease")
+        metadata = json.dumps(
+            {"schema_version": 1, "phase": 6, "operation_id": self.operation_id, "pid": os.getpid()},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        self.handle.seek(0)
+        self.handle.truncate()
+        self.handle.write(metadata)
+        self.handle.flush()
+        os.fsync(self.handle.fileno())
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        if self.handle is None:
+            return
+        try:
+            self.handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.handle.close()
+            self.handle = None
 
 
 def refuse(message: str) -> None:
@@ -198,6 +261,24 @@ def require_activation(contract: dict[str, Any], git_commit: str) -> str:
     return integrated
 
 
+def assert_clean_reviewed_worktree(repository: pathlib.Path, integrated_commit: str) -> None:
+    head = current_commit(repository)
+    if head != integrated_commit:
+        refuse("working commit differs from the reviewed integrated commit")
+    result = subprocess.run(
+        ["git", "status", "--porcelain=v2", "--untracked-files=all"],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or result.stdout.strip():
+        refuse("reviewed worktree is not exactly clean")
+    for argv in (["git", "diff", "--quiet"], ["git", "diff", "--cached", "--quiet"]):
+        if subprocess.run(argv, cwd=repository, check=False, capture_output=True).returncode != 0:
+            refuse("reviewed worktree contains an uncommitted critical-surface change")
+
+
 def assert_outside_repository(path: pathlib.Path, repository: pathlib.Path, label: str) -> pathlib.Path:
     resolved = path.resolve()
     root = repository.resolve()
@@ -213,12 +294,19 @@ def expected_node(contract: dict[str, Any], progress: dict[str, Any], direction:
         progress,
         {
             "schema_version", "integrated_commit", "completed_resize_nodes", "completed_rollback_nodes",
-            "in_flight_node", "in_flight_direction",
+            "generation", "used_operation_ids", "in_flight_node", "in_flight_direction",
+            "in_flight_operation_id", "in_flight_plan_sha256", "in_flight_recovery_sha256",
+            "in_flight_started_at",
         },
         "progress",
     )
     if progress["schema_version"] != 1:
         refuse("progress schema differs from v1")
+    if not isinstance(progress["generation"], int) or progress["generation"] < 0:
+        refuse("progress generation is invalid")
+    used = progress["used_operation_ids"]
+    if not isinstance(used, list) or len(set(used)) != len(used) or any(not DIGEST_RE.fullmatch(str(item)) for item in used):
+        refuse("used-once operation journal is invalid")
     resized = progress["completed_resize_nodes"]
     rolled_back = progress["completed_rollback_nodes"]
     if not isinstance(resized, list) or not isinstance(rolled_back, list):
@@ -243,6 +331,21 @@ def expected_node(contract: dict[str, Any], progress: dict[str, Any], direction:
         refuse("in-flight node and direction must be set or cleared together")
     if in_flight_direction not in (None, "resize", "rollback"):
         refuse("in-flight direction is invalid")
+    in_flight_metadata = (
+        progress["in_flight_operation_id"], progress["in_flight_plan_sha256"],
+        progress["in_flight_recovery_sha256"], progress["in_flight_started_at"],
+    )
+    if in_flight is None and any(item is not None for item in in_flight_metadata):
+        refuse("cleared progress retains stale in-flight metadata")
+    if in_flight is not None:
+        operation_id, plan_sha, recovery_sha, started_at = in_flight_metadata
+        if not isinstance(operation_id, str) or not DIGEST_RE.fullmatch(operation_id) or operation_id not in used:
+            refuse("in-flight operation is absent from the used-once journal")
+        if not isinstance(plan_sha, str) or not DIGEST_RE.fullmatch(plan_sha):
+            refuse("in-flight saved-plan digest is invalid")
+        if recovery_sha is not None and (not isinstance(recovery_sha, str) or not DIGEST_RE.fullmatch(recovery_sha)):
+            refuse("in-flight recovery digest is invalid")
+        parse_time(started_at, "progress.in_flight_started_at")
 
     if direction == "resize":
         if in_flight is not None:
@@ -269,7 +372,122 @@ def expected_node(contract: dict[str, Any], progress: dict[str, Any], direction:
     return rollback_order[len(rolled_back)]
 
 
-def assert_plan(plan: dict[str, Any], contract: dict[str, Any], node: str, direction: str) -> dict[str, Any]:
+def write_json_atomic(path: pathlib.Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".new", dir=path.parent)
+    temporary = pathlib.Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(value, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        if os.name != "nt":
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def transition_progress(
+    progress: dict[str, Any], contract: dict[str, Any], *, event: str, direction: str,
+    node: str, operation_id: str, plan_sha256: str, recovery_sha256: str | None = None,
+    captured_at: str | None = None,
+) -> dict[str, Any]:
+    candidate = json.loads(json.dumps(progress))
+    if not DIGEST_RE.fullmatch(operation_id) or not DIGEST_RE.fullmatch(plan_sha256):
+        refuse("operation or plan digest is invalid")
+    if event == "apply":
+        if operation_id in candidate["used_operation_ids"]:
+            refuse("operation nonce has already been consumed")
+        if candidate["in_flight_node"] is not None:
+            if not (
+                direction == "rollback"
+                and candidate["in_flight_direction"] == "resize"
+                and candidate["in_flight_node"] == node
+            ):
+                refuse("another operation remains in flight")
+        else:
+            expected = expected_node(contract, candidate, direction)
+            if expected != node:
+                refuse("apply node differs from the exact serial prefix")
+        candidate["used_operation_ids"].append(operation_id)
+        candidate["in_flight_node"] = node
+        candidate["in_flight_direction"] = direction
+        candidate["in_flight_operation_id"] = operation_id
+        candidate["in_flight_plan_sha256"] = plan_sha256
+        candidate["in_flight_recovery_sha256"] = None
+        candidate["in_flight_started_at"] = captured_at or dt.datetime.now(dt.timezone.utc).isoformat()
+    elif event == "recovery":
+        if (
+            candidate["in_flight_node"] != node
+            or candidate["in_flight_direction"] != direction
+            or candidate["in_flight_operation_id"] != operation_id
+            or candidate["in_flight_plan_sha256"] != plan_sha256
+        ):
+            refuse("recovery is not bound to the in-flight operation and saved plan")
+        if recovery_sha256 is None or not DIGEST_RE.fullmatch(recovery_sha256):
+            refuse("recovery digest is invalid")
+        if candidate["in_flight_recovery_sha256"] is not None:
+            refuse("recovery has already been recorded")
+        candidate["in_flight_recovery_sha256"] = recovery_sha256
+    elif event == "postflight":
+        if (
+            candidate["in_flight_node"] != node
+            or candidate["in_flight_direction"] != direction
+            or candidate["in_flight_operation_id"] != operation_id
+            or candidate["in_flight_plan_sha256"] != plan_sha256
+            or candidate["in_flight_recovery_sha256"] != recovery_sha256
+        ):
+            refuse("postflight is stale or not bound to apply and recovery")
+        if direction == "resize":
+            candidate["completed_resize_nodes"].append(node)
+        else:
+            fully_resized = candidate["completed_resize_nodes"] == contract["serial"]["resize_order"]
+            if fully_resized and node not in candidate["completed_rollback_nodes"]:
+                candidate["completed_rollback_nodes"].append(node)
+        candidate["in_flight_node"] = None
+        candidate["in_flight_direction"] = None
+        candidate["in_flight_operation_id"] = None
+        candidate["in_flight_plan_sha256"] = None
+        candidate["in_flight_recovery_sha256"] = None
+        candidate["in_flight_started_at"] = None
+    else:
+        refuse("unknown progress transition")
+    candidate["generation"] += 1
+    return candidate
+
+
+def assert_plan(
+    plan: dict[str, Any], contract: dict[str, Any], node: str, direction: str,
+    now: dt.datetime | None = None,
+) -> dict[str, Any]:
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if plan.get("complete") is not True:
+        refuse("saved plan is incomplete or was created with targeting")
+    if plan.get("applyable") is not True or plan.get("errored") is not False:
+        refuse("saved plan is not complete, applyable, and error-free")
+    if plan.get("resource_drift") != []:
+        refuse("saved plan resource-drift section is absent or non-empty")
+    for marker in ("target_addrs", "targets", "targeting", "incomplete"):
+        if marker in plan and plan[marker] not in (None, False, [], {}):
+            refuse("saved plan contains a targeting or incomplete-plan marker")
+    timestamp = parse_time(plan.get("timestamp"), "plan.timestamp")
+    age = (now.astimezone(dt.timezone.utc) - timestamp).total_seconds()
+    if age < -30 or age > 3600:
+        refuse("saved plan timestamp is older than the one-hour review boundary")
+    terraform_version = plan.get("terraform_version")
+    if not isinstance(terraform_version, str) or not re.fullmatch(r"1\.15\.[0-9]+", terraform_version):
+        refuse("saved plan Terraform version differs from the pinned 1.15.x toolchain")
+    configuration = plan.get("configuration")
+    prior_state = plan.get("prior_state")
+    if not isinstance(configuration, dict) or not configuration or not isinstance(prior_state, dict):
+        refuse("saved plan lacks complete configuration or prior-state metadata")
     changed = []
     for resource in plan.get("resource_changes", []):
         actions = tuple(resource.get("change", {}).get("actions", []))
@@ -283,8 +501,8 @@ def assert_plan(plan: dict[str, Any], contract: dict[str, Any], node: str, direc
     if resource.get("address") != expected_address or resource.get("type") != "verda_instance":
         refuse("saved plan targets an unexpected resource")
     actions = tuple(resource.get("change", {}).get("actions", []))
-    if actions not in ALLOWED_ACTIONS:
-        refuse("saved plan is not a single replacement")
+    if actions != ("delete", "create"):
+        refuse("saved plan must use the exact delete-then-create replacement order")
 
     change = resource.get("change", {})
     before = change.get("before") or {}
@@ -329,6 +547,8 @@ def assert_plan(plan: dict[str, Any], contract: dict[str, Any], node: str, direc
         "target_resource_expiry_utc": target_expiry,
         "replacement_count": 1,
         "persistent_data_volume_preserved": True,
+        "configuration_sha256": canonical_digest(configuration),
+        "prior_state_sha256": canonical_digest(prior_state),
     }
 
 
@@ -425,6 +645,7 @@ def admission(
     direction: str, git_commit: str, repository: pathlib.Path,
     now: dt.datetime | None = None, plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Evaluate legacy review fixtures only; this result never authorizes mutation."""
     now = now or dt.datetime.now(dt.timezone.utc)
     contract = read_json(contract_path)
     validate_contract(contract)
@@ -439,7 +660,7 @@ def admission(
         refuse("saved plan is absent")
     plan_sha = digest_file(plan_path)
     plan_value = plan if plan is not None else terraform_show(repository / contract["terraform"]["root"], plan_path)
-    details = assert_plan(plan_value, contract, node, direction)
+    details = assert_plan(plan_value, contract, node, direction, now)
 
     preflight = read_json(preflight_path)
     assert_gate_bundle(preflight, contract["required_preflight"], integrated, node, contract, now, "preflight")
@@ -451,7 +672,7 @@ def admission(
 
     return {
         "schema_version": 1,
-        "status": "ADMITTED",
+        "status": "PREPARATORY_ANALYSIS_ONLY",
         "phase": 6,
         "cluster": "management",
         "direction": direction,
@@ -473,23 +694,10 @@ def verify_postflight(
     contract_path: pathlib.Path, postflight_path: pathlib.Path, node: str,
     git_commit: str, now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    now = now or dt.datetime.now(dt.timezone.utc)
-    contract = read_json(contract_path)
-    validate_contract(contract)
-    integrated = require_activation(contract, git_commit)
-    if not NODE_RE.fullmatch(node):
-        refuse("postflight node is invalid")
-    postflight = read_json(postflight_path)
-    assert_gate_bundle(postflight, contract["required_postflight"], integrated, node, contract, now, "postflight")
-    return {
-        "schema_version": 1,
-        "status": "POSTFLIGHT_PASS",
-        "phase": 6,
-        "cluster": "management",
-        "node": node,
-        "postflight_sha256": digest_file(postflight_path),
-        "all_postflight_gates_passed": True,
-    }
+    refuse(
+        "postflight advancement is disabled until trusted collectors, the pinned recovery runner, "
+        "and atomic journal integration are complete"
+    )
 
 
 def recovery_admission(
@@ -498,83 +706,9 @@ def recovery_admission(
     inventory_path: pathlib.Path, private_key_path: pathlib.Path, known_hosts_path: pathlib.Path,
     runtime_vars_path: pathlib.Path, now: dt.datetime | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    now = now or dt.datetime.now(dt.timezone.utc)
-    contract = read_json(contract_path)
-    validate_contract(contract)
-    integrated = require_activation(contract, git_commit)
-    progress = read_json(progress_path)
-    exact_keys(
-        progress,
-        {
-            "schema_version", "integrated_commit", "completed_resize_nodes", "completed_rollback_nodes",
-            "in_flight_node", "in_flight_direction",
-        },
-        "progress",
-    )
-    if progress["schema_version"] != 1 or progress["integrated_commit"] != integrated:
-        refuse("recovery progress is not bound to the integrated commit")
-    node = progress["in_flight_node"]
-    if not isinstance(node, str) or not NODE_RE.fullmatch(node) or progress["in_flight_direction"] != direction:
-        refuse("recovery requires the exact applied node and direction to be in flight")
-    resized = progress["completed_resize_nodes"]
-    rolled_back = progress["completed_rollback_nodes"]
-    if direction == "resize":
-        expected = contract["serial"]["resize_order"][len(resized)] if len(resized) < 3 else None
-    else:
-        if resized != contract["serial"]["resize_order"]:
-            refuse("ordered rollback recovery requires the fully resized prefix")
-        expected = contract["serial"]["rollback_order"][len(rolled_back)] if len(rolled_back) < 3 else None
-    if node != expected:
-        refuse("recovery node differs from the exact serial prefix")
-
-    recovery = read_json(recovery_path)
-    assert_gate_bundle(recovery, contract["required_recovery"], integrated, node, contract, now, "recovery")
-    assert_lease(read_json(lease_path), integrated, now)
-
-    inventory = assert_outside_repository(inventory_path, repository, "recovery inventory")
-    private_key = assert_outside_repository(private_key_path, repository, "SSH private key")
-    known_hosts = assert_outside_repository(known_hosts_path, repository, "known-hosts file")
-    runtime_vars = assert_outside_repository(runtime_vars_path, repository, "runtime variables")
-    for path, label in (
-        (inventory, "recovery inventory"), (private_key, "SSH private key"),
-        (known_hosts, "known-hosts file"), (runtime_vars, "runtime variables"),
-    ):
-        if not path.is_file():
-            refuse(f"{label} is absent")
-    inventory_text = inventory.read_text(encoding="utf-8")
-    if inventory_text.count("verda-mgmt-server-01:") != 1 or inventory_text.count("verda-mgmt-server-02:") != 1 or inventory_text.count("verda-mgmt-server-03:") != 1:
-        refuse("recovery inventory does not contain the exact three-node topology")
-    if "StrictHostKeyChecking=yes" not in inventory_text or "StrictHostKeyChecking=accept-new" in inventory_text:
-        refuse("recovery inventory does not enforce the verified SSH host-key boundary")
-    if str(private_key) not in inventory_text or str(known_hosts) not in inventory_text:
-        refuse("recovery inventory is not bound to the selected external SSH files")
-
-    join_peer = contract["serial"]["join_peers"][node]
-    other_survivor = ({"01", "02", "03"} - {node, join_peer}).pop()
-    playbook = repository / "infra" / "ansible" / "playbooks" / "recover-resized-management-node.yml"
-    command = [
-        "ansible-playbook", "--inventory", str(inventory), str(playbook),
-        "--extra-vars", f"@{runtime_vars}",
-        "--extra-vars", f"phase6_resize_target=verda-mgmt-server-{node}",
-        "--extra-vars", f"phase6_join_peer=verda-mgmt-server-{join_peer}",
-        "--extra-vars", f"phase6_other_survivor=verda-mgmt-server-{other_survivor}",
-    ]
-    return (
-        {
-            "schema_version": 1,
-            "status": "RECOVERY_ADMITTED",
-            "phase": 6,
-            "cluster": "management",
-            "direction": direction,
-            "node": node,
-            "join_peer_node": join_peer,
-            "other_survivor_node": other_survivor,
-            "inventory_sha256": digest_file(inventory),
-            "known_hosts_sha256": digest_file(known_hosts),
-            "recovery_gate_sha256": digest_file(recovery_path),
-            "all_recovery_gates_passed": True,
-        },
-        command,
+    refuse(
+        "host recovery is disabled until the pinned container runner, canonical input review, "
+        "and trusted collector chain are complete"
     )
 
 
@@ -598,32 +732,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contract", type=pathlib.Path, default=pathlib.Path("config/phase6-management-resize.json"))
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("validate-contract")
-
-    for name in ("admit", "apply"):
-        command = sub.add_parser(name)
-        command.add_argument("--direction", choices=("resize", "rollback"), required=True)
-        command.add_argument("--progress", type=pathlib.Path, required=True)
-        command.add_argument("--saved-plan", type=pathlib.Path, required=True)
-        command.add_argument("--preflight", type=pathlib.Path, required=True)
-        command.add_argument("--review", type=pathlib.Path, required=True)
-        command.add_argument("--lease", type=pathlib.Path, required=True)
-        if name == "apply":
-            command.add_argument("--confirm", required=True)
-
-    recover = sub.add_parser("recover")
-    recover.add_argument("--direction", choices=("resize", "rollback"), required=True)
-    recover.add_argument("--progress", type=pathlib.Path, required=True)
-    recover.add_argument("--recovery", type=pathlib.Path, required=True)
-    recover.add_argument("--lease", type=pathlib.Path, required=True)
-    recover.add_argument("--inventory", type=pathlib.Path, required=True)
-    recover.add_argument("--private-key", type=pathlib.Path, required=True)
-    recover.add_argument("--known-hosts", type=pathlib.Path, required=True)
-    recover.add_argument("--runtime-vars", type=pathlib.Path, required=True)
-    recover.add_argument("--confirm", required=True)
-
-    post = sub.add_parser("verify-postflight")
-    post.add_argument("--node", required=True)
-    post.add_argument("--postflight", type=pathlib.Path, required=True)
     return parser
 
 
@@ -638,64 +746,7 @@ def main() -> int:
             emit({"schema_version": 1, "status": "VALID_INERT_CONTRACT", "activation_enabled": contract["activation"]["enabled"]})
             return 0
 
-        git_commit = current_commit(repository)
-        if args.action == "verify-postflight":
-            emit(verify_postflight(contract_path, args.postflight, args.node, git_commit))
-            return 0
-
-        if args.action == "recover":
-            summary, command = recovery_admission(
-                contract_path=contract_path,
-                progress_path=args.progress,
-                recovery_path=args.recovery,
-                lease_path=args.lease,
-                direction=args.direction,
-                git_commit=git_commit,
-                repository=repository,
-                inventory_path=args.inventory,
-                private_key_path=args.private_key,
-                known_hosts_path=args.known_hosts,
-                runtime_vars_path=args.runtime_vars,
-            )
-            expected_confirmation = f"PHASE6_SERIAL_RECOVER_{args.direction.upper()}_{summary['node']}"
-            if args.confirm != expected_confirmation:
-                refuse("typed recovery confirmation does not match the exact node and direction")
-            result = subprocess.run(command, check=False, capture_output=True)
-            if result.returncode != 0:
-                refuse("bounded host/RKE2 recovery failed; raw diagnostic withheld; keep lease and assess rollback")
-            summary["status"] = "RECOVERY_COMPLETE_POSTFLIGHT_REQUIRED"
-            emit(summary)
-            return 0
-
-        summary = admission(
-            contract_path=contract_path,
-            progress_path=args.progress,
-            saved_plan=args.saved_plan,
-            preflight_path=args.preflight,
-            review_path=args.review,
-            lease_path=args.lease,
-            direction=args.direction,
-            git_commit=git_commit,
-            repository=repository,
-        )
-        if args.action == "admit":
-            emit(summary)
-            return 0
-
-        expected_confirmation = f"PHASE6_SERIAL_{args.direction.upper()}_{summary['node']}"
-        if args.confirm != expected_confirmation:
-            refuse("typed confirmation does not match the exact node and direction")
-        terraform_root = repository / contract["terraform"]["root"]
-        result = subprocess.run(
-            ["terraform", f"-chdir={terraform_root}", "apply", "-input=false", "-lock-timeout=60s", str(args.saved_plan.resolve())],
-            check=False,
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            refuse("saved-plan apply failed; raw diagnostic withheld; keep lease and begin bounded rollback assessment")
-        summary["status"] = "APPLY_COMPLETE_RECOVERY_REQUIRED"
-        emit(summary)
-        return 0
+        refuse("unsupported controller action")
     except ResizeRefused as error:
         print(f"REFUSED: {error}", file=sys.stderr)
         return 64

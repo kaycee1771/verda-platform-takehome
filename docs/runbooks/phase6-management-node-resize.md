@@ -8,6 +8,15 @@ the three existing management servers. It does not create a cluster, change a
 data volume, accept credentials as arguments, activate Phase 6 applications,
 or authorize parallel replacement.
 
+**No Phase 6 live resize is currently authorized.** The controller CLI exposes
+only `validate-contract`; apply, recovery, and postflight advancement are not
+registered commands. The protected Phase 2 apply target also fails before
+opening state or invoking Terraform. The protected plan/output primitives and
+the collector are preparatory code only. They must not be enabled until the
+pinned-container recovery runner, canonical inventory/secret-descriptor
+review, trusted collector bindings, quiesce workflow, and OS-lock/journal
+integration have landed and received independent review.
+
 The checked-in contract has `enabled=false`, `writes_allowed=false`, a null
 integrated commit, and a null target expiry. Never edit it to create a
 self-referential commit. For each node, create a protected external copy with
@@ -50,7 +59,7 @@ terraform -chdir=infra/terraform/environments/management plan \
   -input=false -lock-timeout=60s -detailed-exitcode -out=<external-node-plan>
 ```
 
-`management-node-resize.py admit` runs `terraform show -json` itself and
+The preparatory plan parser runs `terraform show -json` itself and
 refuses unless the saved plan contains exactly one instance replacement at the
 next serial address. The hostname, image, location, on-demand status, OS-volume
 contract, SSH keys, startup-script attachment, and exact persistent data-volume
@@ -58,7 +67,7 @@ attachment must remain unchanged. The shape and expiry must make the exact
 reviewed transition. Apply accepts only those same saved-plan bytes; never
 regenerate a plan between review and apply.
 
-The protected progress object is identity-free and uses this schema:
+The preparatory protected progress object is identity-free and uses this schema:
 
 ```json
 {
@@ -66,8 +75,14 @@ The protected progress object is identity-free and uses this schema:
   "integrated_commit": "<exact-40-hex-commit>",
   "completed_resize_nodes": [],
   "completed_rollback_nodes": [],
+  "generation": 0,
+  "used_operation_ids": [],
   "in_flight_node": null,
-  "in_flight_direction": null
+  "in_flight_direction": null,
+  "in_flight_operation_id": null,
+  "in_flight_plan_sha256": null,
+  "in_flight_recovery_sha256": null,
+  "in_flight_started_at": null
 }
 ```
 
@@ -88,9 +103,10 @@ After apply and before starting RKE2:
 2. Independently verify the replacement instance/shape and its new SSH host-key
    provenance, then rotate only that host's known-hosts entry.
 3. Prove the two survivors are Ready and retain etcd quorum.
-4. Run `management-node-resize.py recover` with the fresh recovery bundle and
-   active lease. It invokes only
-   `recover-resized-management-node.yml` at the exact integrated commit.
+4. Recovery remains disabled. A future reviewed implementation must use the
+   pinned Phase 4 container runner with read-only external key/token mounts,
+   checked-in group vars, exact runtime vars, and the exact integrated commit;
+   native host `ansible-playbook` is not an approved execution path.
 5. The playbook bootstraps and hardens only the fresh host, remounts the
    preserved data volume, gathers every node-local WireGuard public key, and
    serially converges all three peer endpoints and firewall rules.
@@ -119,9 +135,10 @@ Capture a fresh identity-free postflight bundle only after all of these pass:
 - the replacement reports the exact reviewed shape; and
 - an ordinary Terraform plan reports zero drift.
 
-Run `verify-postflight`, advance exactly one completed prefix, clear the
-in-flight fields, refresh backups, and only then release/reacquire the lease for
-the next protected commit.
+Postflight advancement remains disabled. A future reviewed implementation must
+hash-bind the collector, operation nonce, plan, recovery receipt, journal
+generation, and held OS lease, then atomically advance exactly one completed
+prefix and clear the in-flight fields.
 
 ## Rollback
 
