@@ -28,12 +28,14 @@ class Phase2MutationSafetyTests(unittest.TestCase):
         source = PHASE2.read_text(encoding="utf-8")
         self.assertIn("$Target -in @('apply', 'repair-node-02-apply', 'destroy')", source)
         self.assertIn("$stateBoundaryLease = Enter-Phase2MutationLease -Paths $paths", source)
-        self.assertEqual(source.count("Open-ReviewedPlanHandle -Path"), 2)
-        self.assertGreaterEqual(source.count("Get-OpenPlanSha256 -Stream"), 4)
-        self.assertIn("if ($stateBoundaryLease) { $stateBoundaryLease.Dispose() }", source)
+        self.assertIn("[Threading.Mutex]::new", source)
+        self.assertNotIn("phase2-live-mutation.lock", source)
+        self.assertIn("New-StagedReviewedPlan -Path $paths.PlanPath", source)
+        self.assertIn("New-StagedReviewedPlan -Path $Paths.RepairPlanPath", source)
+        self.assertEqual(source.count("Open-ReviewedPlanHandle -Path"), 1)
+        self.assertGreaterEqual(source.count("Get-OpenPlanSha256 -Stream"), 3)
+        self.assertIn("Exit-Phase2MutationLease -Lease $stateBoundaryLease", source)
         self.assertNotIn("$stream.SetLength(0)", source)
-        self.assertIn("Assert-NoReparsePath -Path $leasePath", source)
-        self.assertIn("Assert-SingleFileIdentity -Path $leasePath", source)
         self.assertIn("Assert-NoReparsePath -Path $Path -Label 'Reviewed Terraform saved plan'", source)
         self.assertIn("Phase 2 apply/destroy targets require Windows", source)
 
@@ -132,7 +134,11 @@ function verda {{
 function python {{
   param([Parameter(ValueFromRemainingArguments=$true)]$Arguments)
   if (($Arguments -join ' ') -match 'assert-plan.py') {{
-    try {{ Move-Item -LiteralPath '{replacement}' -Destination '{plan}' -Force -ErrorAction Stop; 'SWAP-SUCCEEDED' | Set-Content '{swap}' }}
+    try {{
+      Remove-Item -LiteralPath '{plan}' -Force -ErrorAction Stop
+      New-Item -ItemType SymbolicLink -Path '{plan}' -Target '{replacement}' -ErrorAction Stop | Out-Null
+      'SWAP-SUCCEEDED' | Set-Content '{swap}'
+    }}
     catch {{ 'SWAP-BLOCKED' | Set-Content '{swap}' }}
   }}
   $global:LASTEXITCODE = 0
@@ -140,14 +146,14 @@ function python {{
 function terraform {{
   param([Parameter(ValueFromRemainingArguments=$true)]$Arguments)
   $joined = $Arguments -join ' '
-  if ($joined -match ' apply ') {{ Get-Content -LiteralPath '{plan}' -Raw | Set-Content -LiteralPath '{applied}' -NoNewline }}
+  if ($joined -match ' apply ') {{ Get-Content -LiteralPath $Arguments[-1] -Raw | Set-Content -LiteralPath '{applied}' -NoNewline }}
   $global:LASTEXITCODE = 0
 }}
 & '{PHASE2}' -Target apply
 if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 """)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(swap.read_text(encoding="utf-8").strip(), "SWAP-BLOCKED")
+            self.assertEqual(swap.read_text(encoding="utf-8").strip(), "SWAP-SUCCEEDED")
             self.assertEqual(applied.read_text(encoding="utf-8"), "REVIEWED-PLAN")
 
     def test_hardlinked_lease_is_refused_without_mutating_asset_or_calling_terraform(self) -> None:
