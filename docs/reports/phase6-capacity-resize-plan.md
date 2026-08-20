@@ -13,10 +13,10 @@ resize-free Phase 6 deployment is not admissible.
 
 ## Candidate shape and cost
 
-The [official Verda public catalog](https://verda.com/pricing?currency=usd)
-lists `CPU.8V.32G` with 8 vCPU, 32 GiB memory,
-and an on-demand price of `$0.0558` per instance-hour. This is a planning input,
-not proof of current project entitlement or location stock. Before mutation, an
+The [official Verda public catalog](https://verda.com/pricing?currency=usd),
+rechecked on 2026-08-20, lists `CPU.8V.32G` with 8 vCPU, 32 GiB memory, and an
+on-demand price of `$0.0558` per instance-hour. This is a planning input, not
+proof of current project entitlement or location stock. Before mutation, an
 authenticated read-only catalog check must prove that the exact shape is
 available in every required location and that the project quote agrees.
 
@@ -56,9 +56,9 @@ No replacement may begin until all of the following are true:
 1. Every Phase 6 chart and image is checksum or digest locked.
 2. The complete rendered Stage A workload has an exact scheduling request,
    PVC, rollout-surge, and one-node-loss model.
-3. The candidate's expected Kubernetes allocatable value keeps that complete
-   model positive after one node loss and leaves a documented operational
-   surge margin.
+3. The candidate's observed Kubernetes allocatable value is at least 6793m CPU
+   and 13659799552 memory bytes per node, so the complete model remains
+   positive after one node loss and leaves the documented operational reserve.
 4. An authenticated catalog check proves shape availability and current price.
 5. A fresh balance check proves the seven-day envelope plus the 12-hour reserve.
 6. Terraform produces a saved, sanitized, reviewed plan scoped to one compute
@@ -91,10 +91,22 @@ baseline within the defined window. Preserve the two-node quorum, the dedicated
 data volumes, off-cluster recovery material, the saved plan, and sanitized
 diagnostics. Do not continue to another node to "see if it fixes itself."
 
+## Capacity decision
+
+The checksum-bound complete projection now requires 13585m CPU and
+27319599104 memory bytes across the worst two surviving nodes, including the
+selected 1000m CPU and four-GiB operational reserves. The RKE2 configuration
+pins 500m kube-reserved plus 500m system-reserved CPU per node, so an exact
+8-vCPU candidate is expected to expose 7000m allocatable CPU. That would leave
+415m beyond the declared CPU reserve across the surviving pair. This is a
+planning inference only: admission remains closed unless the protected node
+reducer observes at least the thresholds above after each replacement.
+
 ## Remaining decision inputs
 
-- Exact full-stack rendered request and surge total.
 - Authenticated `CPU.8V.32G` availability in the three selected locations.
 - Fresh project price and balance.
 - Exact Terraform single-node replacement plans.
+- Fresh identity-free per-node allocatable CPU/memory after the first candidate
+  boots; abort if the minimum is below the capacity contract.
 - Reviewed endpoint/certificate reconciliation sequence for the primary node.

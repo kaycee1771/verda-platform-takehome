@@ -2,11 +2,12 @@
 
 Status: **BLOCKED — no live or cloud mutation is admitted**
 
-This report covers the ten mandatory Stage A capacity domains at integration
-commit `1e65a6a270d85512513cf5287bbfeff44a0d4e11`. The ignored render set is
-reproducible with `scripts/phase6/render-capacity-inputs.py`; the tracked
-contract binds each render, every checked-in input, and each pinned chart
-archive by SHA-256.
+This report covers the ten mandatory Stage A capacity domains in the current
+Phase 6 candidate. The ignored render set is reproducible with
+`scripts/phase6/render-capacity-inputs.py`; the tracked contract binds each
+render, every checked-in input, and each pinned chart archive by SHA-256. Git
+records the exact candidate revision without embedding a stale self-reference
+in this report.
 
 ## Exact component projection
 
