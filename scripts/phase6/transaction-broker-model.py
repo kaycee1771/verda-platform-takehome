@@ -100,7 +100,7 @@ EVENT_SPEC: dict[str, dict[str, Any]] = {
                            "pre_rollback_backup_sha256"},
         "ROLLBACK_SUCCEEDED": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
         "ADOPT_ROLLBACK_COMPLETE": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
-        "FAIL_ROLLBACK_UNSAFE": {"failure_class", "rollback_required"},
+        "FAIL_ROLLBACK_UNSAFE": {"failure_class", "rollback_required", "manual_intervention_required"},
         "DEADLINE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
         "RESOURCE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
         "ADOPT_PREPARE_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
@@ -117,6 +117,7 @@ EVENT_CONSTANT_UPDATES = {
     "ADOPT_POSTFLIGHT_COMPLETE": {"rollback_required": False},
     "FAIL_RECOVERY_UNSAFE": {"failure_class": "RECOVERY_UNSAFE", "rollback_required": True},
     "FAIL_POSTFLIGHT_UNSAFE": {"failure_class": "POSTFLIGHT_UNSAFE", "rollback_required": True},
+    "BEGIN_ROLLBACK": {"rollback_milestone": "ROLLBACK_ADMITTED"},
     "FAIL_ROLLBACK_UNSAFE": {"failure_class": "ROLLBACK_UNSAFE", "rollback_required": False,
                              "manual_intervention_required": True},
     "DEADLINE_EXPIRED": {"failure_class": "POLICY_REFUSAL", "rollback_required": False,
@@ -174,13 +175,22 @@ def _allowed_event_fields(event: str, from_state: str | None, to_state: str) -> 
     return _event_spec(event, from_state, to_state)["fields"]
 
 
-def _validate_event_field(key: str, value: Any, projection: dict[str, Any]) -> None:
+def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payload: dict[str, Any]) -> None:
     if key in BACKUP_FIELDS:
         receipt = exact_keys(value, BACKUP_KEYS, f"event.{key}")
         for digest_key in ("receipt_sha256", "backup_identity_sha256", "state_lineage_sha256"):
             _digest(receipt[digest_key], f"event.{key}.{digest_key}")
         if receipt["state_lineage_sha256"] != projection["state_lineage_sha256"] or type(receipt["state_serial"]) is not int:
             refuse(f"event.{key} lineage/serial differs")
+        expected_serial = {
+            "state_backup_sha256": projection["state_serial_before"],
+            "pre_apply_backup_sha256": projection["state_serial_before"],
+            "post_apply_backup_sha256": payload.get("state_serial_after", projection.get("state_serial_after")),
+            "pre_rollback_backup_sha256": projection.get("state_serial_after"),
+            "post_rollback_backup_sha256": projection["state_serial_before"],
+        }[key]
+        if receipt["state_serial"] != expected_serial:
+            refuse(f"event.{key} serial relation differs")
         timestamp(receipt["verified_at"], f"event.{key}.verified_at")
     elif key.endswith("_sha256"):
         _digest(value, f"event.{key}")
@@ -353,19 +363,23 @@ def _replay_history(history: list[dict[str, Any]]) -> dict[str, Any]:
             if set(payload) != {"receipt"} | allowed:
                 refuse("transaction replay payload schema differs")
             for key in allowed:
-                _validate_event_field(key, payload[key], expected)
+                _validate_event_field(key, payload[key], expected, payload)
                 expected[key] = copy.deepcopy(payload[key])
             for key, constant in spec["constants"].items():
                 if payload.get(key) != constant:
                     refuse("transaction replay constant update differs from EVENT_SPEC")
             if event.startswith("RECOVERY_") and event[9:] in RECOVERY_MILESTONES[1:]:
                 prior = RECOVERY_MILESTONES.index(previous["recovery_milestone"])
-                if event[9:] != RECOVERY_MILESTONES[prior + 1]:
+                if prior + 1 >= len(RECOVERY_MILESTONES) or event[9:] != RECOVERY_MILESTONES[prior + 1]:
                     refuse("transaction replay skipped a recovery milestone")
             if event.startswith("ROLLBACK_") and event[9:] in ROLLBACK_MILESTONES[2:]:
                 prior = ROLLBACK_MILESTONES.index(previous["rollback_milestone"])
-                if event[9:] != ROLLBACK_MILESTONES[prior + 1]:
+                if prior + 1 >= len(ROLLBACK_MILESTONES) or event[9:] != ROLLBACK_MILESTONES[prior + 1]:
                     refuse("transaction replay skipped a rollback milestone")
+            if event == "BEGIN_RECOVERY" and previous["recovery_milestone"] != "NONE":
+                refuse("BEGIN_RECOVERY did not start from recovery milestone NONE")
+            if event == "BEGIN_ROLLBACK" and previous["rollback_milestone"] != "NONE":
+                refuse("BEGIN_ROLLBACK did not start from rollback milestone NONE")
             receipt = _validate_effect_receipt(payload["receipt"], projection=expected, action=event)
             regenerated = _effect_receipt(projection=expected, action=event,
                                           evidence=receipt["probe_evidence_sha256"],
@@ -565,6 +579,22 @@ def validate_journal(journal: dict[str, Any]) -> None:
                     or type(backup_receipt["state_serial"]) is not int or backup_receipt["state_serial"] < 0):
                 refuse(f"journal.{key} lineage/serial differs")
             timestamp(backup_receipt["verified_at"], f"journal.{key}.verified_at")
+    expected_backup_serials = {
+        "state_backup_sha256": journal["state_serial_before"],
+        "pre_apply_backup_sha256": journal["state_serial_before"],
+        "post_apply_backup_sha256": after,
+        "pre_rollback_backup_sha256": after,
+        "post_rollback_backup_sha256": journal["state_serial_before"],
+    }
+    identities: list[str] = []
+    for key, expected_serial in expected_backup_serials.items():
+        receipt = journal[key]
+        if receipt is not None:
+            if expected_serial is None or receipt["state_serial"] != expected_serial:
+                refuse(f"journal.{key} serial relation differs")
+            identities.append(receipt["backup_identity_sha256"])
+    if len(identities) != len(set(identities)):
+        refuse("transaction journal backup identities are not pairwise distinct")
     if journal["failure_class"] not in {None, "APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE",
                                          "POSTFLIGHT_UNSAFE", "ROLLBACK_UNSAFE", "POLICY_REFUSAL"}:
         refuse("transaction journal failure class differs")
@@ -664,6 +694,12 @@ def validate_journal(journal: dict[str, Any]) -> None:
             or journal["pre_rollback_backup_sha256"] is None or journal["post_rollback_backup_sha256"] is None
             or journal["rollback_required"] is not False):
         refuse("rolled-back journal lacks its exact plan/current-state/backup/zero-drift matrix")
+    if journal["state"] == "ROLLED_BACK":
+        terminal_backups = [journal[key] for key in ("state_backup_sha256", "pre_apply_backup_sha256",
+                            "post_apply_backup_sha256", "pre_rollback_backup_sha256",
+                            "post_rollback_backup_sha256")]
+        if any(item is None for item in terminal_backups) or len({item["backup_identity_sha256"] for item in terminal_backups}) != 5:
+            refuse("rolled-back terminal backup identities are incomplete or equal")
     if journal["state"] == "FAILED_SAFE":
         if (journal["failure_class"] is None or journal["rollback_required"] is not False
                 or journal["manual_intervention_required"] is not True):
@@ -1072,7 +1108,7 @@ class BrokerModelSession:
             if outcome in {"PARTIAL", "UNKNOWN"}:
                 backup = _backup(event["state_backup_sha256"], "adoption state backup",
                                  lineage=self.journal["state_lineage_sha256"],
-                                 serial=event["current_state_serial"], now=now)
+                                 serial=self.journal["state_serial_before"], now=now)
                 # Uncertain provider effects are a manual stop, never an
                 # automatic revert.  A read-only exact-current-state receipt is
                 # mandatory even to classify the stop safely.

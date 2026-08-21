@@ -167,6 +167,20 @@ class BrokerFixture:
                      "effect_probe_sha256": self.fake.receipt(f"recovery-probe-{milestone}"),
                      "exact_effect_verified": True})
 
+    def begin_rollback(self) -> dict:
+        current = self.session.journal
+        return self.go({"event": "BEGIN_ROLLBACK", **self.fake.gate("rollback_two_survivor"),
+                        "inventory_sha256": digest("rollback-inventory"),
+                        "known_hosts_sha256": digest("rollback-known-hosts"),
+                        "state_backup_sha256": current["state_backup_sha256"],
+                        "applied_state_receipt_sha256": current["apply_receipt_sha256"],
+                        "rollback_plan_sha256": digest("rollback-plan-bytes"),
+                        "rollback_plan_semantic_sha256": digest("rollback-plan-semantics"),
+                        "current_state_receipt_sha256": digest("rollback-current-state"),
+                        "current_state_lineage_sha256": current["state_lineage_sha256"],
+                        "current_state_serial": current["state_serial_after"],
+                        "pre_rollback_backup_sha256": backup("pre-rollback-backup", 13)})
+
 
 class TransactionBrokerSpecTests(unittest.TestCase):
     def test_policy_and_rollback_contracts_are_exactly_inert(self) -> None:
@@ -447,6 +461,41 @@ class TransactionBrokerSpecTests(unittest.TestCase):
         forged["history"][-1] = MODEL._seal_entry(last)
         with self.assertRaisesRegex(MODEL.BrokerRefused, "constant update"):
             MODEL.validate_journal(forged)
+
+    def test_begin_rollback_final_milestone_and_backup_serial_forgery_refuse(self) -> None:
+        fixture = BrokerFixture(); fixture.prepare(); fixture.apply()
+        applied = copy.deepcopy(fixture.session.journal)
+        backup_forgery = copy.deepcopy(applied)
+        last = backup_forgery["history"][-1]
+        last["event_payload"]["post_apply_backup_sha256"]["state_serial"] = 12
+        last["projection"]["post_apply_backup_sha256"]["state_serial"] = 12
+        backup_forgery["post_apply_backup_sha256"]["state_serial"] = 12
+        last["projection_sha256"] = MODEL.canonical_digest(last["projection"])
+        backup_forgery["history"][-1] = MODEL._seal_entry(last)
+        with self.assertRaisesRegex(MODEL.BrokerRefused, "serial relation"):
+            MODEL.validate_journal(backup_forgery)
+        admitted = fixture.begin_rollback()
+        forged = copy.deepcopy(admitted)
+        last = forged["history"][-1]
+        last["event_payload"]["rollback_milestone"] = "ZERO_DRIFT_VERIFIED"
+        last["projection"]["rollback_milestone"] = "ZERO_DRIFT_VERIFIED"
+        forged["rollback_milestone"] = "ZERO_DRIFT_VERIFIED"
+        last["projection_sha256"] = MODEL.canonical_digest(last["projection"])
+        forged["history"][-1] = MODEL._seal_entry(last)
+        with self.assertRaisesRegex(MODEL.BrokerRefused, "constant update"):
+            MODEL.validate_journal(forged)
+
+    def test_fail_rollback_unsafe_is_manual_and_reloadable(self) -> None:
+        fixture = BrokerFixture(); fixture.prepare(); fixture.apply(); fixture.begin_rollback()
+        failed = fixture.go({"event": "FAIL_ROLLBACK_UNSAFE",
+                             "failure_receipt_sha256": digest("rollback-unsafe")})
+        self.assertEqual(failed["state"], "FAILED_SAFE")
+        self.assertIs(failed["manual_intervention_required"], True)
+        self.assertIs(failed["rollback_required"], False)
+        MODEL.validate_journal(failed)
+        reloaded = MODEL.BrokerModelSession(policy=POLICY, journal=failed, lease=fixture.lease,
+                                            nonce_source=fixture.nonces)
+        self.assertEqual(reloaded.journal["failure_class"], "ROLLBACK_UNSAFE")
 
     def test_effect_probe_precedes_milestone_cas_and_receipt_cannot_be_removed(self) -> None:
         fixture = BrokerFixture(); fixture.prepare(); fixture.apply(); fixture.begin_recovery()
