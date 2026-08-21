@@ -55,7 +55,7 @@ JOURNAL_KEYS = {
     "authorization_sha256", "authorization_history_sha256", "verifier_receipt_sha256", "broker_sha256", "policy_sha256",
     "rollback_policy_sha256", "integrated_commit", "node", "direction", "plan_sha256",
     "plan_semantic_sha256", "state_lineage_sha256", "state_serial_before", "state_serial_after",
-    "generation", "cas_nonce", "lease_id", "state", "recovery_milestone",
+    "generation", "cas_nonce", "lease_id", "lease_epoch", "state", "recovery_milestone",
     "rollback_milestone", "prepare_receipt_sha256", "apply_receipt_sha256",
     "state_backup_sha256", "recovery_receipt_sha256", "postflight_sha256",
     "rollback_receipt_sha256", "latest_gate_sha256", "failure_class", "rollback_required",
@@ -66,7 +66,10 @@ JOURNAL_KEYS = {
     "started_at", "updated_at", "history", "manual_intervention_required", "raw_values_recorded",
 }
 HISTORY_KEYS = {"generation", "from_state", "to_state", "event", "receipt_sha256", "cas_nonce", "captured_at",
-                "previous_entry_sha256", "projection", "projection_sha256", "entry_sha256"}
+                "lease_epoch", "event_payload", "previous_entry_sha256", "projection", "projection_sha256", "entry_sha256"}
+BACKUP_KEYS = {"receipt_sha256", "backup_identity_sha256", "state_lineage_sha256", "state_serial", "verified_at"}
+BACKUP_FIELDS = {"state_backup_sha256", "pre_apply_backup_sha256", "post_apply_backup_sha256",
+                 "pre_rollback_backup_sha256", "post_rollback_backup_sha256"}
 
 # This is deliberately a closed replay grammar.  Journal validation never trusts
 # the materialized head merely because its last history row names the same state.
@@ -113,6 +116,74 @@ def _seal_entry(entry: dict[str, Any]) -> dict[str, Any]:
     sealed["entry_sha256"] = canonical_digest({key: value for key, value in sealed.items()
                                                 if key != "entry_sha256"})
     return sealed
+
+
+IMMUTABLE_PROJECTION_KEYS = {
+    "schema_version", "phase", "operation_id", "operation_nonce", "authorization_commit",
+    "authorization_sha256", "authorization_history_sha256", "verifier_receipt_sha256",
+    "broker_sha256", "policy_sha256", "rollback_policy_sha256", "integrated_commit", "node",
+    "direction", "plan_sha256", "plan_semantic_sha256", "state_lineage_sha256",
+    "state_serial_before", "start_by", "complete_by", "resource_expiry_utc",
+    "minimum_recovery_margin_seconds", "started_at", "raw_values_recorded",
+}
+
+
+def _replay_history(history: list[dict[str, Any]]) -> dict[str, Any]:
+    """Reconstruct every materialized projection from genesis, never from hashes."""
+    previous: dict[str, Any] | None = None
+    for index, entry in enumerate(history, 1):
+        projection = entry["projection"]
+        payload = entry["event_payload"]
+        if not isinstance(payload, dict):
+            refuse("transaction replay event payload differs")
+        if index == 1:
+            if entry["event"] != "START_SPEC" or payload != {"authorization_sha256": entry["receipt_sha256"]}:
+                refuse("transaction replay genesis is not exact START_SPEC")
+            expected = copy.deepcopy(projection)
+            if (expected["generation"] != 1 or expected["state"] != "AUTHORIZED"
+                    or expected["lease_epoch"] != entry["lease_epoch"] or expected["lease_epoch"] < 0):
+                refuse("transaction replay genesis projection differs")
+            for key in (JOURNAL_KEYS - IMMUTABLE_PROJECTION_KEYS - {"history", "generation", "cas_nonce",
+                        "lease_id", "lease_epoch", "state", "updated_at", "manual_intervention_required"}):
+                if key.endswith("_sha256") and expected[key] is not None:
+                    refuse("START_SPEC forged effect evidence")
+            if expected["recovery_milestone"] != "NONE" or expected["rollback_milestone"] != "NONE":
+                refuse("START_SPEC forged milestones")
+        else:
+            assert previous is not None
+            expected = copy.deepcopy(previous)
+            for key in IMMUTABLE_PROJECTION_KEYS:
+                if projection[key] != previous[key]:
+                    refuse("transaction replay immutable projection changed")
+            expected.update({"generation": index, "cas_nonce": entry["cas_nonce"],
+                             "updated_at": entry["captured_at"], "state": entry["to_state"],
+                             "lease_epoch": entry["lease_epoch"]})
+            event = entry["event"]
+            if event == "ADOPT_LEASE":
+                if projection["lease_epoch"] <= previous["lease_epoch"]:
+                    refuse("transaction replay lease fencing token did not advance")
+                expected["lease_id"] = payload.get("lease_id")
+            else:
+                if projection["lease_epoch"] != previous["lease_epoch"] or projection["lease_id"] != previous["lease_id"]:
+                    refuse("transaction replay effect changed its lease fence")
+            allowed = set(payload.get("updates", {}))
+            if set(payload) - {"updates", "lease_id", "effect_receipt_sha256"}:
+                refuse("transaction replay payload schema differs")
+            expected_bound_receipt = (canonical_digest({"event": entry["event"],
+                                                        "effect_receipt_sha256": payload.get("effect_receipt_sha256"),
+                                                        "lease_epoch": entry["lease_epoch"]})
+                                      if payload.get("effect_receipt_sha256") is not None else None)
+            if expected_bound_receipt != entry["receipt_sha256"]:
+                refuse("transaction replay receipt is not bound to its effect")
+            updates = payload.get("updates", {})
+            if not isinstance(updates, dict):
+                refuse("transaction replay updates differ")
+            expected.update(updates)
+            if expected != projection:
+                refuse("transaction replay projection differs from canonical event reduction")
+        previous = copy.deepcopy(projection)
+    assert previous is not None
+    return previous
 
 
 class BrokerRefused(ValueError):
@@ -218,9 +289,7 @@ def validate_rollback_policy(policy: dict[str, Any]) -> None:
     if policy != {
         "schema_version": 1, "phase": 6, "status": "DORMANT_TRANSACTION_ROLLBACK_SPEC",
         "execution_enabled": False,
-        "automatic_rollback_failure_classes": [
-            "APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE", "POSTFLIGHT_UNSAFE",
-        ],
+        "automatic_rollback_failure_classes": ["RECOVERY_UNSAFE", "POSTFLIGHT_UNSAFE"],
         "requires_two_survivor_gate": True, "requires_refreshed_inventory": True,
         "requires_refreshed_known_hosts": True, "requires_applied_state_receipt": True,
         "requires_verified_state_backup": True, "requires_zero_drift_after_rollback": True,
@@ -250,6 +319,18 @@ def _commit(value: object, label: str) -> str:
     return value
 
 
+def _backup(value: object, label: str, *, lineage: str, serial: int, now: dt.datetime) -> dict[str, Any]:
+    receipt = exact_keys(value, BACKUP_KEYS, label)
+    _digest(receipt["receipt_sha256"], f"{label}.receipt")
+    _digest(receipt["backup_identity_sha256"], f"{label}.identity")
+    if receipt["state_lineage_sha256"] != lineage or receipt["state_serial"] != serial:
+        refuse(f"{label} state lineage/serial differs")
+    age = (utc(now) - timestamp(receipt["verified_at"], f"{label}.verified_at")).total_seconds()
+    if age < -30 or age > 300:
+        refuse(f"{label} verification is stale or future-dated")
+    return copy.deepcopy(receipt)
+
+
 def validate_journal(journal: dict[str, Any]) -> None:
     exact_keys(journal, JOURNAL_KEYS, "transaction journal v2")
     if journal["schema_version"] != 2 or journal["phase"] != 6 or journal["state"] not in STATES:
@@ -269,17 +350,27 @@ def validate_journal(journal: dict[str, Any]) -> None:
         refuse("transaction journal applied serial differs")
     if type(journal["generation"]) is not int or journal["generation"] < 1:
         refuse("transaction journal generation differs")
+    if type(journal["lease_epoch"]) is not int or journal["lease_epoch"] < 0:
+        refuse("transaction journal lease fencing token differs")
     if journal["recovery_milestone"] not in RECOVERY_MILESTONES or journal["rollback_milestone"] not in ROLLBACK_MILESTONES:
         refuse("transaction journal milestone differs")
-    nullable = ("prepare_receipt_sha256", "apply_receipt_sha256", "state_backup_sha256",
+    nullable = ("prepare_receipt_sha256", "apply_receipt_sha256",
                 "recovery_receipt_sha256", "postflight_sha256", "rollback_receipt_sha256",
-                "latest_gate_sha256", "pre_apply_backup_sha256", "post_apply_backup_sha256",
+                "latest_gate_sha256",
                 "rollback_plan_sha256", "rollback_plan_semantic_sha256",
-                "rollback_current_state_receipt_sha256", "pre_rollback_backup_sha256",
-                "post_rollback_backup_sha256")
+                "rollback_current_state_receipt_sha256")
     for key in nullable:
         if journal[key] is not None:
             _digest(journal[key], f"journal.{key}")
+    for key in BACKUP_FIELDS:
+        if journal[key] is not None:
+            backup_receipt = exact_keys(journal[key], BACKUP_KEYS, f"journal.{key}")
+            _digest(backup_receipt["receipt_sha256"], f"journal.{key}.receipt")
+            _digest(backup_receipt["backup_identity_sha256"], f"journal.{key}.identity")
+            if (backup_receipt["state_lineage_sha256"] != journal["state_lineage_sha256"]
+                    or type(backup_receipt["state_serial"]) is not int or backup_receipt["state_serial"] < 0):
+                refuse(f"journal.{key} lineage/serial differs")
+            timestamp(backup_receipt["verified_at"], f"journal.{key}.verified_at")
     if journal["failure_class"] not in {None, "APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE",
                                          "POSTFLIGHT_UNSAFE", "ROLLBACK_UNSAFE", "POLICY_REFUSAL"}:
         refuse("transaction journal failure class differs")
@@ -334,6 +425,8 @@ def validate_journal(journal: dict[str, Any]) -> None:
                                                        if key != "entry_sha256"}):
             refuse("transaction journal entry hash differs")
         projection = exact_keys(entry["projection"], JOURNAL_KEYS - {"history"}, "history.projection")
+        if entry["lease_epoch"] != projection["lease_epoch"]:
+            refuse("transaction journal history fence differs from projection")
         if entry["projection_sha256"] != canonical_digest(projection):
             refuse("transaction journal per-entry projection hash differs")
         if (projection["generation"] != entry["generation"] or projection["state"] != entry["to_state"]
@@ -355,6 +448,8 @@ def validate_journal(journal: dict[str, Any]) -> None:
         refuse("transaction journal materialized projection differs from canonical replay head")
     if history[-1]["projection"] != _projection_value(journal):
         refuse("transaction journal materialized values differ from canonical replay projection")
+    if _replay_history(history) != _projection_value(journal):
+        refuse("transaction journal deterministic replay differs from materialized head")
     if journal["state"] in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "COMPLETED"} and (
             journal["apply_receipt_sha256"] is None or journal["state_backup_sha256"] is None or after is None
             or journal["pre_apply_backup_sha256"] is None or journal["post_apply_backup_sha256"] is None):
@@ -422,6 +517,7 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
     expiry = timestamp(authorization["resource_expiry_utc"], "authorization.resource_expiry_utc")
     margin = authorization["minimum_recovery_margin_seconds"]
     if (margin != 86400 or not utc(now) < start_by < complete_by
+            or (start_by - utc(now)).total_seconds() > policy["maximum_start_window_seconds"]
             or not complete_by + dt.timedelta(seconds=margin) < expiry):
         refuse("transaction may not start after the authorized start-by time")
     nonce = nonce_source()
@@ -443,7 +539,8 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
         "plan_semantic_sha256": authorization["plan_semantic_sha256"],
         "state_lineage_sha256": authorization["state_lineage_sha256"],
         "state_serial_before": authorization["state_serial_before"], "state_serial_after": None,
-        "generation": 1, "cas_nonce": nonce, "lease_id": lease.lease_id, "state": "AUTHORIZED",
+        "generation": 1, "cas_nonce": nonce, "lease_id": lease.lease_id, "lease_epoch": lease.epoch,
+        "state": "AUTHORIZED",
         "recovery_milestone": "NONE", "rollback_milestone": "NONE",
         "prepare_receipt_sha256": None, "apply_receipt_sha256": None, "state_backup_sha256": None,
         "pre_apply_backup_sha256": None, "post_apply_backup_sha256": None,
@@ -462,7 +559,9 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
     journal["history"].append(_seal_entry({
         "generation": 1, "from_state": None, "to_state": "AUTHORIZED",
         "event": "START_SPEC", "receipt_sha256": authorization["authorization_sha256"],
-        "cas_nonce": nonce, "captured_at": captured, "previous_entry_sha256": None,
+        "cas_nonce": nonce, "captured_at": captured, "lease_epoch": lease.epoch,
+        "event_payload": {"authorization_sha256": authorization["authorization_sha256"]},
+        "previous_entry_sha256": None,
         "projection": _projection_value(journal), "projection_sha256": _projection(journal),
     }))
     validate_journal(journal)
@@ -480,6 +579,8 @@ def adopt_spec_journal(*, policy: dict[str, Any], journal: dict[str, Any], lease
     if (not lease.held or lease.operation_id != journal["operation_id"]
             or not DIGEST.fullmatch(lease.lease_id) or lease.lease_id == journal["lease_id"]):
         refuse("crash adoption requires a newly held canonical operation lease")
+    if type(lease.epoch) is not int or lease.epoch <= journal["lease_epoch"]:
+        refuse("crash adoption requires a strictly newer fencing token")
     if expected_generation != journal["generation"] or expected_nonce != journal["cas_nonce"]:
         refuse("crash adoption journal generation/nonce differs")
     exact_keys(boundary, {"authorization_sha256", "authorization_history_sha256",
@@ -500,13 +601,21 @@ def adopt_spec_journal(*, policy: dict[str, Any], journal: dict[str, Any], lease
         refuse("adoption CAS nonce was already used")
     candidate = copy.deepcopy(journal)
     candidate["lease_id"] = lease.lease_id
+    candidate["lease_epoch"] = lease.epoch
     candidate["generation"] += 1
     candidate["cas_nonce"] = nonce
     candidate["updated_at"] = utc_text(now)
+    adoption_effect_receipt = canonical_digest(boundary)
+    adoption_bound_receipt = canonical_digest({"event": "ADOPT_LEASE",
+                                               "effect_receipt_sha256": adoption_effect_receipt,
+                                               "lease_epoch": lease.epoch})
     candidate["history"].append(_seal_entry({
         "generation": candidate["generation"], "from_state": candidate["state"],
-        "to_state": candidate["state"], "event": "ADOPT_LEASE", "receipt_sha256": canonical_digest(boundary),
+        "to_state": candidate["state"], "event": "ADOPT_LEASE", "receipt_sha256": adoption_bound_receipt,
         "cas_nonce": nonce, "captured_at": candidate["updated_at"],
+        "lease_epoch": lease.epoch,
+        "event_payload": {"lease_id": lease.lease_id, "updates": {},
+                          "effect_receipt_sha256": adoption_effect_receipt},
         "previous_entry_sha256": journal["history"][-1]["entry_sha256"],
         "projection": _projection_value(candidate), "projection_sha256": _projection(candidate),
     }))
@@ -558,10 +667,9 @@ class BrokerModelSession:
         complete_by = timestamp(self.journal["complete_by"], "journal.complete_by")
         if current_time >= expiry and not terminalize:
             refuse("transaction or rollback crossed the approved resource expiry")
-        if current_time >= complete_by and not terminalize and not (
-                event_name.startswith("ROLLBACK_") or event_name.startswith("ADOPT_")
-                or event_name == "BEGIN_ROLLBACK" or event_name.startswith("FAIL_")):
-            refuse("forward transaction crossed complete_by; only adoption/rollback remains")
+        if current_time >= complete_by and not terminalize and (
+                event_name in {"BEGIN_PREPARE", "PREPARE_SUCCEEDED", "BEGIN_APPLY", "APPLY_SUCCEEDED"}):
+            refuse("new forward preparation/apply work crossed complete_by")
         if expected_generation != self.journal["generation"] or expected_nonce != self.journal["cas_nonce"]:
             refuse("transaction journal compare-and-swap generation/nonce differs")
         nonce = self.nonce_source()
@@ -579,10 +687,15 @@ class BrokerModelSession:
         candidate["generation"] += 1
         candidate["cas_nonce"] = nonce
         candidate["updated_at"] = utc_text(now)
+        bound_receipt = (canonical_digest({"event": event_name, "effect_receipt_sha256": receipt,
+                                           "lease_epoch": self.lease_epoch}) if receipt is not None else None)
         candidate["history"].append(_seal_entry({
             "generation": candidate["generation"], "from_state": previous, "to_state": to_state,
-            "event": event_name, "receipt_sha256": receipt, "cas_nonce": nonce,
+            "event": event_name, "receipt_sha256": bound_receipt, "cas_nonce": nonce,
             "captured_at": candidate["updated_at"],
+            "lease_epoch": self.lease_epoch,
+            "event_payload": {"updates": copy.deepcopy(updates or {}),
+                              "effect_receipt_sha256": receipt},
             "previous_entry_sha256": self.journal["history"][-1]["entry_sha256"],
             "projection": _projection_value(candidate), "projection_sha256": _projection(candidate),
         }))
@@ -610,7 +723,7 @@ class BrokerModelSession:
                                  receipt=canonical_digest({"deadline": self.journal["resource_expiry_utc"]}),
                                  updates={"failure_class": "POLICY_REFUSAL", "rollback_required": False,
                                           "manual_intervention_required": True}, terminalize=True)
-        if state not in {"COMPLETED", "ROLLED_BACK", "FAILED_SAFE"} and current >= complete_by:
+        if state in {"AUTHORIZED", "PREPARING", "PREPARED", "APPLYING"} and current >= complete_by:
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name="DEADLINE_EXPIRED", to_state="FAILED_SAFE", now=now,
                                  receipt=canonical_digest({"deadline": self.journal["complete_by"]}),
@@ -618,6 +731,8 @@ class BrokerModelSession:
                                           "manual_intervention_required": True}, terminalize=True)
 
         if name == "BEGIN_PREPARE" and state == "AUTHORIZED":
+            if current >= timestamp(self.journal["start_by"], "journal.start_by"):
+                refuse("BEGIN_PREPARE crossed the authorized start_by boundary")
             exact_keys(event, common | {"gate_kind", "gate_sha256", "gate_captured_at"}, "BEGIN_PREPARE")
             gate = _gate(event, self.policy, "pre_prepare", now)
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
@@ -672,16 +787,20 @@ class BrokerModelSession:
                              "state_serial_before", "state_serial_after"}
             exact_keys(event, keys, name)
             receipt = _digest(event["phase2_receipt_sha256"], "protected Phase2 receipt")
-            backup = _digest(event["state_backup_sha256"], "protected state backup")
-            pre_backup = _digest(event["pre_apply_backup_sha256"], "pre-apply state backup")
-            post_backup = _digest(event["post_apply_backup_sha256"], "post-apply state backup")
-            if len({backup, pre_backup, post_backup}) != 3:
-                refuse("apply backups are not separate immutable evidence")
             after = event["state_serial_after"]
             if (event["state_lineage_sha256"] != self.journal["state_lineage_sha256"]
                     or event["state_serial_before"] != self.journal["state_serial_before"]
                     or type(after) is not int or after <= self.journal["state_serial_before"]):
                 refuse("protected Phase2 receipt lineage/serial differs")
+            backup = _backup(event["state_backup_sha256"], "protected state backup",
+                             lineage=self.journal["state_lineage_sha256"], serial=self.journal["state_serial_before"], now=now)
+            pre_backup = _backup(event["pre_apply_backup_sha256"], "pre-apply state backup",
+                                 lineage=self.journal["state_lineage_sha256"], serial=self.journal["state_serial_before"], now=now)
+            post_backup = _backup(event["post_apply_backup_sha256"], "post-apply state backup",
+                                  lineage=self.journal["state_lineage_sha256"], serial=after, now=now)
+            if len({backup["backup_identity_sha256"], pre_backup["backup_identity_sha256"],
+                    post_backup["backup_identity_sha256"]}) != 3:
+                refuse("apply backups are not separate immutable evidence")
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="APPLIED", now=now, receipt=receipt,
                                  updates={"apply_receipt_sha256": receipt, "state_backup_sha256": backup,
@@ -701,30 +820,38 @@ class BrokerModelSession:
             if outcome == "NOT_STARTED":
                 if any((event["exact_target_state"], event["zero_drift"], event["state_serial_after"] is not None)):
                     refuse("NOT_STARTED adoption contains applied-state claims")
-                _digest(event["state_backup_sha256"], "adoption state backup")
+                _backup(event["state_backup_sha256"], "adoption state backup",
+                        lineage=self.journal["state_lineage_sha256"],
+                        serial=self.journal["state_serial_before"], now=now)
                 if event["state_lineage_sha256"] != self.journal["state_lineage_sha256"]:
                     refuse("NOT_STARTED adoption lineage differs")
                 return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                      event_name="ADOPT_APPLY_NOT_STARTED", to_state="PREPARED", now=now,
                                      receipt=probe)
             if outcome == "COMPLETE":
-                backup = _digest(event["state_backup_sha256"], "adoption state backup")
-                pre_backup = _digest(event["pre_apply_backup_sha256"], "adoption pre-apply backup")
-                post_backup = _digest(event["post_apply_backup_sha256"], "adoption post-apply backup")
-                if len({backup, pre_backup, post_backup}) != 3:
-                    refuse("adopted apply backups are not separate immutable evidence")
                 after = event["state_serial_after"]
                 if (event["exact_target_state"] is not True or event["zero_drift"] is not True
                         or event["state_lineage_sha256"] != self.journal["state_lineage_sha256"]
                         or type(after) is not int or after <= self.journal["state_serial_before"]):
                     refuse("COMPLETE adoption lacks exact target, zero drift, backup, or state advancement")
+                backup = _backup(event["state_backup_sha256"], "adoption state backup",
+                                 lineage=self.journal["state_lineage_sha256"], serial=self.journal["state_serial_before"], now=now)
+                pre_backup = _backup(event["pre_apply_backup_sha256"], "adoption pre-apply backup",
+                                     lineage=self.journal["state_lineage_sha256"], serial=self.journal["state_serial_before"], now=now)
+                post_backup = _backup(event["post_apply_backup_sha256"], "adoption post-apply backup",
+                                      lineage=self.journal["state_lineage_sha256"], serial=after, now=now)
+                if len({backup["backup_identity_sha256"], pre_backup["backup_identity_sha256"],
+                        post_backup["backup_identity_sha256"]}) != 3:
+                    refuse("adopted apply backups are not separate immutable evidence")
                 return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                      event_name="ADOPT_APPLY_COMPLETE", to_state="APPLIED", now=now,
                                      receipt=probe, updates={"apply_receipt_sha256": probe,
                                      "state_backup_sha256": backup, "pre_apply_backup_sha256": pre_backup,
                                      "post_apply_backup_sha256": post_backup, "state_serial_after": after})
             if outcome in {"PARTIAL", "UNKNOWN"}:
-                backup = _digest(event["state_backup_sha256"], "adoption state backup")
+                backup = _backup(event["state_backup_sha256"], "adoption state backup",
+                                 lineage=self.journal["state_lineage_sha256"],
+                                 serial=event["current_state_serial"], now=now)
                 # Uncertain provider effects are a manual stop, never an
                 # automatic revert.  A read-only exact-current-state receipt is
                 # mandatory even to classify the stop safely.
@@ -758,14 +885,19 @@ class BrokerModelSession:
                                  event_name=name, to_state="RECOVERING", now=now, receipt=receipt,
                                  updates={"latest_gate_sha256": gate})
         if name == "RECOVERY_MILESTONE" and state == "RECOVERING":
-            exact_keys(event, common | {"milestone", "receipt_sha256"}, name)
+            exact_keys(event, common | {"milestone", "receipt_sha256", "effect_probe_sha256",
+                                        "exact_effect_verified"}, name)
             current = RECOVERY_MILESTONES.index(self.journal["recovery_milestone"])
             if current + 1 >= len(RECOVERY_MILESTONES) or event["milestone"] != RECOVERY_MILESTONES[current + 1]:
                 refuse("recovery milestone is not the next idempotent exact-effect boundary")
             receipt = _digest(event["receipt_sha256"], "recovery milestone receipt")
+            probe = _digest(event["effect_probe_sha256"], "recovery effect probe")
+            if event["exact_effect_verified"] is not True:
+                refuse("recovery milestone effect was not idempotently observed before CAS")
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=f"RECOVERY_{event['milestone']}", to_state="RECOVERING", now=now,
-                                 receipt=receipt, updates={"recovery_milestone": event["milestone"]})
+                                 receipt=canonical_digest({"receipt": receipt, "probe": probe}),
+                                 updates={"recovery_milestone": event["milestone"]})
         if name in {"RECOVERY_SUCCEEDED", "ADOPT_RECOVERY_COMPLETE"} and state == "RECOVERING":
             exact_keys(event, common | {"recovery_receipt_sha256", "exact_effects_verified"}, name)
             if self.journal["recovery_milestone"] != RECOVERY_MILESTONES[-1] or event["exact_effects_verified"] is not True:
@@ -809,8 +941,8 @@ class BrokerModelSession:
             exact_keys(event, keys, name)
             gate = _gate(event, self.policy, "rollback_two_survivor", now)
             for key in ("inventory_sha256", "known_hosts_sha256", "applied_state_receipt_sha256",
-                        "state_backup_sha256", "rollback_plan_sha256", "rollback_plan_semantic_sha256",
-                        "current_state_receipt_sha256", "pre_rollback_backup_sha256"):
+                        "rollback_plan_sha256", "rollback_plan_semantic_sha256",
+                        "current_state_receipt_sha256"):
                 _digest(event[key], f"rollback {key}")
             if (event["current_state_lineage_sha256"] != self.journal["state_lineage_sha256"]
                     or event["current_state_serial"] != self.journal["state_serial_after"]):
@@ -820,6 +952,13 @@ class BrokerModelSession:
                 refuse("rollback admission is not bound to the applied-state receipt")
             if event["state_backup_sha256"] != self.journal["state_backup_sha256"]:
                 refuse("rollback admission is not bound to the verified state backup")
+            pre_rollback = _backup(event["pre_rollback_backup_sha256"], "pre-rollback backup",
+                                   lineage=self.journal["state_lineage_sha256"],
+                                   serial=self.journal["state_serial_after"], now=now)
+            if pre_rollback["backup_identity_sha256"] in {
+                    self.journal["state_backup_sha256"]["backup_identity_sha256"],
+                    self.journal["post_apply_backup_sha256"]["backup_identity_sha256"]}:
+                refuse("pre-rollback backup is not distinct immutable evidence")
             receipt = canonical_digest({key: event[key] for key in sorted(keys - common)})
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="ROLLING_BACK", now=now, receipt=receipt,
@@ -827,24 +966,34 @@ class BrokerModelSession:
                                           "rollback_plan_sha256": event["rollback_plan_sha256"],
                                           "rollback_plan_semantic_sha256": event["rollback_plan_semantic_sha256"],
                                           "rollback_current_state_receipt_sha256": event["current_state_receipt_sha256"],
-                                          "pre_rollback_backup_sha256": event["pre_rollback_backup_sha256"]})
+                                          "pre_rollback_backup_sha256": pre_rollback})
         if name == "ROLLBACK_MILESTONE" and state == "ROLLING_BACK":
-            exact_keys(event, common | {"milestone", "receipt_sha256"}, name)
+            exact_keys(event, common | {"milestone", "receipt_sha256", "effect_probe_sha256",
+                                        "exact_effect_verified"}, name)
             current = ROLLBACK_MILESTONES.index(self.journal["rollback_milestone"])
             if current + 1 >= len(ROLLBACK_MILESTONES) or event["milestone"] != ROLLBACK_MILESTONES[current + 1]:
                 refuse("rollback milestone is not the next idempotent exact-effect boundary")
             receipt = _digest(event["receipt_sha256"], "rollback milestone receipt")
+            probe = _digest(event["effect_probe_sha256"], "rollback effect probe")
+            if event["exact_effect_verified"] is not True:
+                refuse("rollback milestone effect was not idempotently observed before CAS")
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=f"ROLLBACK_{event['milestone']}", to_state="ROLLING_BACK", now=now,
-                                 receipt=receipt, updates={"rollback_milestone": event["milestone"]})
+                                 receipt=canonical_digest({"receipt": receipt, "probe": probe}),
+                                 updates={"rollback_milestone": event["milestone"]})
         if name in {"ROLLBACK_SUCCEEDED", "ADOPT_ROLLBACK_COMPLETE"} and state == "ROLLING_BACK":
             exact_keys(event, common | {"rollback_receipt_sha256", "post_rollback_backup_sha256",
-                                        "exact_effects_verified"}, name)
-            if self.journal["rollback_milestone"] != ROLLBACK_MILESTONES[-1] or event["exact_effects_verified"] is not True:
+                                        "exact_effects_verified", "zero_drift"}, name)
+            if (self.journal["rollback_milestone"] != ROLLBACK_MILESTONES[-1]
+                    or event["exact_effects_verified"] is not True or event["zero_drift"] is not True):
                 refuse("rollback completion lacks every exact-effect milestone")
             receipt = _digest(event["rollback_receipt_sha256"], "rollback receipt")
-            post_backup = _digest(event["post_rollback_backup_sha256"], "post-rollback state backup")
-            if post_backup == self.journal["state_backup_sha256"]:
+            post_backup = _backup(event["post_rollback_backup_sha256"], "post-rollback state backup",
+                                  lineage=self.journal["state_lineage_sha256"],
+                                  serial=self.journal["state_serial_before"], now=now)
+            if post_backup["backup_identity_sha256"] in {
+                    self.journal["state_backup_sha256"]["backup_identity_sha256"],
+                    self.journal["pre_rollback_backup_sha256"]["backup_identity_sha256"]}:
                 refuse("post-rollback backup is not separate immutable evidence")
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="ROLLED_BACK", now=now, receipt=receipt,

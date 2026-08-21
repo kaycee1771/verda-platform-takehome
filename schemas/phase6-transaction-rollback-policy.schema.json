@@ -10,7 +10,7 @@
     "phase": {"const": 6},
     "status": {"const": "DORMANT_TRANSACTION_ROLLBACK_SPEC"},
     "execution_enabled": {"const": false},
-    "automatic_rollback_failure_classes": {"const": ["APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE", "POSTFLIGHT_UNSAFE"]},
+    "automatic_rollback_failure_classes": {"const": ["RECOVERY_UNSAFE", "POSTFLIGHT_UNSAFE"]},
     "requires_two_survivor_gate": {"const": true},
     "requires_refreshed_inventory": {"const": true},
     "requires_refreshed_known_hosts": {"const": true},
