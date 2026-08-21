@@ -232,10 +232,12 @@ def _windows_owner_protected_dacl(path: pathlib.Path, *, require_current_owner: 
             sid = ctypes.c_void_p(ace.value + sid_offset); text_sid = wintypes.LPWSTR()
             if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(text_sid)): return False
             try:
-                write_mask = (0x40000000 | 0x10000000 | 0x0002 | 0x0004 | 0x0100) if require_protected \
-                    else (0x40000000 | 0x10000000 | 0x00010000 | 0x00040000 | 0x00080000 | 0x0040)
+                write_mask = (0x40000000 | 0x10000000 | 0x00010000 | 0x00040000 | 0x00080000
+                              | 0x0002 | 0x0004 | 0x0010 | 0x0040 | 0x0100)
                 if text_sid.value not in allowed_writers and mask & write_mask:
-                    return False
+                    root_create_only = (not require_protected and path == pathlib.Path(path.anchor)
+                                        and text_sid.value == "S-1-5-11" and mask == 0x4 and raw[1] == 0)
+                    if not root_create_only: return False
             finally:
                 kernel32.LocalFree(text_sid)
         return True
@@ -571,6 +573,14 @@ class DurableBrokerStore:
             yield
 
     def _recover_stale_snapshots(self) -> None:
+        temp_grammar = re.compile(r"(\.phase6-(intent|snapshot)-[0-9a-f]{32}\.tmp)(\.deleting)?")
+        for candidate in self.root.iterdir():
+            if candidate.name.startswith(".phase6-"):
+                if not temp_grammar.fullmatch(candidate.name): refuse("ambiguous snapshot temporary file")
+                self._secure(candidate, regular=True)
+                match = temp_grammar.fullmatch(candidate.name)
+                if not match: refuse("ambiguous snapshot temporary file")
+                self._delete_windows_write_through(candidate, original_name=match.group(1))
         grammar = re.compile(r"(state-([0-9a-f]{64})-([0-9a-f]{32})\.read-only\.tfstate)(\.deleting)?")
         entries = {item.name: item for item in self.root.iterdir() if item.name.startswith("state-")}
         for name, path in list(entries.items()):
@@ -863,6 +873,22 @@ class DurableBrokerStore:
                 os.close(directory)
         self.crash_hook("after_directory_fsync")
 
+    def _atomic_snapshot_file(self, final: pathlib.Path, raw: bytes, *, kind: str) -> None:
+        temp = self.root / f".phase6-{kind}-{secrets.token_hex(16)}.tmp"
+        descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        try:
+            _protect_windows_path(temp); self.crash_hook(f"after_{kind}_create")
+            write_all(descriptor, raw); self.crash_hook(f"after_{kind}_partial_write")
+            os.fsync(descriptor); self.crash_hook(f"after_{kind}_fsync")
+        finally:
+            os.close(descriptor)
+        self._secure(temp, regular=True)
+        observed_temp = self._stable_bytes(temp)
+        if observed_temp != raw: refuse(f"protected {kind} temporary bytes differ")
+        self._replace(temp, final); self.crash_hook(f"after_{kind}_replace")
+        self._secure(final, regular=True)
+        if self._stable_bytes(final) != raw: refuse(f"committed {kind} bytes differ")
+
     def cas(self, journal: dict[str, Any], *, expected_generation: int, expected_lease_epoch: int,
             expected_cas_nonce: str | None, expected_head_sha256: str | None) -> dict[str, Any]:
         MODEL.validate_journal(journal)
@@ -1021,22 +1047,8 @@ class ReadOnlyAdmissionAdapter:
                 manifest = {"schema_version": 1, "operation_id": self.store.operation_id,
                             "snapshot_name": snapshot.name, "snapshot_sha256": snapshot_digest, "state": "PLANNED",
                             "created_at": utc_text(self.clock()), "raw_values_recorded": False}
-                marker_fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                try:
-                    self.store.crash_hook("after_intent_create")
-                    _protect_windows_path(marker)
-                    write_all(marker_fd, canonical_bytes(manifest) + b"\n"); os.fsync(marker_fd)
-                    self.store.crash_hook("after_intent_fsync")
-                finally:
-                    os.close(marker_fd)
-                fd = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                try:
-                    self.store.crash_hook("after_snapshot_create")
-                    if os.name == "nt": _protect_windows_path(snapshot)
-                    write_all(fd, raw); os.fsync(fd)
-                    self.store.crash_hook("after_snapshot_fsync")
-                finally:
-                    os.close(fd)
+                self.store._atomic_snapshot_file(marker, canonical_bytes(manifest) + b"\n", kind="intent")
+                self.store._atomic_snapshot_file(snapshot, raw, kind="snapshot")
                 self.store._secure(snapshot, regular=True)
                 if self.store._stable_bytes(snapshot) != raw:
                     snapshot.unlink(missing_ok=True)

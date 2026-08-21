@@ -345,7 +345,8 @@ class DurableBrokerStoreTests(unittest.TestCase):
         self.assertEqual(aggregate["instance_type_counts"], {"CPU.8V.32G": 2})
 
     def test_snapshot_crash_boundaries_recover_or_refuse_without_unbound_state(self) -> None:
-        stages = ("after_intent_create", "after_intent_fsync", "after_snapshot_create", "after_snapshot_fsync",
+        stages = ("after_intent_create", "after_intent_partial_write", "after_intent_fsync", "after_intent_replace",
+                  "after_snapshot_create", "after_snapshot_partial_write", "after_snapshot_fsync", "after_snapshot_replace",
                   "before_snapshot_tombstone_rename", "after_snapshot_tombstone_rename",
                   "before_snapshot_tombstone_delete", "after_snapshot_tombstone_delete",
                   "before_manifest_tombstone_rename", "after_manifest_tombstone_rename",
