@@ -145,13 +145,12 @@ class DurableBrokerStoreTests(unittest.TestCase):
             self.assertEqual(len(outcomes), 1)
             self.assertIn("another writer", outcomes[0])
 
-    def test_windows_default_security_probe_accepts_protected_base(self) -> None:
+    def test_windows_default_security_probe_refuses_untrusted_system_ancestor(self) -> None:
         base = pathlib.Path(os.environ["LOCALAPPDATA"]) / f"VerdaStoreProbe-{uuid.uuid4().hex}"
         try:
             store = STORE.DurableBrokerStore(operation_id=FIXTURES.OPERATION, base=base, clock=lambda: NOW)
-            store.initialize()
-            self.assertTrue(STORE.default_security_probe(base)["owner_only"])
-            self.assertTrue(STORE.default_security_probe(store.root)["owner_only"])
+            with self.assertRaisesRegex(STORE.StoreRefused, "system ancestor"):
+                store.initialize()
         finally:
             shutil.rmtree(base, ignore_errors=True)
 
@@ -324,6 +323,7 @@ class DurableBrokerStoreTests(unittest.TestCase):
             stale_marker = stale.with_name(stale.name + ".manifest.json")
             stale_marker.write_text(json.dumps({"schema_version": 1, "operation_id": FIXTURES.OPERATION,
                 "snapshot_name": stale.name, "snapshot_sha256": stale_digest,
+                "state": "PLANNED",
                 "created_at": "2026-08-21T12:00:00Z", "raw_values_recorded": False}), encoding="utf-8")
             STORE._protect_windows_path(stale_marker)
             adapter = STORE.ReadOnlyAdmissionAdapter(store,

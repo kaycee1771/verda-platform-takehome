@@ -17,6 +17,9 @@ param(
 if ($MyInvocation.InvocationName -eq '.') {
     throw 'phase2.ps1 is a non-library entrypoint and must not be dot-sourced.'
 }
+if (-not $IsWindows) {
+    throw 'Phase 2 protected infrastructure entrypoint is Windows-only and disabled on this host.'
+}
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

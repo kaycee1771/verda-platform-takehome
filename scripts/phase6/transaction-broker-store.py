@@ -225,7 +225,8 @@ def _windows_owner_protected_dacl(path: pathlib.Path, *, require_current_owner: 
             if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(text_sid)): return False
             try:
                 write_mask = (0x40000000 | 0x10000000 | 0x0002 | 0x0004 | 0x0100) if require_protected \
-                    else (0x40000000 | 0x10000000 | 0x00010000 | 0x00040000 | 0x00080000 | 0x0040)
+                    else (0x40000000 | 0x10000000 | 0x00010000 | 0x00040000 | 0x00080000
+                          | 0x0002 | 0x0004 | 0x0010 | 0x0040 | 0x0100)
                 if text_sid.value not in allowed_writers and mask & write_mask:
                     return False
             finally:
@@ -486,8 +487,7 @@ class DurableBrokerStore:
                 if within_base:
                     if not facts.get("owner_only", False):
                         refuse("broker path ACL is not owner-only")
-                elif os.name == "nt" and cursor != pathlib.Path.home() \
-                        and not (self.custom_security_probe and facts.get("owner_only", False)) \
+                elif os.name == "nt" and not (self.custom_security_probe and facts.get("owner_only", False)) \
                         and not _windows_owner_protected_dacl(
                         cursor, require_current_owner=False, require_protected=False):
                     refuse("broker system ancestor permits an untrusted writer")
@@ -519,6 +519,16 @@ class DurableBrokerStore:
     def _recover_stale_snapshots(self) -> None:
         grammar = re.compile(r"(state-([0-9a-f]{64})-([0-9a-f]{32})\.read-only\.tfstate)(\.deleting)?")
         entries = {item.name: item for item in self.root.iterdir() if item.name.startswith("state-")}
+        for name, path in list(entries.items()):
+            if name.endswith(".manifest.json.deleting"):
+                original_marker = name.removesuffix(".deleting")
+                if not grammar.fullmatch(original_marker.removesuffix(".manifest.json")):
+                    refuse("ambiguous snapshot manifest tombstone")
+                manifest = self._read_json(path)
+                if manifest.get("operation_id") != self.operation_id or manifest.get("state") != "PLANNED":
+                    refuse("snapshot manifest tombstone differs")
+                self._delete_windows_write_through(path, original_name=original_marker)
+                entries.pop(name)
         manifests = {name: path for name, path in entries.items() if name.endswith(".manifest.json")}
         snapshots = {name: path for name, path in entries.items() if not name.endswith(".manifest.json")}
         for name, candidate in list(snapshots.items()):
@@ -528,17 +538,25 @@ class DurableBrokerStore:
             marker = manifests.pop(marker_name, None)
             if marker is None: refuse("stale Terraform snapshot lacks exact manifest")
             manifest = self._read_json(marker)
-            if (set(manifest) != {"schema_version", "operation_id", "snapshot_name", "snapshot_sha256",
+            if (set(manifest) != {"schema_version", "operation_id", "snapshot_name", "snapshot_sha256", "state",
                                   "created_at", "raw_values_recorded"}
                     or manifest["schema_version"] != 1 or manifest["operation_id"] != self.operation_id
                     or manifest["snapshot_name"] != original or manifest["snapshot_sha256"] != match.group(2)
+                    or manifest["state"] != "PLANNED"
                     or manifest["raw_values_recorded"] is not False):
                 refuse("stale Terraform snapshot manifest differs")
             if digest_bytes(self._stable_bytes(candidate)) != manifest["snapshot_sha256"]:
                 refuse("stale Terraform snapshot digest differs from manifest")
             self._delete_windows_write_through(candidate, original_name=original)
             self._delete_windows_write_through(marker, original_name=marker_name)
-        if manifests: refuse("orphan Terraform snapshot manifest differs")
+        for marker_name, marker in manifests.items():
+            original = marker_name.removesuffix(".manifest.json")
+            if not grammar.fullmatch(original): refuse("orphan Terraform snapshot manifest differs")
+            manifest = self._read_json(marker)
+            if (manifest.get("schema_version") != 1 or manifest.get("operation_id") != self.operation_id
+                    or manifest.get("snapshot_name") != original or manifest.get("state") != "PLANNED"):
+                refuse("orphan Terraform snapshot intent differs")
+            self._delete_windows_write_through(marker, original_name=marker_name)
 
     @staticmethod
     def _delete_windows_write_through(path: pathlib.Path, *, original_name: str) -> None:
@@ -604,27 +622,42 @@ class DurableBrokerStore:
                                       ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p)
         kernel32.ReadFile.restype = wintypes.BOOL
         kernel32.CloseHandle.argtypes = (wintypes.HANDLE,); kernel32.CloseHandle.restype = wintypes.BOOL
+        class DIR_INFO(ctypes.Structure):
+            _fields_ = [("attributes", wintypes.DWORD), ("creation_low", wintypes.DWORD),
+                        ("creation_high", wintypes.DWORD), ("access_low", wintypes.DWORD),
+                        ("access_high", wintypes.DWORD), ("write_low", wintypes.DWORD),
+                        ("write_high", wintypes.DWORD), ("volume", wintypes.DWORD),
+                        ("size_high", wintypes.DWORD), ("size_low", wintypes.DWORD),
+                        ("links", wintypes.DWORD), ("index_high", wintypes.DWORD), ("index_low", wintypes.DWORD)]
         ancestor_handles = []
         for ancestor in reversed(path.resolve(strict=True).parents):
             if not ancestor.exists(): continue
             directory_handle = kernel32.CreateFileW(str(ancestor), 0x80000000, 0x1 | 0x2 | 0x4, None, 3,
                                                      0x02000000 | 0x00200000, None)
             if directory_handle == wintypes.HANDLE(-1).value:
-                for held in ancestor_handles: kernel32.CloseHandle(held)
+                for held, *_ in ancestor_handles: kernel32.CloseHandle(held)
                 refuse("unable to hold protected artifact ancestor directory")
             facts = self.security_probe(ancestor)
             within_base = ancestor == self.base or self.base in ancestor.parents
             trusted = facts.get("owner_only", False) if within_base or self.custom_security_probe else \
-                (ancestor == pathlib.Path.home() or _windows_owner_protected_dacl(
-                    ancestor, require_current_owner=False, require_protected=False))
+                _windows_owner_protected_dacl(ancestor, require_current_owner=False, require_protected=False)
             if facts.get("reparse") or not trusted:
                 kernel32.CloseHandle(directory_handle)
-                for held in ancestor_handles: kernel32.CloseHandle(held)
+                for held, *_ in ancestor_handles: kernel32.CloseHandle(held)
                 refuse("protected artifact ancestor DACL/owner differs while held")
-            ancestor_handles.append(directory_handle)
+            info = DIR_INFO(); length = kernel32.GetFinalPathNameByHandleW(directory_handle, None, 0, 0)
+            final_buffer = ctypes.create_unicode_buffer(length + 1)
+            if (not kernel32.GetFileInformationByHandle(directory_handle, ctypes.byref(info)) or not length
+                    or not kernel32.GetFinalPathNameByHandleW(directory_handle, final_buffer, len(final_buffer), 0)
+                    or pathlib.Path(final_buffer.value.removeprefix("\\\\?\\")).resolve(strict=False)
+                    != ancestor.resolve(strict=True)):
+                kernel32.CloseHandle(directory_handle)
+                for held, *_ in ancestor_handles: kernel32.CloseHandle(held)
+                refuse("protected artifact ancestor handle identity/final path differs")
+            ancestor_handles.append((directory_handle, info, final_buffer.value))
         handle = kernel32.CreateFileW(str(path), 0x80000000, 0x1, None, 3, 0x00200000, None)
         if handle == wintypes.HANDLE(-1).value:
-            for held in ancestor_handles: kernel32.CloseHandle(held)
+            for held, *_ in ancestor_handles: kernel32.CloseHandle(held)
             refuse("unable to open protected artifact without following reparse points")
         try:
             length = kernel32.GetFinalPathNameByHandleW(handle, None, 0, 0)
@@ -659,7 +692,15 @@ class DurableBrokerStore:
             return b"".join(chunks)
         finally:
             kernel32.CloseHandle(handle)
-            for held in reversed(ancestor_handles): kernel32.CloseHandle(held)
+            for held, before_info, before_final in reversed(ancestor_handles):
+                after_info = DIR_INFO(); length = kernel32.GetFinalPathNameByHandleW(held, None, 0, 0)
+                final_buffer = ctypes.create_unicode_buffer(length + 1)
+                valid = (kernel32.GetFileInformationByHandle(held, ctypes.byref(after_info)) and length
+                         and kernel32.GetFinalPathNameByHandleW(held, final_buffer, len(final_buffer), 0)
+                         and (before_info.volume, before_info.index_high, before_info.index_low, before_final)
+                         == (after_info.volume, after_info.index_high, after_info.index_low, final_buffer.value))
+                kernel32.CloseHandle(held)
+                if not valid: refuse("protected artifact ancestor identity changed while leaf was read")
 
     def _load_unlocked(self) -> dict[str, Any]:
         self.initialize()
@@ -910,6 +951,15 @@ class ReadOnlyAdmissionAdapter:
                 snapshot_digest = digest_bytes(raw)
                 snapshot = self.store.root / f"state-{snapshot_digest}-{secrets.token_hex(16)}.read-only.tfstate"
                 marker = snapshot.with_name(snapshot.name + ".manifest.json")
+                manifest = {"schema_version": 1, "operation_id": self.store.operation_id,
+                            "snapshot_name": snapshot.name, "snapshot_sha256": snapshot_digest, "state": "PLANNED",
+                            "created_at": utc_text(self.clock()), "raw_values_recorded": False}
+                marker_fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                try:
+                    _protect_windows_path(marker)
+                    write_all(marker_fd, canonical_bytes(manifest) + b"\n"); os.fsync(marker_fd)
+                finally:
+                    os.close(marker_fd)
                 fd = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 try:
                     if os.name == "nt": _protect_windows_path(snapshot)
@@ -920,15 +970,6 @@ class ReadOnlyAdmissionAdapter:
                 if self.store._stable_bytes(snapshot) != raw:
                     snapshot.unlink(missing_ok=True)
                     refuse("protected Terraform snapshot bytes differ")
-                manifest = {"schema_version": 1, "operation_id": self.store.operation_id,
-                            "snapshot_name": snapshot.name, "snapshot_sha256": snapshot_digest,
-                            "created_at": utc_text(self.clock()), "raw_values_recorded": False}
-                marker_fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                try:
-                    _protect_windows_path(marker)
-                    write_all(marker_fd, canonical_bytes(manifest) + b"\n"); os.fsync(marker_fd)
-                finally:
-                    os.close(marker_fd)
                 try:
                     command = command + (str(snapshot),)
                     started = self.clock(); code, stdout, stderr = self.runner(command); ended = self.clock()
