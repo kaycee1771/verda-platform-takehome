@@ -305,12 +305,34 @@ class TransactionBrokerSpecTests(unittest.TestCase):
                          "state_serial_after": None,
                          "current_state_receipt_sha256": digest(f"current-{outcome}"),
                          "current_state_lineage_sha256": fixture.authorization["state_lineage_sha256"],
-                         "current_state_serial": 12}
+                         "current_state_serial": 12, "reconciled_state_backup": backup(f"reconciled-{outcome}", 12)}
                 missing = copy.deepcopy(event); del missing["current_state_receipt_sha256"]
                 with self.assertRaises(MODEL.BrokerRefused): fixture.go(missing)
                 required = fixture.go(event)
                 self.assertEqual(required["state"], "FAILED_SAFE")
                 self.assertIs(required["manual_intervention_required"], True)
+
+    def test_uncertain_apply_journals_advanced_reconciled_serial_without_complete_serial(self) -> None:
+        for outcome in ("PARTIAL", "UNKNOWN"):
+            with self.subTest(outcome=outcome):
+                fixture = BrokerFixture(); fixture.prepare()
+                fixture.go({"event": "BEGIN_APPLY", **fixture.fake.gate("pre_apply_two_survivor")})
+                stopped = fixture.go({"event": "ADOPT_APPLY", "outcome": outcome,
+                                      "probe_sha256": digest(f"advanced-{outcome}"),
+                                      "state_backup_sha256": backup(f"original-{outcome}", 12),
+                                      "reconciled_state_backup": backup(f"advanced-reconciled-{outcome}", 13),
+                                      "exact_target_state": False, "zero_drift": False,
+                                      "state_lineage_sha256": fixture.authorization["state_lineage_sha256"],
+                                      "state_serial_after": None,
+                                      "current_state_receipt_sha256": digest(f"advanced-current-{outcome}"),
+                                      "current_state_lineage_sha256": fixture.authorization["state_lineage_sha256"],
+                                      "current_state_serial": 13})
+                self.assertIsNone(stopped["state_serial_after"])
+                self.assertEqual(stopped["reconciled_state_serial"], 13)
+                self.assertEqual(stopped["reconciled_state_backup"]["state_serial"], 13)
+                self.assertEqual(stopped["reconciled_current_state_receipt_sha256"],
+                                 digest(f"advanced-current-{outcome}"))
+                MODEL.validate_journal(stopped)
 
     def test_forged_completion_and_skipped_replay_are_rejected(self) -> None:
         fixture = BrokerFixture()
@@ -423,7 +445,8 @@ class TransactionBrokerSpecTests(unittest.TestCase):
                                "state_serial_after": None,
                                "current_state_receipt_sha256": digest("late-current-state"),
                                "current_state_lineage_sha256": applying.authorization["state_lineage_sha256"],
-                               "current_state_serial": 12}, now=after)
+                               "current_state_serial": 12,
+                               "reconciled_state_backup": backup("late-reconciled", 12, at=after)}, now=after)
         self.assertEqual(stopped["state"], "FAILED_SAFE")
 
     def test_closed_payload_rejects_extra_field_and_forged_allowed_value(self) -> None:

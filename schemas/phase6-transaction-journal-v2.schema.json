@@ -16,6 +16,7 @@
     "pre_apply_backup_sha256", "post_apply_backup_sha256", "rollback_plan_sha256",
     "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
     "pre_rollback_backup_sha256", "post_rollback_backup_sha256",
+    "reconciled_state_serial", "reconciled_state_backup", "reconciled_current_state_receipt_sha256",
     "start_by", "complete_by", "resource_expiry_utc", "minimum_recovery_margin_seconds",
     "started_at", "updated_at", "history", "manual_intervention_required", "raw_values_recorded"
   ],
@@ -60,6 +61,9 @@
     "rollback_current_state_receipt_sha256": {"$ref": "#/$defs/nullableDigest"},
     "pre_rollback_backup_sha256": {"$ref": "#/$defs/nullableBackup"},
     "post_rollback_backup_sha256": {"$ref": "#/$defs/nullableBackup"},
+    "reconciled_state_serial": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0}]},
+    "reconciled_state_backup": {"$ref": "#/$defs/nullableBackup"},
+    "reconciled_current_state_receipt_sha256": {"$ref": "#/$defs/nullableDigest"},
     "failure_class": {"oneOf": [{"type": "null"}, {"enum": ["APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE", "POSTFLIGHT_UNSAFE", "ROLLBACK_UNSAFE", "POLICY_REFUSAL"]}]},
     "rollback_required": {"type": "boolean"},
     "start_by": {"$ref": "#/$defs/utc"},
