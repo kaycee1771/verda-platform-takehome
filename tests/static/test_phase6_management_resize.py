@@ -628,7 +628,9 @@ class RecoverySourceTests(unittest.TestCase):
     def test_cli_exposes_only_reviewed_operation_routes(self) -> None:
         parser = RESIZE.build_parser()
         choices = next(action.choices for action in parser._actions if getattr(action, "choices", None))
-        self.assertEqual(set(choices), {"validate-contract", "apply-node", "adopt-apply", "recover-node"})
+        self.assertEqual(
+            set(choices), {"validate-contract", "assert-saved-plan", "apply-node", "adopt-apply", "recover-node"}
+        )
         phase2 = (ROOT / "scripts" / "infra" / "phase2.ps1").read_text()
         self.assertIn("phase6-resize-apply", phase2)
         self.assertIn("Invoke-Phase6ResizeApply", phase2)
@@ -848,7 +850,7 @@ try {{
                 self.assertEqual(state.read_text(encoding="utf-8"), "protected-state")
 
     @unittest.skipUnless(os.name == "nt", "DPAPI failure sealing is Windows-only")
-    def test_failure_after_open_reseals_state_and_withholds_fake_terraform_output(self) -> None:
+    def test_disabled_phase6_plan_refuses_before_state_open_or_terraform(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             base, backup = root / "base", root / "backup"
@@ -882,9 +884,9 @@ try {{
                 check=False, capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertFalse(state.exists())
-            self.assertTrue(pathlib.Path(f"{state}.dpapi").is_file())
-            self.assertTrue(marker.is_file())
+            self.assertTrue(state.exists())
+            self.assertFalse(pathlib.Path(f"{state}.dpapi").exists())
+            self.assertFalse(marker.exists())
             self.assertNotIn("SENSITIVE-FAKE-TERRAFORM", result.stdout + result.stderr)
 
 
@@ -1216,7 +1218,7 @@ class ActivationIntegrationTests(unittest.TestCase):
             }
 
         def phase2_apply(self, *, saved_plan: pathlib.Path, plan_sha256: str,
-                         lineage_sha256: str, state_serial: int, operation_id: str) -> dict:
+                         lineage_sha256: str, state_serial: int, operation_id: str, **_: object) -> dict:
             self.calls.append("phase2:apply")
             if self.crash_apply:
                 raise RESIZE.ResizeRefused("simulated receipt-loss crash")
@@ -1346,7 +1348,13 @@ class ActivationIntegrationTests(unittest.TestCase):
         )
         dummy["collector"].write_text(json.dumps(adapter.collect(preflight_command)), encoding="utf-8")
         with mock.patch.object(RESIZE, "assert_clean_reviewed_worktree"), mock.patch.object(
-            RESIZE, "admission", return_value={"plan_sha256": RESIZE.digest_file(saved_plan)}
+            RESIZE, "admission", return_value={
+                "plan_sha256": RESIZE.digest_file(saved_plan),
+                "plan_semantic_sha256": RESIZE.canonical_digest(
+                    RESIZE.assert_plan(plan("03", direction), active_contract(), "03", direction, NOW)
+                ),
+                "preflight_sha256": "8" * 64,
+            }
         ):
             return RESIZE.execute_reviewed_apply(
                 repository=ROOT, contract_path=contract_path, progress_path=progress_path,
