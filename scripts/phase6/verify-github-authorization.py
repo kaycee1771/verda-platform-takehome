@@ -152,7 +152,16 @@ class RepositoryView(Protocol):
 
 class GitRepository:
     def __init__(self, root: pathlib.Path) -> None:
-        self.root = root.resolve(strict=True)
+        expected = pathlib.Path(__file__).resolve().parents[2]
+        supplied = pathlib.Path(os.path.abspath(root))
+        resolved = root.resolve(strict=True)
+        if (
+            root.is_symlink()
+            or os.path.normcase(str(supplied)) != os.path.normcase(str(resolved))
+            or resolved != expected
+        ):
+            refuse("repository root is not the verifier's exact canonical checkout")
+        self.root = resolved
 
     @staticmethod
     def _environment(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -167,7 +176,10 @@ class GitRepository:
 
     def _run(self, arguments: list[str], *, text: bool = True, env: dict[str, str] | None = None) -> Any:
         result = subprocess.run(
-            ["git", "--no-replace-objects", "-c", "core.fsmonitor=false", *arguments],
+            [
+                "git", "--no-replace-objects", "-c", f"safe.directory={self.root.as_posix()}",
+                "-c", "core.fsmonitor=false", *arguments,
+            ],
             cwd=self.root, check=False, capture_output=True, text=text,
             env=self._environment(env),
         )
@@ -266,7 +278,10 @@ class GitRepository:
             ):
                 refuse("vendored web-flow key fingerprint differs")
             verified = subprocess.run(
-                ["git", "--no-replace-objects", "-c", f"gpg.program={gpg}", "verify-commit", "--raw", commit],
+                [
+                    "git", "--no-replace-objects", "-c", f"safe.directory={self.root.as_posix()}",
+                    "-c", f"gpg.program={gpg}", "verify-commit", "--raw", commit,
+                ],
                 cwd=self.root, check=False, capture_output=True, text=True, env=environment,
             )
             status = verified.stderr + verified.stdout

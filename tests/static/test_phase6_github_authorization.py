@@ -275,6 +275,30 @@ class GitHubAuthorizationTests(unittest.TestCase):
         self.assertEqual(gpg, "C:/Program Files/Git/usr/bin/gpg.exe")
         self.assertNotIn("\\", gpg)
 
+    def test_git_commands_pin_only_the_verifiers_exact_safe_directory(self) -> None:
+        repository = AUTH.GitRepository(ROOT)
+        completed = __import__("subprocess").CompletedProcess([], 0, stdout="ok\n", stderr="")
+        with mock.patch.object(AUTH.subprocess, "run", return_value=completed) as invoked:
+            self.assertEqual(repository._run(["rev-parse", "HEAD"]), "ok\n")
+        command = invoked.call_args.args[0]
+        self.assertIn(f"safe.directory={ROOT.resolve().as_posix()}", command)
+        self.assertNotIn("safe.directory=*", command)
+        environment = invoked.call_args.kwargs["env"]
+        self.assertEqual(environment["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(environment["GIT_CONFIG_GLOBAL"], AUTH.os.devnull)
+
+    def test_alternate_or_symlinked_repository_root_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "exact canonical checkout"):
+                AUTH.GitRepository(pathlib.Path(directory))
+            link = pathlib.Path(directory) / "repo-link"
+            try:
+                link.symlink_to(ROOT, target_is_directory=True)
+            except OSError:
+                return
+            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "exact canonical checkout"):
+                AUTH.GitRepository(link)
+
     def test_schema_and_readme_keep_authorization_dormant(self) -> None:
         schema = json.loads((ROOT / "schemas" / "phase6-github-authorization.schema.json").read_text())
         self.assertFalse(schema["additionalProperties"])
