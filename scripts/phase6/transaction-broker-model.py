@@ -70,11 +70,14 @@ HISTORY_KEYS = {"generation", "from_state", "to_state", "event", "receipt_sha256
 BACKUP_KEYS = {"receipt_sha256", "backup_identity_sha256", "state_lineage_sha256", "state_serial", "verified_at"}
 BACKUP_FIELDS = {"state_backup_sha256", "pre_apply_backup_sha256", "post_apply_backup_sha256",
                  "pre_rollback_backup_sha256", "post_rollback_backup_sha256"}
-EFFECT_RECEIPT_KEYS = {"operation_id", "lease_id", "lease_epoch", "action", "outcome", "evidence_sha256"}
+EFFECT_RECEIPT_KEYS = {"operation_id", "lease_id", "lease_epoch", "action", "observed_at",
+                       "gate_kind", "gate_sha256", "gate_fresh", "exact_effect_verified",
+                       "probe_outcome", "zero_drift", "capacity_verified", "state_lineage_sha256",
+                       "state_serial_before", "state_serial_after", "backup_identity_refs",
+                       "probe_evidence_sha256", "evidence_sha256"}
 
 
-def _allowed_event_fields(event: str) -> set[str]:
-    exact = {
+EVENT_SPEC: dict[str, dict[str, Any]] = {
         "START_SPEC": set(), "ADOPT_LEASE": {"lease_id"},
         "BEGIN_PREPARE": {"latest_gate_sha256"},
         "PREPARE_SUCCEEDED": {"prepare_receipt_sha256"},
@@ -107,32 +110,141 @@ def _allowed_event_fields(event: str) -> set[str]:
                                 "manual_intervention_required"},
         "ADOPT_APPLY_UNKNOWN": {"failure_class", "state_backup_sha256", "rollback_required",
                                 "manual_intervention_required"},
-    }
-    if event in exact:
-        return exact[event]
-    if event in {"ADOPT_PREPARE_NOT_STARTED", "UNPREPARE_SUCCEEDED", "ADOPT_APPLY_NOT_STARTED"}:
-        return set()
-    if event.startswith("RECOVERY_") and event[9:] in RECOVERY_MILESTONES[1:]:
-        return {"recovery_milestone"}
-    if event.startswith("ROLLBACK_") and event[9:] in ROLLBACK_MILESTONES[2:]:
-        return {"rollback_milestone"}
-    refuse(f"transaction replay has no closed payload schema for {event}")
+}
+
+EVENT_CONSTANT_UPDATES = {
+    "POSTFLIGHT_SUCCEEDED": {"rollback_required": False},
+    "ADOPT_POSTFLIGHT_COMPLETE": {"rollback_required": False},
+    "FAIL_RECOVERY_UNSAFE": {"failure_class": "RECOVERY_UNSAFE", "rollback_required": True},
+    "FAIL_POSTFLIGHT_UNSAFE": {"failure_class": "POSTFLIGHT_UNSAFE", "rollback_required": True},
+    "FAIL_ROLLBACK_UNSAFE": {"failure_class": "ROLLBACK_UNSAFE", "rollback_required": False,
+                             "manual_intervention_required": True},
+    "DEADLINE_EXPIRED": {"failure_class": "POLICY_REFUSAL", "rollback_required": False,
+                         "manual_intervention_required": True},
+    "RESOURCE_EXPIRED": {"failure_class": "POLICY_REFUSAL", "rollback_required": False,
+                         "manual_intervention_required": True},
+    "PREPARE_ABORTED": {"failure_class": "POLICY_REFUSAL", "rollback_required": False,
+                        "manual_intervention_required": True},
+    "ADOPT_PREPARE_PARTIAL": {"failure_class": "POLICY_REFUSAL", "rollback_required": False,
+                              "manual_intervention_required": True},
+    "ADOPT_PREPARE_UNKNOWN": {"failure_class": "POLICY_REFUSAL", "rollback_required": False,
+                              "manual_intervention_required": True},
+    "ADOPT_APPLY_PARTIAL": {"failure_class": "APPLY_PARTIAL", "rollback_required": False,
+                            "manual_intervention_required": True},
+    "ADOPT_APPLY_UNKNOWN": {"failure_class": "APPLY_UNKNOWN", "rollback_required": False,
+                            "manual_intervention_required": True},
+    "ROLLBACK_SUCCEEDED": {"rollback_required": False},
+    "ADOPT_ROLLBACK_COMPLETE": {"rollback_required": False},
+}
 
 
-def _effect_receipt(*, projection: dict[str, Any], action: str, evidence: str, outcome: str = "VERIFIED") -> dict[str, Any]:
+def _event_spec(event: str, from_state: str | None, to_state: str) -> dict[str, Any]:
+    if event in EVENT_SPEC:
+        fields = EVENT_SPEC[event]
+    elif event in {"ADOPT_PREPARE_NOT_STARTED", "UNPREPARE_SUCCEEDED", "ADOPT_APPLY_NOT_STARTED"}:
+        fields = set()
+    elif event.startswith("RECOVERY_") and event[9:] in RECOVERY_MILESTONES[1:]:
+        fields = {"recovery_milestone"}
+    elif event.startswith("ROLLBACK_") and event[9:] in ROLLBACK_MILESTONES[2:]:
+        fields = {"rollback_milestone"}
+    else:
+        refuse(f"transaction replay has no closed event specification for {event}")
+    event_tuple = (from_state, event, to_state)
+    legal_dynamic = (
+        event == "ADOPT_LEASE" and from_state == to_state
+    ) or (
+        event.startswith("RECOVERY_") and from_state == to_state == "RECOVERING"
+        and event[9:] in RECOVERY_MILESTONES[1:]
+    ) or (
+        event.startswith("ROLLBACK_") and from_state == to_state == "ROLLING_BACK"
+        and event[9:] in ROLLBACK_MILESTONES[2:]
+    ) or (
+        event == "BEGIN_ROLLBACK" and to_state == "ROLLING_BACK"
+        and from_state in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
+    ) or (
+        event in {"DEADLINE_EXPIRED", "RESOURCE_EXPIRED"}
+        and from_state not in {"COMPLETED", "ROLLED_BACK", "FAILED_SAFE"} and to_state == "FAILED_SAFE"
+    )
+    if event_tuple not in LEGAL_EVENTS and not legal_dynamic:
+        refuse("transaction replay event edge differs from EVENT_SPEC")
+    return {"fields": set(fields), "constants": EVENT_CONSTANT_UPDATES.get(event, {})}
+
+
+def _allowed_event_fields(event: str, from_state: str | None, to_state: str) -> set[str]:
+    return _event_spec(event, from_state, to_state)["fields"]
+
+
+def _validate_event_field(key: str, value: Any, projection: dict[str, Any]) -> None:
+    if key in BACKUP_FIELDS:
+        receipt = exact_keys(value, BACKUP_KEYS, f"event.{key}")
+        for digest_key in ("receipt_sha256", "backup_identity_sha256", "state_lineage_sha256"):
+            _digest(receipt[digest_key], f"event.{key}.{digest_key}")
+        if receipt["state_lineage_sha256"] != projection["state_lineage_sha256"] or type(receipt["state_serial"]) is not int:
+            refuse(f"event.{key} lineage/serial differs")
+        timestamp(receipt["verified_at"], f"event.{key}.verified_at")
+    elif key.endswith("_sha256"):
+        _digest(value, f"event.{key}")
+    elif key in {"rollback_required", "manual_intervention_required"}:
+        if type(value) is not bool:
+            refuse(f"event.{key} must be boolean")
+    elif key == "state_serial_after":
+        if type(value) is not int or value <= projection["state_serial_before"]:
+            refuse("event state serial did not advance")
+    elif key == "failure_class" and value not in {"APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE",
+                                                    "POSTFLIGHT_UNSAFE", "ROLLBACK_UNSAFE", "POLICY_REFUSAL"}:
+        refuse("event failure class differs")
+    elif key == "recovery_milestone" and value not in RECOVERY_MILESTONES:
+        refuse("event recovery milestone differs")
+    elif key == "rollback_milestone" and value not in ROLLBACK_MILESTONES:
+        refuse("event rollback milestone differs")
+
+
+def _effect_receipt(*, projection: dict[str, Any], action: str, evidence: str,
+                    observed_at: str, updates: dict[str, Any] | None = None) -> dict[str, Any]:
     _digest(evidence, "effect evidence")
-    return {"operation_id": projection["operation_id"], "lease_id": projection["lease_id"],
-            "lease_epoch": projection["lease_epoch"], "action": action, "outcome": outcome,
-            "evidence_sha256": evidence}
+    changes = updates or {}
+    backup_refs = sorted(value["backup_identity_sha256"] for key, value in changes.items()
+                         if key in BACKUP_FIELDS and isinstance(value, dict))
+    gate_kind_by_action = {"BEGIN_PREPARE": "pre_prepare", "BEGIN_APPLY": "pre_apply_two_survivor",
+                           "BEGIN_RECOVERY": "pre_recovery_two_survivor", "BEGIN_POSTFLIGHT": "postflight",
+                           "BEGIN_ROLLBACK": "rollback_two_survivor"}
+    probe_outcome = ("EXPIRED" if action in {"DEADLINE_EXPIRED", "RESOURCE_EXPIRED"}
+                     else "UNSAFE" if action.startswith("FAIL_") or action.endswith(("_PARTIAL", "_UNKNOWN"))
+                     else "COMPLETE")
+    decision = {"operation_id": projection["operation_id"], "lease_id": projection["lease_id"],
+                "lease_epoch": projection["lease_epoch"], "action": action, "observed_at": observed_at,
+                "gate_kind": gate_kind_by_action.get(action),
+                "gate_sha256": changes.get("latest_gate_sha256"),
+                "gate_fresh": action not in gate_kind_by_action or changes.get("latest_gate_sha256") is not None,
+                "exact_effect_verified": True, "probe_outcome": probe_outcome,
+                "zero_drift": True if action in {"POSTFLIGHT_SUCCEEDED", "ADOPT_POSTFLIGHT_COMPLETE",
+                                                   "ROLLBACK_SUCCEEDED", "ADOPT_ROLLBACK_COMPLETE"} else None,
+                "capacity_verified": True if action in {"POSTFLIGHT_SUCCEEDED",
+                                                         "ADOPT_POSTFLIGHT_COMPLETE"} else None,
+                "state_lineage_sha256": projection["state_lineage_sha256"],
+                "state_serial_before": projection["state_serial_before"],
+                "state_serial_after": changes.get("state_serial_after", projection.get("state_serial_after")),
+                "backup_identity_refs": backup_refs, "probe_evidence_sha256": evidence}
+    decision["evidence_sha256"] = canonical_digest(decision)
+    return decision
 
 
 def _validate_effect_receipt(receipt: object, *, projection: dict[str, Any], action: str) -> dict[str, Any]:
     value = exact_keys(receipt, EFFECT_RECEIPT_KEYS, "effect receipt")
     if (value["operation_id"] != projection["operation_id"] or value["lease_id"] != projection["lease_id"]
             or value["lease_epoch"] != projection["lease_epoch"] or value["action"] != action
-            or value["outcome"] != "VERIFIED"):
+            or value["state_lineage_sha256"] != projection["state_lineage_sha256"]
+            or value["state_serial_before"] != projection["state_serial_before"]):
         refuse("effect receipt is not bound to the current fenced session")
-    _digest(value["evidence_sha256"], "effect receipt evidence")
+    timestamp(value["observed_at"], "effect receipt observed_at")
+    _digest(value["probe_evidence_sha256"], "effect probe evidence")
+    if value["evidence_sha256"] != canonical_digest({key: item for key, item in value.items()
+                                                      if key != "evidence_sha256"}):
+        refuse("effect decision evidence hash differs")
+    if value["exact_effect_verified"] is not True or type(value["gate_fresh"]) is not bool:
+        refuse("effect decision is not exactly verified/fresh")
+    if not isinstance(value["backup_identity_refs"], list) or value["backup_identity_refs"] != sorted(value["backup_identity_refs"]):
+        refuse("effect decision backup references differ")
     return value
 
 # This is deliberately a closed replay grammar.  Journal validation never trusts
@@ -208,7 +320,10 @@ def _replay_history(history: list[dict[str, Any]]) -> dict[str, Any]:
                     or expected["lease_epoch"] != entry["lease_epoch"] or expected["lease_epoch"] < 0):
                 refuse("transaction replay genesis projection differs")
             receipt = _validate_effect_receipt(payload["receipt"], projection=expected, action="START_SPEC")
-            if canonical_digest(receipt) != entry["receipt_sha256"]:
+            regenerated = _effect_receipt(projection=expected, action="START_SPEC",
+                                          evidence=receipt["probe_evidence_sha256"],
+                                          observed_at=entry["captured_at"])
+            if receipt != regenerated or canonical_digest(receipt) != entry["receipt_sha256"]:
                 refuse("START_SPEC receipt digest differs")
             for key in (JOURNAL_KEYS - IMMUTABLE_PROJECTION_KEYS - {"history", "generation", "cas_nonce",
                         "lease_id", "lease_epoch", "state", "updated_at", "manual_intervention_required"}):
@@ -233,14 +348,31 @@ def _replay_history(history: list[dict[str, Any]]) -> dict[str, Any]:
             else:
                 if projection["lease_epoch"] != previous["lease_epoch"] or projection["lease_id"] != previous["lease_id"]:
                     refuse("transaction replay effect changed its lease fence")
-            allowed = _allowed_event_fields(event)
+            spec = _event_spec(event, entry["from_state"], entry["to_state"])
+            allowed = spec["fields"]
             if set(payload) != {"receipt"} | allowed:
                 refuse("transaction replay payload schema differs")
-            receipt = _validate_effect_receipt(payload["receipt"], projection=expected, action=event)
-            if canonical_digest(receipt) != entry["receipt_sha256"]:
-                refuse("transaction replay receipt digest differs")
             for key in allowed:
+                _validate_event_field(key, payload[key], expected)
                 expected[key] = copy.deepcopy(payload[key])
+            for key, constant in spec["constants"].items():
+                if payload.get(key) != constant:
+                    refuse("transaction replay constant update differs from EVENT_SPEC")
+            if event.startswith("RECOVERY_") and event[9:] in RECOVERY_MILESTONES[1:]:
+                prior = RECOVERY_MILESTONES.index(previous["recovery_milestone"])
+                if event[9:] != RECOVERY_MILESTONES[prior + 1]:
+                    refuse("transaction replay skipped a recovery milestone")
+            if event.startswith("ROLLBACK_") and event[9:] in ROLLBACK_MILESTONES[2:]:
+                prior = ROLLBACK_MILESTONES.index(previous["rollback_milestone"])
+                if event[9:] != ROLLBACK_MILESTONES[prior + 1]:
+                    refuse("transaction replay skipped a rollback milestone")
+            receipt = _validate_effect_receipt(payload["receipt"], projection=expected, action=event)
+            regenerated = _effect_receipt(projection=expected, action=event,
+                                          evidence=receipt["probe_evidence_sha256"],
+                                          observed_at=entry["captured_at"],
+                                          updates={key: payload[key] for key in allowed})
+            if receipt != regenerated or canonical_digest(receipt) != entry["receipt_sha256"]:
+                refuse("transaction replay decision receipt differs")
             if expected != projection:
                 refuse("transaction replay projection differs from canonical event reduction")
         previous = copy.deepcopy(projection)
@@ -532,6 +664,14 @@ def validate_journal(journal: dict[str, Any]) -> None:
             or journal["pre_rollback_backup_sha256"] is None or journal["post_rollback_backup_sha256"] is None
             or journal["rollback_required"] is not False):
         refuse("rolled-back journal lacks its exact plan/current-state/backup/zero-drift matrix")
+    if journal["state"] == "FAILED_SAFE":
+        if (journal["failure_class"] is None or journal["rollback_required"] is not False
+                or journal["manual_intervention_required"] is not True):
+            refuse("FAILED_SAFE journal lacks failure/manual/no-auto-rollback matrix")
+        if journal["failure_class"] in {"APPLY_PARTIAL", "APPLY_UNKNOWN"} and journal["state_backup_sha256"] is None:
+            refuse("uncertain apply FAILED_SAFE journal lacks reconciled current-state backup")
+        if journal["failure_class"] == "ROLLBACK_UNSAFE" and journal["rollback_milestone"] == "NONE":
+            refuse("unsafe rollback FAILED_SAFE journal lacks rollback progress")
     if journal["state"] not in {"RECOVERING", "RECOVERED", "POSTFLIGHT", "COMPLETED",
                                  "ROLLBACK_REQUIRED", "ROLLING_BACK", "ROLLED_BACK", "FAILED_SAFE"} \
             and journal["recovery_milestone"] != "NONE":
@@ -636,7 +776,7 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
         "raw_values_recorded": False,
     }
     start_receipt = _effect_receipt(projection=journal, action="START_SPEC",
-                                    evidence=authorization["authorization_sha256"])
+                                    evidence=authorization["authorization_sha256"], observed_at=captured)
     journal["history"].append(_seal_entry({
         "generation": 1, "from_state": None, "to_state": "AUTHORIZED",
         "event": "START_SPEC", "receipt_sha256": canonical_digest(start_receipt),
@@ -687,7 +827,8 @@ def adopt_spec_journal(*, policy: dict[str, Any], journal: dict[str, Any], lease
     candidate["cas_nonce"] = nonce
     candidate["updated_at"] = utc_text(now)
     adoption_effect_receipt = _effect_receipt(projection=candidate, action="ADOPT_LEASE",
-                                              evidence=canonical_digest(boundary))
+                                              evidence=canonical_digest(boundary),
+                                              observed_at=candidate["updated_at"])
     candidate["history"].append(_seal_entry({
         "generation": candidate["generation"], "from_state": candidate["state"],
         "to_state": candidate["state"], "event": "ADOPT_LEASE", "receipt_sha256": canonical_digest(adoption_effect_receipt),
@@ -766,7 +907,8 @@ class BrokerModelSession:
         candidate["cas_nonce"] = nonce
         candidate["updated_at"] = utc_text(now)
         evidence = receipt or canonical_digest({"event": event_name, "generation": candidate["generation"]})
-        effect_receipt = _effect_receipt(projection=candidate, action=event_name, evidence=evidence)
+        effect_receipt = _effect_receipt(projection=candidate, action=event_name, evidence=evidence,
+                                         observed_at=candidate["updated_at"], updates=updates)
         event_payload = {"receipt": effect_receipt}
         event_payload.update(copy.deepcopy(updates or {}))
         candidate["history"].append(_seal_entry({
@@ -1084,7 +1226,8 @@ class BrokerModelSession:
             receipt = _digest(event["failure_receipt_sha256"], "unsafe rollback receipt")
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="FAILED_SAFE", now=now, receipt=receipt,
-                                 updates={"failure_class": "ROLLBACK_UNSAFE", "rollback_required": False})
+                                 updates={"failure_class": "ROLLBACK_UNSAFE", "rollback_required": False,
+                                          "manual_intervention_required": True})
         refuse(f"event {name!r} is not allowed from journal state {state}")
 
 

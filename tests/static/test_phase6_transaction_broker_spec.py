@@ -366,7 +366,7 @@ class TransactionBrokerSpecTests(unittest.TestCase):
         forged["history"][-1]["projection_sha256"] = MODEL.canonical_digest(forged["history"][-1]["projection"])
         forged["history"][-1]["event_payload"]["post_rollback_backup_sha256"] = None
         forged["history"][-1] = MODEL._seal_entry(forged["history"][-1])
-        with self.assertRaisesRegex(MODEL.BrokerRefused, "rolled-back"):
+        with self.assertRaisesRegex(MODEL.BrokerRefused, "decision receipt|rolled-back|post_rollback"):
             MODEL.validate_journal(forged)
 
     def test_start_by_fence_and_stale_adoption_epoch_refuse(self) -> None:
@@ -422,7 +422,30 @@ class TransactionBrokerSpecTests(unittest.TestCase):
         forged = copy.deepcopy(completed)
         forged["history"][-1]["event_payload"]["latest_gate_sha256"] = digest("forged-gate")
         forged["history"][-1] = MODEL._seal_entry(forged["history"][-1])
-        with self.assertRaisesRegex(MODEL.BrokerRefused, "projection"):
+        with self.assertRaisesRegex(MODEL.BrokerRefused, "projection|decision receipt"):
+            MODEL.validate_journal(forged)
+        opaque = copy.deepcopy(completed)
+        opaque["history"][-1]["event_payload"]["receipt"]["probe_evidence_sha256"] = digest("opaque-tamper")
+        opaque["history"][-1] = MODEL._seal_entry(opaque["history"][-1])
+        with self.assertRaisesRegex(MODEL.BrokerRefused, "evidence hash"):
+            MODEL.validate_journal(opaque)
+
+    def test_event_spec_rejects_executable_constant_forgery(self) -> None:
+        fixture = BrokerFixture(); fixture.prepare(); fixture.apply(); fixture.begin_recovery()
+        failed = fixture.go({"event": "FAIL_RECOVERY_UNSAFE",
+                             "failure_receipt_sha256": digest("unsafe")})
+        forged = copy.deepcopy(failed)
+        last = forged["history"][-1]
+        last["event_payload"]["rollback_required"] = False
+        last["projection"]["rollback_required"] = False
+        last["projection_sha256"] = MODEL.canonical_digest(last["projection"])
+        forged["rollback_required"] = False
+        receipt = last["event_payload"]["receipt"]
+        receipt["evidence_sha256"] = MODEL.canonical_digest({k: v for k, v in receipt.items()
+                                                              if k != "evidence_sha256"})
+        last["receipt_sha256"] = MODEL.canonical_digest(receipt)
+        forged["history"][-1] = MODEL._seal_entry(last)
+        with self.assertRaisesRegex(MODEL.BrokerRefused, "constant update"):
             MODEL.validate_journal(forged)
 
     def test_effect_probe_precedes_milestone_cas_and_receipt_cannot_be_removed(self) -> None:
