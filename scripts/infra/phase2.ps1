@@ -116,7 +116,53 @@ function Enter-Phase2MutationLease {
     $stateDigest = [Convert]::ToHexString(
         [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonicalState))
     ).ToLowerInvariant()
-    $mutexName = if ($IsWindows) { "Local\VerdaPhase2State-$stateDigest" } else { "VerdaPhase2State-$stateDigest" }
+    $mutexName = "Local\VerdaPhase2State-$stateDigest"
+    if (-not $IsWindows) {
+        if (-not ('VerdaPhase2PosixLock' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class VerdaPhase2PosixLock {
+    [DllImport("libc", SetLastError=true)] public static extern uint getuid();
+    [DllImport("libc", SetLastError=true)] public static extern int open(string path, int flags, uint mode);
+    [DllImport("libc", SetLastError=true)] public static extern int flock(int fd, int operation);
+    [DllImport("libc", SetLastError=true)] public static extern int close(int fd);
+}
+'@
+        }
+        $uid = [VerdaPhase2PosixLock]::getuid()
+        $lockRoot = Join-Path ([IO.Path]::GetTempPath()) "verda-phase6-locks-$uid"
+        if (-not (Test-Path -LiteralPath $lockRoot)) {
+            [IO.Directory]::CreateDirectory($lockRoot) | Out-Null
+        }
+        [IO.File]::SetUnixFileMode($lockRoot, [IO.UnixFileMode]::UserRead -bor
+            [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute)
+        $rootItem = Get-Item -LiteralPath $lockRoot -Force
+        if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $rootItem.UnixFileMode -ne ([IO.UnixFileMode]::UserRead -bor
+                [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute)) {
+            throw 'The shared Phase 2 lock directory is not stable and owner-only.'
+        }
+        $lockDigest = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($mutexName))
+        ).ToLowerInvariant()
+        $lockPath = Join-Path $lockRoot "verda-$lockDigest.lock"
+        # Linux: O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC. The store uses the same
+        # secured directory, filename derivation, O_NOFOLLOW, and flock(2).
+        $fd = [VerdaPhase2PosixLock]::open($lockPath, (2 -bor 64 -bor 131072 -bor 524288), 384)
+        if ($fd -lt 0) { throw 'Unable to open the OS-exclusive protected-state lock without following links.' }
+        if ([VerdaPhase2PosixLock]::flock($fd, 6) -ne 0) {
+            [void][VerdaPhase2PosixLock]::close($fd)
+            throw 'Another Phase 2 process holds the OS-exclusive protected-state mutex.'
+        }
+        $heldTarget = (Get-Item -LiteralPath "/proc/self/fd/$fd" -Force).Target
+        if ((Get-CanonicalBoundaryPath -Path $heldTarget) -ne (Get-CanonicalBoundaryPath -Path $lockPath)) {
+            [void][VerdaPhase2PosixLock]::flock($fd, 8)
+            [void][VerdaPhase2PosixLock]::close($fd)
+            throw 'The shared Phase 2 lock path identity changed after flock acquisition.'
+        }
+        return [pscustomobject]@{ Kind = 'PosixFlock'; Fd = $fd; Path = $lockPath }
+    }
     $mutex = [Threading.Mutex]::new($false, $mutexName)
     $acquired = $false
     try {
@@ -135,8 +181,13 @@ function Enter-Phase2MutationLease {
 }
 
 function Exit-Phase2MutationLease {
-    param([Parameter(Mandatory)][Threading.Mutex]$Lease)
+    param([Parameter(Mandatory)]$Lease)
 
+    if ($Lease.PSObject.Properties['Kind'] -and $Lease.Kind -eq 'PosixFlock') {
+        try { [void][VerdaPhase2PosixLock]::flock($Lease.Fd, 8) }
+        finally { [void][VerdaPhase2PosixLock]::close($Lease.Fd) }
+        return
+    }
     try { $Lease.ReleaseMutex() } finally { $Lease.Dispose() }
 }
 

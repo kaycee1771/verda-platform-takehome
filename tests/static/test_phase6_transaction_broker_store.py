@@ -94,6 +94,19 @@ class DurableBrokerStoreTests(unittest.TestCase):
                 STORE.NamedMutex("test")._accept_wait_result(0x102)
             with self.assertRaisesRegex(STORE.StoreRefused, "wait failed"):
                 STORE.NamedMutex("test")._accept_wait_result(0xFFFFFFFF)
+        phase2 = (ROOT / "scripts/infra/phase2.ps1").read_text(encoding="utf-8")
+        self.assertIn('$mutexName = "Local\\VerdaPhase2State-$stateDigest"', phase2)
+        self.assertIn('"verda-phase6-locks-$uid"', phase2)
+        self.assertIn("VerdaPhase2PosixLock]::flock", phase2)
+
+    def test_windows_security_and_handle_apis_are_explicitly_typed(self) -> None:
+        source = STORE_PATH.read_text(encoding="utf-8")
+        for marker in ("ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes",
+                       "SetFileSecurityW.argtypes", "CreateMutexW.argtypes", "WaitForSingleObject.argtypes",
+                       "GetFinalPathNameByHandleW.argtypes", "GetFileInformationByHandle.argtypes",
+                       "ReadFile.argtypes", "MoveFileExW.argtypes"):
+            self.assertIn(marker, source)
+        self.assertIn("D:P(A;;GA;;;OW)(A;;GA;;;SY)(A;;GA;;;BA)", source)
 
     def test_atomic_cas_load_nonce_replay_and_stale_epoch(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

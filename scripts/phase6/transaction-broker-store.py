@@ -35,10 +35,37 @@ READ_ONLY_COMMANDS = {
     "terraform-state": ("terraform", "show", "-json"),
     "provider-inventory": ("verda", "instance", "list", "--json"),
 }
+AUTHORIZATION_KEYS = {
+    "schema_version", "phase", "status", "authorization_mode", "repository", "workflow_id", "pr_number",
+    "source_parent_commit", "source_tree_oid", "source_tree_manifest_sha256", "operation_id", "operation_nonce",
+    "node", "direction", "plan_sha256", "plan_semantic_sha256", "state_lineage_sha256", "state_serial",
+    "contract_sha256", "tool_lock_sha256", "broker_sha256", "transaction_policy_sha256",
+    "rollback_policy_sha256", "journal_sha256", "journal_generation", "journal_state", "user_approval_sha256",
+    "security_review_sha256", "reliability_review_sha256", "security_approved", "reliability_approved",
+    "preflight_sha256", "cost_sha256", "capacity_sha256", "collector_sha256", "etcd_backup_sha256",
+    "data_backup_sha256", "provider_facts_sha256", "approved_resource_expiry_utc", "approved_cost_ceiling_usd",
+    "issued_at", "start_by", "complete_by", "minimum_recovery_margin_seconds", "raw_values_recorded",
+}
 
 
 class StoreRefused(ValueError):
     pass
+
+
+class SynchronousAuthorizationVerifier:
+    """Explicit adapter interface; production implementations invoke the real verifier synchronously."""
+    def verify(self, authorization_path: pathlib.Path, raw: bytes,
+               parsed: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+
+class CallableAuthorizationVerifier(SynchronousAuthorizationVerifier):
+    def __init__(self, function: Callable[[pathlib.Path, bytes, dict[str, Any]], dict[str, Any]]) -> None:
+        self.function = function
+
+    def verify(self, authorization_path: pathlib.Path, raw: bytes,
+               parsed: dict[str, Any]) -> dict[str, Any]:
+        return self.function(authorization_path, raw, parsed)
 
 
 def refuse(message: str) -> None:
@@ -154,6 +181,27 @@ def _windows_owner_protected_dacl(path: pathlib.Path) -> bool:
         kernel32.LocalFree(descriptor)
 
 
+def _protect_windows_path(path: pathlib.Path) -> None:
+    import ctypes
+    from ctypes import wintypes
+    advapi, kernel32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+    descriptor = ctypes.c_void_p()
+    advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
+        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD))
+    advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    advapi.SetFileSecurityW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p)
+    advapi.SetFileSecurityW.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = (ctypes.c_void_p,); kernel32.LocalFree.restype = ctypes.c_void_p
+    if not advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            "D:P(A;;GA;;;OW)(A;;GA;;;SY)(A;;GA;;;BA)", 1, ctypes.byref(descriptor), None):
+        refuse("unable to construct protected filesystem DACL")
+    try:
+        if not advapi.SetFileSecurityW(str(path), 0x4, descriptor):
+            refuse("unable to apply protected filesystem DACL")
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
 class NamedMutex:
     """OS mutex in production; process lock fallback keeps tests deterministic."""
 
@@ -185,8 +233,22 @@ class NamedMutex:
             kernel32.ReleaseMutex.restype = wintypes.BOOL
             kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
             kernel32.CloseHandle.restype = wintypes.BOOL
+            advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+            advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
+                wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD))
+            advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+            class SECURITY_ATTRIBUTES(ctypes.Structure):
+                _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", ctypes.c_void_p),
+                            ("bInheritHandle", wintypes.BOOL)]
+            descriptor = ctypes.c_void_p()
+            # Protected DACL: owner rights, LocalSystem, and built-in Administrators only.
+            if not advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    "D:P(A;;GA;;;OW)(A;;GA;;;SY)(A;;GA;;;BA)", 1, ctypes.byref(descriptor), None):
+                refuse("unable to construct protected named-mutex security descriptor")
+            security = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), descriptor, False)
             self.kernel32 = kernel32
-            self.handle = kernel32.CreateMutexW(None, False, self.name)
+            self.handle = kernel32.CreateMutexW(ctypes.byref(security), False, self.name)
+            kernel32.LocalFree(descriptor)
             if not self.handle:
                 refuse("unable to create the named broker/state mutex")
             result = kernel32.WaitForSingleObject(self.handle, 0)
@@ -243,7 +305,8 @@ class NamedMutex:
 class DurableBrokerStore:
     def __init__(self, *, operation_id: str, base: pathlib.Path | None = None,
                  clock: Callable[[], dt.datetime], security_probe: Callable[[pathlib.Path], dict[str, Any]] = default_security_probe,
-                 verifier: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+                 verifier: SynchronousAuthorizationVerifier |
+                 Callable[[pathlib.Path, bytes, dict[str, Any]], dict[str, Any]] | None = None,
                  state_path: pathlib.Path | None = None,
                  crash_hook: Callable[[str], None] = lambda _stage: None) -> None:
         if not DIGEST.fullmatch(operation_id):
@@ -256,7 +319,9 @@ class DurableBrokerStore:
         self.operation_id = operation_id
         self.envelope_path = self.root / f"broker-{operation_id}.envelope-v2.json"
         self.temp_path = self.root / f"broker-{operation_id}.envelope-v2.tmp"
-        self.clock, self.security_probe, self.verifier, self.crash_hook = clock, security_probe, verifier, crash_hook
+        self.clock, self.security_probe = clock, security_probe
+        self.verifier = CallableAuthorizationVerifier(verifier) if callable(verifier) else verifier
+        self.crash_hook = crash_hook
         self.operation_mutex = f"Local\\VerdaPhase6Broker-{operation_id}"
         expected_state = pathlib.Path(os.environ.get("VERDA_TF_STATE_PATH",
                                                       str(canonical_base / "terraform" / "management.tfstate")))
@@ -287,6 +352,8 @@ class DurableBrokerStore:
     def initialize(self) -> None:
         self.base.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.root.mkdir(mode=0o700, exist_ok=True)
+        if os.name == "nt":
+            _protect_windows_path(self.base); _protect_windows_path(self.root)
         self._secure(self.base)
         self._secure(self.root)
         if self.root.resolve(strict=True) != (self.base.resolve(strict=True) / "phase6-resize-control"):
@@ -466,6 +533,8 @@ class DurableBrokerStore:
             os.close(fd)
         self.crash_hook("after_temp_fsync")
         self._replace(temp, path)
+        if os.name == "nt":
+            _protect_windows_path(path)
         self.crash_hook("after_replace")
         if os.name != "nt":
             directory = os.open(self.root, os.O_RDONLY)
@@ -540,19 +609,30 @@ class DurableBrokerStore:
                    "cost": "cost_sha256", "capacity": "capacity_sha256", "collector": "collector_sha256",
                    "provider_facts": "provider_facts_sha256", "journal": "journal_sha256"}
         required = set(mapping) | {"state_receipt"}
+        auth_before = self._secure(authorization_path, regular=True)
         authorization_raw = self._stable_bytes(authorization_path)
+        auth_after = self._secure(authorization_path, regular=True)
+        if (auth_before.get("device"), auth_before.get("identity")) != \
+                (auth_after.get("device"), auth_after.get("identity")):
+            refuse("authorization artifact identity changed while held")
         try:
             authorization = json.loads(authorization_raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             refuse("held authorization artifact bytes are invalid")
-        schema = json.loads((HERE.parents[1] / "schemas" / "phase6-github-authorization.schema.json").read_text(encoding="utf-8"))
-        if not isinstance(authorization, dict) or set(authorization) != set(schema["required"]):
+        if (not isinstance(authorization, dict) or set(authorization) != AUTHORIZATION_KEYS
+                or authorization.get("schema_version") != 1 or authorization.get("phase") != 6
+                or authorization.get("status") != "GITHUB_PROTECTED_MAIN_AUTHORIZED"
+                or authorization.get("authorization_mode") != "TRANSACTION"
+                or authorization.get("journal_state") != "AUTHORIZED"
+                or authorization.get("security_approved") is not True
+                or authorization.get("reliability_approved") is not True
+                or authorization.get("raw_values_recorded") is not False):
             refuse("held authorization artifact schema differs")
         if (set(artifacts) != required or self.verifier is None
                 or authorization.get("operation_id") != self.operation_id
                 or any(not DIGEST.fullmatch(authorization.get(field, "")) for field in mapping.values())):
             refuse("admission artifact/hash/verifier boundary differs")
-        receipt = self.verifier(authorization_path, authorization_raw, authorization)
+        receipt = self.verifier.verify(authorization_path, authorization_raw, authorization)
         if (not isinstance(receipt, dict) or receipt.get("status") != "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT"
                 or receipt.get("requires_reverification_before_use") is not True
                 or receipt.get("operation_id") != self.operation_id
