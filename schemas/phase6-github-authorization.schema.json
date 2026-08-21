@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kaycee1771/verda-platform-takehome/schemas/phase6-github-authorization.schema.json",
+  "title": "Phase 6 protected-main operation authorization",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "phase", "status", "repository", "workflow_id", "pr_number", "authorization_stage",
+    "source_parent_commit", "source_tree_oid", "source_tree_manifest_sha256",
+    "operation_id", "operation_nonce", "node", "direction", "plan_sha256",
+    "plan_semantic_sha256", "state_lineage_sha256", "state_serial", "journal_sha256",
+    "journal_generation", "journal_state", "approval_sha256", "preflight_sha256",
+    "cost_sha256", "capacity_sha256", "collector_sha256",
+    "tool_lock_sha256", "contract_sha256", "issued_at", "expires_at", "raw_values_recorded"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "phase": {"const": 6},
+    "status": {"const": "GITHUB_PROTECTED_MAIN_AUTHORIZED"},
+    "repository": {"const": "kaycee1771/verda-platform-takehome"},
+    "workflow_id": {"const": 335664221},
+    "pr_number": {"type": "integer", "minimum": 1},
+    "authorization_stage": {"enum": ["PREPARE", "APPLY", "RECOVER"]},
+    "source_parent_commit": {"$ref": "#/$defs/commit"},
+    "source_tree_oid": {"$ref": "#/$defs/commit"},
+    "source_tree_manifest_sha256": {"$ref": "#/$defs/digest"},
+    "operation_id": {"$ref": "#/$defs/digest"},
+    "operation_nonce": {"$ref": "#/$defs/digest"},
+    "node": {"enum": ["01", "02", "03"]},
+    "direction": {"enum": ["resize", "rollback"]},
+    "plan_sha256": {"$ref": "#/$defs/digest"},
+    "plan_semantic_sha256": {"$ref": "#/$defs/digest"},
+    "state_lineage_sha256": {"$ref": "#/$defs/digest"},
+    "state_serial": {"type": "integer", "minimum": 0},
+    "journal_sha256": {"$ref": "#/$defs/digest"},
+    "journal_generation": {"type": "integer", "minimum": 1},
+    "journal_state": {"enum": ["PREPARED", "APPLIED"]},
+    "approval_sha256": {"$ref": "#/$defs/digest"},
+    "preflight_sha256": {"$ref": "#/$defs/digest"},
+    "prepare_sha256": {"$ref": "#/$defs/digest"},
+    "prepare_authorization_commit": {"$ref": "#/$defs/commit"},
+    "prepare_authorization_sha256": {"$ref": "#/$defs/digest"},
+    "two_survivor_collector_sha256": {"$ref": "#/$defs/digest"},
+    "apply_authorization_commit": {"$ref": "#/$defs/commit"},
+    "apply_authorization_sha256": {"$ref": "#/$defs/digest"},
+    "apply_receipt_sha256": {"$ref": "#/$defs/digest"},
+    "applied_state_lineage_sha256": {"$ref": "#/$defs/digest"},
+    "applied_state_serial": {"type": "integer", "minimum": 1},
+    "host_key_provenance_sha256": {"$ref": "#/$defs/digest"},
+    "recovery_collector_sha256": {"$ref": "#/$defs/digest"},
+    "inventory_sha256": {"$ref": "#/$defs/digest"},
+    "known_hosts_sha256": {"$ref": "#/$defs/digest"},
+    "cost_sha256": {"$ref": "#/$defs/digest"},
+    "capacity_sha256": {"$ref": "#/$defs/digest"},
+    "collector_sha256": {"$ref": "#/$defs/digest"},
+    "tool_lock_sha256": {"$ref": "#/$defs/digest"},
+    "contract_sha256": {"$ref": "#/$defs/digest"},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "raw_values_recorded": {"const": false}
+  },
+  "oneOf": [
+    {
+      "properties": {"authorization_stage": {"const": "PREPARE"}, "journal_state": {"const": "PREPARED"}},
+      "not": {"anyOf": [
+        {"required": ["prepare_authorization_commit"]}, {"required": ["prepare_authorization_sha256"]},
+        {"required": ["prepare_sha256"]}, {"required": ["two_survivor_collector_sha256"]},
+        {"required": ["apply_authorization_commit"]}, {"required": ["apply_authorization_sha256"]},
+        {"required": ["apply_receipt_sha256"]}, {"required": ["applied_state_lineage_sha256"]},
+        {"required": ["applied_state_serial"]}, {"required": ["host_key_provenance_sha256"]},
+        {"required": ["recovery_collector_sha256"]}, {"required": ["inventory_sha256"]},
+        {"required": ["known_hosts_sha256"]}
+      ]}
+    },
+    {
+      "required": ["prepare_authorization_commit", "prepare_authorization_sha256", "prepare_sha256", "two_survivor_collector_sha256"],
+      "properties": {"authorization_stage": {"const": "APPLY"}, "journal_state": {"const": "PREPARED"}},
+      "not": {"anyOf": [
+        {"required": ["apply_authorization_commit"]}, {"required": ["apply_authorization_sha256"]},
+        {"required": ["apply_receipt_sha256"]}, {"required": ["applied_state_lineage_sha256"]},
+        {"required": ["applied_state_serial"]}, {"required": ["host_key_provenance_sha256"]},
+        {"required": ["recovery_collector_sha256"]}, {"required": ["inventory_sha256"]},
+        {"required": ["known_hosts_sha256"]}
+      ]}
+    },
+    {
+      "required": [
+        "apply_authorization_commit", "apply_authorization_sha256", "apply_receipt_sha256",
+        "applied_state_lineage_sha256", "applied_state_serial", "host_key_provenance_sha256",
+        "recovery_collector_sha256", "inventory_sha256", "known_hosts_sha256"
+      ],
+      "properties": {"authorization_stage": {"const": "RECOVER"}, "journal_state": {"const": "APPLIED"}},
+      "not": {"anyOf": [
+        {"required": ["prepare_authorization_commit"]}, {"required": ["prepare_authorization_sha256"]},
+        {"required": ["prepare_sha256"]}, {"required": ["two_survivor_collector_sha256"]}
+      ]}
+    }
+  ],
+  "$defs": {
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "source": "https://api.github.com/users/web-flow/gpg_keys",
+  "raw_endpoint": "https://github.com/web-flow.gpg",
+  "api_record_id": 3040729,
+  "retrieval_date_utc": "2026-08-21",
+  "armored_sha256": "40ce89d21fb075092d256f9fbf62a1c19299d3282cb913d3e61d08235d0c491a",
+  "accepted_primary_fingerprint": "968479A1AFF927E37D1A566BB5690EEEBB952194",
+  "accepted_key_id": "B5690EEEBB952194",
+  "accepted_uid": "GitHub <noreply@github.com>",
+  "raw_values_recorded": false
+}
