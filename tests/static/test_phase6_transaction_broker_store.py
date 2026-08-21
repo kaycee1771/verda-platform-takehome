@@ -48,12 +48,45 @@ class DurableBrokerStoreTests(unittest.TestCase):
         return store.cas(journal, expected_generation=0, expected_lease_epoch=0,
                          expected_cas_nonce=None, expected_head_sha256=None)
 
+    def admission(self, root: pathlib.Path):
+        mapping = {"broker": "broker_sha256", "policy": "transaction_policy_sha256",
+                   "rollback_policy": "rollback_policy_sha256", "contract": "contract_sha256",
+                   "tool_lock": "tool_lock_sha256", "security_review": "security_review_sha256",
+                   "reliability_review": "reliability_review_sha256", "user_approval": "user_approval_sha256",
+                   "plan": "plan_sha256", "pre_backup": "etcd_backup_sha256", "post_backup": "data_backup_sha256",
+                   "preflight": "preflight_sha256", "cost": "cost_sha256", "capacity": "capacity_sha256",
+                   "collector": "collector_sha256", "provider_facts": "provider_facts_sha256",
+                   "journal": "journal_sha256"}
+        artifact_root = root / "artifacts"; artifact_root.mkdir()
+        artifacts = {}; authorization = {"operation_id": FIXTURES.OPERATION,
+                                         "state_lineage_sha256": digest("lineage"), "state_serial": 12}
+        for name, field in mapping.items():
+            path = artifact_root / name; path.write_text(name, encoding="utf-8"); artifacts[name] = path
+            authorization[field] = hashlib.sha256(name.encode()).hexdigest()
+        state = {"state_lineage_sha256": digest("lineage"), "state_serial": 12, "raw_values_recorded": False}
+        state_path = artifact_root / "state-receipt.json"
+        state_path.write_text(json.dumps(state, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        artifacts["state_receipt"] = state_path
+        return artifacts, authorization
+
     def test_direct_entrypoint_refuses_and_has_no_effect_bodies(self) -> None:
         result = subprocess.run([sys.executable, str(STORE_PATH)], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 64)
         source = STORE_PATH.read_text(encoding="utf-8")
         for forbidden in ("terraform apply", "ansible-playbook", "kubectl delete", "kubectl apply"):
             self.assertNotIn(forbidden, source)
+
+    def test_phase2_mutex_name_and_wait_results_are_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder); store = self.store(root)
+            canonical = str((root / "terraform" / "management.tfstate").resolve(strict=False)).lower()
+            self.assertEqual(store.state_mutex, f"Local\\VerdaPhase2State-{hashlib.sha256(canonical.encode()).hexdigest()}")
+            mutex = STORE.NamedMutex("test")
+            mutex._accept_wait_result(0x80); self.assertIs(mutex.abandoned, True)
+            with self.assertRaisesRegex(STORE.StoreRefused, "another writer"):
+                STORE.NamedMutex("test")._accept_wait_result(0x102)
+            with self.assertRaisesRegex(STORE.StoreRefused, "wait failed"):
+                STORE.NamedMutex("test")._accept_wait_result(0xFFFFFFFF)
 
     def test_atomic_cas_load_nonce_replay_and_stale_epoch(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -89,6 +122,27 @@ class DurableBrokerStoreTests(unittest.TestCase):
             for thread in threads: thread.start()
             for thread in threads: thread.join()
             self.assertEqual(sorted(outcomes), ["refused", "won"])
+
+    def test_public_load_cannot_recover_active_paused_writer_temp(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder); initial = FIXTURES.BrokerFixture(); self.genesis(self.store(root), initial.journal)
+            initial.go({"event": "BEGIN_PREPARE", **initial.fake.gate("pre_prepare")})
+            paused, release = threading.Event(), threading.Event()
+            def hook(stage):
+                if stage == "after_temp_fsync": paused.set(); release.wait(5)
+            writer_store = self.store(root, crash_hook=hook); errors = []
+            def writer():
+                try:
+                    writer_store.cas(initial.session.journal, expected_generation=1, expected_lease_epoch=1,
+                                     expected_cas_nonce=initial.journal["cas_nonce"],
+                                     expected_head_sha256=initial.journal["history"][-1]["entry_sha256"])
+                except Exception as error: errors.append(error)
+            thread = threading.Thread(target=writer); thread.start(); self.assertTrue(paused.wait(5))
+            with self.assertRaisesRegex(STORE.StoreRefused, "another writer"):
+                self.store(root).load()
+            release.set(); thread.join(5)
+            self.assertEqual(errors, [])
+            self.assertEqual(self.store(root).load()["generation"], 2)
 
     def test_crash_reacquire_persists_only_read_only_adoption(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -156,7 +210,8 @@ class DurableBrokerStoreTests(unittest.TestCase):
     def test_read_only_adapter_is_fixed_and_returns_only_sanitized_shape(self) -> None:
         calls: list[tuple[str, ...]] = []
         def runner(command: tuple[str, ...]):
-            calls.append(command); return 0, json.dumps({"items": [{"name": "sensitive-host", "ready": True}]}), ""
+            calls.append(command); return 0, json.dumps({"items": [{"metadata": {"name": "sensitive-host"},
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}), ""
         adapter = STORE.ReadOnlyAdmissionAdapter(runner, lambda: NOW)
         receipt = adapter.collect("cluster-members")
         self.assertEqual(set(receipt), {"kind", "command_sha256", "started_at", "ended_at", "duration_ms",
@@ -172,38 +227,40 @@ class DurableBrokerStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(STORE.StoreRefused, "slow/stale"):
             adapter.collect("cluster-members")
 
+    def test_real_kubernetes_ready_shape_and_reviewed_terraform_path(self) -> None:
+        malformed = STORE.ReadOnlyAdmissionAdapter(lambda _cmd: (0, '{"items":[{"status":{"conditions":[]}}]}', ""),
+                                                   lambda: NOW)
+        with self.assertRaisesRegex(STORE.StoreRefused, "Ready condition"):
+            malformed.collect("cluster-members")
+        calls = []
+        state_path = (ROOT / ".local" / "reviewed.tfstate").resolve()
+        adapter = STORE.ReadOnlyAdmissionAdapter(
+            lambda command: (calls.append(command) or (0, '{"values":{"root_module":{"resources":[]}}}', "")),
+            lambda: NOW, reviewed_state_path=state_path)
+        receipt = adapter.collect("terraform-state")
+        self.assertEqual(calls[0][-1], str(state_path))
+        self.assertEqual(receipt["aggregate"], {"resource_count": 0})
+
     def test_admission_hashes_every_bound_artifact_and_calls_verifier_synchronously(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
-            root = pathlib.Path(folder); artifact_root = root / "artifacts"; artifact_root.mkdir()
-            names = {"broker", "policy", "rollback_policy", "contract", "tool_lock", "review",
-                     "plan", "state", "pre_backup", "post_backup"}
-            artifacts = {}
-            for name in names:
-                path = artifact_root / name; path.write_text(name, encoding="utf-8"); artifacts[name] = path
-            expected = {name: hashlib.sha256(name.encode()).hexdigest() for name in names}
+            root = pathlib.Path(folder); artifacts, authorization = self.admission(root)
             calls = []
             def verifier(auth):
-                calls.append(auth); return {"requires_reverification_before_use": True,
-                                            "operation_id": FIXTURES.OPERATION,
-                                            "artifact_hashes": expected}
+                calls.append(auth); return {"status": "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT",
+                                            "requires_reverification_before_use": True, "operation_id": FIXTURES.OPERATION,
+                                            "authorization_sha256": STORE.digest_bytes(STORE.canonical_bytes(auth)),
+                                            "authorization_commit": "a" * 40,
+                                            "authorization_history_sha256": digest("history")}
             store = self.store(root, verifier=verifier)
-            authorization = {"operation_id": FIXTURES.OPERATION, "artifact_hashes": expected}
             receipt = store.verify_admission(authorization=authorization, artifacts=artifacts)
-            self.assertEqual(receipt["measured_hashes"], expected)
             self.assertEqual(len(calls), 1)
-            expected["plan"] = digest("wrong")
+            authorization["plan_sha256"] = digest("wrong")
             with self.assertRaisesRegex(STORE.StoreRefused, "plan hash"):
                 store.verify_admission(authorization=authorization, artifacts=artifacts)
 
     def test_admission_artifact_identity_swap_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
-            root = pathlib.Path(folder); artifact_root = root / "artifacts"; artifact_root.mkdir()
-            names = {"broker", "policy", "rollback_policy", "contract", "tool_lock", "review",
-                     "plan", "state", "pre_backup", "post_backup"}
-            artifacts = {}
-            for name in names:
-                path = artifact_root / name; path.write_text(name, encoding="utf-8"); artifacts[name] = path
-            expected = {name: hashlib.sha256(name.encode()).hexdigest() for name in names}
+            root = pathlib.Path(folder); artifacts, authorization = self.admission(root)
             calls = 0
             def swapping_probe(path):
                 nonlocal calls
@@ -212,12 +269,14 @@ class DurableBrokerStoreTests(unittest.TestCase):
                     calls += 1
                     facts["identity"] += calls
                 return facts
-            verifier = lambda _auth: {"requires_reverification_before_use": True,
-                                      "operation_id": FIXTURES.OPERATION, "artifact_hashes": expected}
+            verifier = lambda auth: {"status": "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT",
+                                     "requires_reverification_before_use": True, "operation_id": FIXTURES.OPERATION,
+                                     "authorization_sha256": STORE.digest_bytes(STORE.canonical_bytes(auth)),
+                                     "authorization_commit": "a" * 40,
+                                     "authorization_history_sha256": digest("history")}
             store = self.store(root, security_probe=swapping_probe, verifier=verifier)
             with self.assertRaisesRegex(STORE.StoreRefused, "identity changed"):
-                store.verify_admission(authorization={"operation_id": FIXTURES.OPERATION,
-                                                      "artifact_hashes": expected}, artifacts=artifacts)
+                store.verify_admission(authorization=authorization, artifacts=artifacts)
 
 
 if __name__ == "__main__":

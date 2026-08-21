@@ -70,9 +70,71 @@ def default_base() -> pathlib.Path:
 
 def default_security_probe(path: pathlib.Path) -> dict[str, Any]:
     status = path.lstat()
+    owner_only = not bool(status.st_mode & (stat.S_IRWXG | stat.S_IRWXO))
+    if os.name == "nt":
+        owner_only = _windows_owner_protected_dacl(path)
     return {"reparse": stat.S_ISLNK(status.st_mode) or bool(getattr(status, "st_file_attributes", 0) & 0x400),
             "nlink": status.st_nlink, "device": status.st_dev, "identity": status.st_ino,
-            "owner_only": not bool(status.st_mode & (stat.S_IRWXG | stat.S_IRWXO))}
+            "owner_only": owner_only}
+
+
+def _windows_owner_protected_dacl(path: pathlib.Path) -> bool:
+    """Require current-user ownership, protected DACL, and no broad write ACE."""
+    import ctypes
+    from ctypes import wintypes
+    advapi, kernel32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+    owner, dacl, descriptor = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    advapi.GetNamedSecurityInfoW.argtypes = (wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+                                             ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+                                             ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+                                             ctypes.POINTER(ctypes.c_void_p))
+    if advapi.GetNamedSecurityInfoW(str(path), 1, 0x1 | 0x4, ctypes.byref(owner), None,
+                                    ctypes.byref(dacl), None, ctypes.byref(descriptor)) != 0:
+        return False
+    try:
+        control, revision = wintypes.WORD(), wintypes.DWORD()
+        advapi.GetSecurityDescriptorControl.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.WORD),
+                                                        ctypes.POINTER(wintypes.DWORD))
+        if not advapi.GetSecurityDescriptorControl(descriptor, ctypes.byref(control), ctypes.byref(revision)) \
+                or not control.value & 0x1000 or not dacl.value:
+            return False
+        token = wintypes.HANDLE()
+        if not advapi.OpenProcessToken(kernel32.GetCurrentProcess(), 0x8, ctypes.byref(token)):
+            return False
+        try:
+            needed = wintypes.DWORD()
+            advapi.GetTokenInformation(token, 1, None, 0, ctypes.byref(needed))
+            buffer = ctypes.create_string_buffer(needed.value)
+            if not advapi.GetTokenInformation(token, 1, buffer, needed, ctypes.byref(needed)):
+                return False
+            current_sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]
+            if not advapi.EqualSid(owner, current_sid):
+                return False
+        finally:
+            kernel32.CloseHandle(token)
+        class ACL_SIZE_INFORMATION(ctypes.Structure):
+            _fields_ = [("AceCount", wintypes.DWORD), ("AclBytesInUse", wintypes.DWORD),
+                        ("AclBytesFree", wintypes.DWORD)]
+        info = ACL_SIZE_INFORMATION()
+        if not advapi.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), 2):
+            return False
+        broad = {"S-1-1-0", "S-1-5-11", "S-1-5-32-545"}
+        for index in range(info.AceCount):
+            ace = ctypes.c_void_p()
+            if not advapi.GetAce(dacl, index, ctypes.byref(ace)): return False
+            raw = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))
+            if raw[0] != 0: continue
+            mask = ctypes.cast(ace.value + 4, ctypes.POINTER(wintypes.DWORD))[0]
+            sid = ctypes.c_void_p(ace.value + 8); text_sid = wintypes.LPWSTR()
+            if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(text_sid)): return False
+            try:
+                if text_sid.value in broad and mask & (0x40000000 | 0x10000000 | 0x0002 | 0x0004 | 0x0100):
+                    return False
+            finally:
+                kernel32.LocalFree(text_sid)
+        return True
+    finally:
+        kernel32.LocalFree(descriptor)
 
 
 class NamedMutex:
@@ -83,25 +145,47 @@ class NamedMutex:
         self.handle: Any = None
         self.abandoned = False
 
+    def _accept_wait_result(self, result: int) -> None:
+        if result == 0:
+            return
+        if result == 0x80:
+            self.abandoned = True; return
+        if result == 0x102:
+            refuse("another writer holds the named broker/state mutex")
+        refuse("named broker/state mutex wait failed")
+
     def __enter__(self) -> "NamedMutex":
         if os.name == "nt":
             import ctypes
-            self.handle = ctypes.windll.kernel32.CreateMutexW(None, False, self.name)
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+            kernel32.CreateMutexW.restype = wintypes.HANDLE
+            kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            kernel32.WaitForSingleObject.restype = wintypes.DWORD
+            kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+            kernel32.ReleaseMutex.restype = wintypes.BOOL
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            self.kernel32 = kernel32
+            self.handle = kernel32.CreateMutexW(None, False, self.name)
             if not self.handle:
                 refuse("unable to create the named broker/state mutex")
-            result = ctypes.windll.kernel32.WaitForSingleObject(self.handle, 0)
-            if result == 0x80:
-                self.abandoned = True
-            elif result == 0x102:
-                ctypes.windll.kernel32.CloseHandle(self.handle); self.handle = None
-                refuse("another writer holds the named broker/state mutex")
-            elif result != 0:
-                ctypes.windll.kernel32.CloseHandle(self.handle); self.handle = None
-                refuse("named broker/state mutex wait failed")
+            result = kernel32.WaitForSingleObject(self.handle, 0)
+            try:
+                self._accept_wait_result(result)
+            except StoreRefused:
+                kernel32.CloseHandle(self.handle); self.handle = None
+                raise
         else:
             import fcntl
             lock_path = pathlib.Path(tempfile.gettempdir()) / f"verda-{digest_bytes(self.name.encode())}.lock"
-            self.handle = open(lock_path, "a+b")
+            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(lock_path, flags, 0o600)
+            status = os.fstat(descriptor)
+            if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
+                os.close(descriptor); refuse("broker mutex lock file identity differs")
+            self.handle = os.fdopen(descriptor, "a+b", buffering=0)
             try:
                 fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except (OSError, BlockingIOError):
@@ -111,9 +195,8 @@ class NamedMutex:
 
     def __exit__(self, *_: Any) -> None:
         if os.name == "nt":
-            import ctypes
-            ctypes.windll.kernel32.ReleaseMutex(self.handle)
-            ctypes.windll.kernel32.CloseHandle(self.handle)
+            self.kernel32.ReleaseMutex(self.handle)
+            self.kernel32.CloseHandle(self.handle)
         elif self.handle:
             import fcntl
             fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
@@ -138,7 +221,13 @@ class DurableBrokerStore:
         self.temp_path = self.root / f"broker-{operation_id}.envelope-v2.tmp"
         self.clock, self.security_probe, self.verifier, self.crash_hook = clock, security_probe, verifier, crash_hook
         self.operation_mutex = f"Local\\VerdaPhase6Broker-{operation_id}"
-        canonical_state = str((state_path or (canonical_base / "terraform.tfstate")).resolve(strict=False)).lower()
+        expected_state = pathlib.Path(os.environ.get("VERDA_TF_STATE_PATH",
+                                                      str(canonical_base / "terraform" / "management.tfstate")))
+        selected_state = state_path or expected_state
+        if not selected_state.is_absolute() or selected_state.resolve(strict=False) != expected_state.resolve(strict=False):
+            refuse("broker state path is not the exact canonical Phase 2 state path")
+        self.state_path = selected_state.resolve(strict=False)
+        canonical_state = str(self.state_path).lower()
         self.state_mutex = f"Local\\VerdaPhase2State-{digest_bytes(canonical_state.encode('utf-8'))}"
 
     def _secure(self, path: pathlib.Path, *, regular: bool = False) -> dict[str, Any]:
@@ -168,14 +257,15 @@ class DurableBrokerStore:
 
     @contextlib.contextmanager
     def locked(self) -> Iterator[None]:
-        with NamedMutex(self.operation_mutex), NamedMutex(self.state_mutex):
+        with NamedMutex(self.operation_mutex) as operation_lock, NamedMutex(self.state_mutex) as state_lock:
+            self.last_lock_abandoned = operation_lock.abandoned or state_lock.abandoned
             yield
 
     def _read_json(self, path: pathlib.Path) -> dict[str, Any]:
         before = self._secure(path, regular=True)
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
+            value = json.loads(self._stable_bytes(path).decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             refuse(f"durable store contains torn/invalid {path.name}: {type(error).__name__}")
         if not isinstance(value, dict):
             refuse("durable store JSON is not an object")
@@ -184,7 +274,72 @@ class DurableBrokerStore:
             refuse("protected file identity changed while reading")
         return value
 
-    def load(self) -> dict[str, Any]:
+    def _stable_bytes(self, path: pathlib.Path) -> bytes:
+        if os.name == "nt":
+            return self._windows_stable_bytes(path)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                refuse("protected artifact handle is not one regular file identity")
+            chunks = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk: break
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+            if (before.st_dev, before.st_ino, before.st_size) != (after.st_dev, after.st_ino, after.st_size):
+                refuse("protected artifact identity changed while held open")
+            return b"".join(chunks)
+        finally:
+            os.close(descriptor)
+
+    def _windows_stable_bytes(self, path: pathlib.Path) -> bytes:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                         wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        handle = kernel32.CreateFileW(str(path), 0x80000000, 0x1, None, 3, 0x00200000, None)
+        if handle == wintypes.HANDLE(-1).value:
+            refuse("unable to open protected artifact without following reparse points")
+        try:
+            length = kernel32.GetFinalPathNameByHandleW(handle, None, 0, 0)
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            if not length or not kernel32.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 0):
+                refuse("unable to resolve protected artifact final handle path")
+            final = buffer.value.removeprefix("\\\\?\\")
+            if pathlib.Path(final).resolve(strict=False) != path.resolve(strict=True):
+                refuse("protected artifact final handle path differs")
+            class FILE_INFO(ctypes.Structure):
+                _fields_ = [("attributes", wintypes.DWORD), ("creation_low", wintypes.DWORD),
+                            ("creation_high", wintypes.DWORD), ("access_low", wintypes.DWORD),
+                            ("access_high", wintypes.DWORD), ("write_low", wintypes.DWORD),
+                            ("write_high", wintypes.DWORD), ("volume", wintypes.DWORD),
+                            ("size_high", wintypes.DWORD), ("size_low", wintypes.DWORD),
+                            ("links", wintypes.DWORD), ("index_high", wintypes.DWORD), ("index_low", wintypes.DWORD)]
+            before = FILE_INFO()
+            if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(before)) or before.links != 1 \
+                    or before.attributes & 0x400:
+                refuse("protected artifact handle identity/reparse/link count differs")
+            chunks = []
+            while True:
+                chunk = ctypes.create_string_buffer(1024 * 1024); read = wintypes.DWORD()
+                if not kernel32.ReadFile(handle, chunk, len(chunk), ctypes.byref(read), None):
+                    refuse("protected artifact held-handle read failed")
+                if read.value == 0: break
+                chunks.append(chunk.raw[:read.value])
+            after = FILE_INFO(); kernel32.GetFileInformationByHandle(handle, ctypes.byref(after))
+            if (before.volume, before.index_high, before.index_low, before.size_high, before.size_low) != \
+                    (after.volume, after.index_high, after.index_low, after.size_high, after.size_low):
+                refuse("protected artifact volume/file identity changed while held")
+            return b"".join(chunks)
+        finally:
+            kernel32.CloseHandle(handle)
+
+    def _load_unlocked(self) -> dict[str, Any]:
         self.initialize()
         self._recover()
         envelope = self._read_json(self.envelope_path)
@@ -200,19 +355,55 @@ class DurableBrokerStore:
             refuse("envelope nonce ledger does not exactly replay journal history")
         return journal
 
+    def load(self) -> dict[str, Any]:
+        with self.locked():
+            return self._load_unlocked()
+
     def _recover(self) -> None:
         if not self.temp_path.exists():
             return
         staged = self._read_json(self.temp_path)
+        self._validate_envelope(staged, "staged")
         if self.envelope_path.exists():
             current = self._read_json(self.envelope_path)
-            chosen = current if current.get("journal", {}).get("generation", -1) >= staged.get("journal", {}).get("generation", -1) else staged
+            self._validate_envelope(current, "current")
+            current_journal, staged_journal = current["journal"], staged["journal"]
+            if staged_journal["generation"] == current_journal["generation"] + 1:
+                if canonical_bytes(staged_journal["history"][:-1]) != canonical_bytes(current_journal["history"]):
+                    refuse("staged recovery envelope forks current ancestry")
+                chosen = staged
+            elif staged_journal["generation"] <= current_journal["generation"]:
+                chosen = current
+            else:
+                refuse("staged recovery envelope skips current generation")
         else:
             chosen = staged
-        if set(chosen) != {"schema_version", "operation_id", "journal", "nonces"}:
-            refuse("torn envelope staging manifest differs")
-        MODEL.validate_journal(chosen["journal"])
-        os.replace(self.temp_path, self.envelope_path) if chosen is staged else self.temp_path.unlink()
+        self._replace(self.temp_path, self.envelope_path) if chosen is staged else self.temp_path.unlink()
+        if os.name != "nt":
+            directory = os.open(self.root, os.O_RDONLY)
+            try: os.fsync(directory)
+            finally: os.close(directory)
+
+    def _validate_envelope(self, value: dict[str, Any], label: str) -> None:
+        if (set(value) != {"schema_version", "operation_id", "journal", "nonces"}
+                or value["schema_version"] != 2 or value["operation_id"] != self.operation_id):
+            refuse(f"{label} envelope manifest differs")
+        MODEL.validate_journal(value["journal"])
+        exact_nonces = [entry["cas_nonce"] for entry in value["journal"]["history"]]
+        if value["nonces"] != exact_nonces:
+            refuse(f"{label} envelope nonce ancestry differs")
+
+    def _replace(self, source: pathlib.Path, target: pathlib.Path) -> None:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.MoveFileExW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD)
+            kernel32.MoveFileExW.restype = wintypes.BOOL
+            if not kernel32.MoveFileExW(str(source), str(target), 0x1 | 0x8):
+                refuse("durable Windows atomic replace failed")
+        else:
+            os.replace(source, target)
 
     def _atomic(self, path: pathlib.Path, value: dict[str, Any], temp: pathlib.Path) -> None:
         raw = canonical_bytes(value) + b"\n"
@@ -223,7 +414,7 @@ class DurableBrokerStore:
         finally:
             os.close(fd)
         self.crash_hook("after_temp_fsync")
-        os.replace(temp, path)
+        self._replace(temp, path)
         self.crash_hook("after_replace")
         if os.name != "nt":
             directory = os.open(self.root, os.O_RDONLY)
@@ -240,7 +431,7 @@ class DurableBrokerStore:
             refuse("CAS operation differs")
         with self.locked():
             self.initialize()
-            current = self.load() if self.envelope_path.exists() or self.temp_path.exists() else None
+            current = self._load_unlocked() if self.envelope_path.exists() or self.temp_path.exists() else None
             if current is not None and (current["generation"] != expected_generation
                                         or current["lease_epoch"] != expected_lease_epoch):
                 refuse("CAS generation/lease epoch is stale")
@@ -276,7 +467,7 @@ class DurableBrokerStore:
                         nonce_source: Callable[[], str]) -> dict[str, Any]:
         """Reacquire and persist only the model's read-only crash-adoption event."""
         with self.locked():
-            current = self.load()
+            current = self._load_unlocked()
             adopted = MODEL.adopt_spec_journal(policy=policy, journal=current, lease=lease,
                                                expected_generation=current["generation"],
                                                expected_nonce=current["cas_nonce"], boundary=boundary,
@@ -289,41 +480,62 @@ class DurableBrokerStore:
         return adopted
 
     def verify_admission(self, *, authorization: dict[str, Any], artifacts: dict[str, pathlib.Path]) -> dict[str, Any]:
-        required = {"broker", "policy", "rollback_policy", "contract", "tool_lock", "review",
-                    "plan", "state", "pre_backup", "post_backup"}
-        expected_hashes = authorization.get("artifact_hashes")
-        if (set(artifacts) != required or not isinstance(expected_hashes, dict)
-                or set(expected_hashes) != required or self.verifier is None
-                or authorization.get("operation_id") != self.operation_id):
+        mapping = {"broker": "broker_sha256", "policy": "transaction_policy_sha256",
+                   "rollback_policy": "rollback_policy_sha256", "contract": "contract_sha256",
+                   "tool_lock": "tool_lock_sha256", "security_review": "security_review_sha256",
+                   "reliability_review": "reliability_review_sha256", "user_approval": "user_approval_sha256",
+                   "plan": "plan_sha256", "pre_backup": "etcd_backup_sha256",
+                   "post_backup": "data_backup_sha256", "preflight": "preflight_sha256",
+                   "cost": "cost_sha256", "capacity": "capacity_sha256", "collector": "collector_sha256",
+                   "provider_facts": "provider_facts_sha256", "journal": "journal_sha256"}
+        required = set(mapping) | {"state_receipt"}
+        if (set(artifacts) != required or self.verifier is None
+                or authorization.get("operation_id") != self.operation_id
+                or any(not DIGEST.fullmatch(authorization.get(field, "")) for field in mapping.values())):
             refuse("admission artifact/hash/verifier boundary differs")
         receipt = self.verifier(authorization)
-        if (not isinstance(receipt, dict) or receipt.get("requires_reverification_before_use") is not True
+        if (not isinstance(receipt, dict) or receipt.get("status") != "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT"
+                or receipt.get("requires_reverification_before_use") is not True
                 or receipt.get("operation_id") != self.operation_id
-                or receipt.get("artifact_hashes") != expected_hashes):
-            refuse("direct synchronous authorization verifier refused or projected different hashes")
+                or receipt.get("authorization_sha256") != digest_bytes(canonical_bytes(authorization))
+                or not isinstance(receipt.get("authorization_commit"), str)
+                or not isinstance(receipt.get("authorization_history_sha256"), str)):
+            refuse("direct synchronous authorization verifier receipt differs")
         measured: dict[str, str] = {}
-        for name in sorted(required):
+        for name in sorted(mapping):
             path = artifacts[name]
             before = self._secure(path, regular=True)
-            measured[name] = digest_bytes(path.read_bytes())
+            measured[name] = digest_bytes(self._stable_bytes(path))
             after = self._secure(path, regular=True)
             if (before.get("device"), before.get("identity")) != (after.get("device"), after.get("identity")):
                 refuse(f"admission {name} identity changed during hash")
-            if measured[name] != expected_hashes[name]:
+            if measured[name] != authorization[mapping[name]]:
                 refuse(f"admission {name} hash differs")
+        state_receipt = self._read_json(artifacts["state_receipt"])
+        if (set(state_receipt) != {"state_lineage_sha256", "state_serial", "raw_values_recorded"}
+                or state_receipt["state_lineage_sha256"] != authorization.get("state_lineage_sha256")
+                or state_receipt["state_serial"] != authorization.get("state_serial")
+                or state_receipt["raw_values_recorded"] is not False):
+            refuse("admission state receipt differs from authorization")
+        measured["state_receipt"] = digest_bytes(canonical_bytes(state_receipt))
         return {"operation_id": self.operation_id, "measured_hashes": measured,
                 "verifier_receipt_sha256": digest_bytes(canonical_bytes(receipt)),
                 "observed_at": utc_text(self.clock()), "raw_values_recorded": False}
 
 
 class ReadOnlyAdmissionAdapter:
-    def __init__(self, runner: Callable[[tuple[str, ...]], tuple[int, str, str]], clock: Callable[[], dt.datetime]) -> None:
-        self.runner, self.clock = runner, clock
+    def __init__(self, runner: Callable[[tuple[str, ...]], tuple[int, str, str]], clock: Callable[[], dt.datetime],
+                 reviewed_state_path: pathlib.Path | None = None) -> None:
+        self.runner, self.clock, self.reviewed_state_path = runner, clock, reviewed_state_path
 
     def collect(self, kind: str) -> dict[str, Any]:
         if kind not in READ_ONLY_COMMANDS:
             refuse("read-only adapter command is not fixed/allowed")
         command = READ_ONLY_COMMANDS[kind]
+        if kind == "terraform-state":
+            if self.reviewed_state_path is None or not self.reviewed_state_path.is_absolute():
+                refuse("Terraform collector lacks exact reviewed state path")
+            command = command + (str(self.reviewed_state_path),)
         started = self.clock()
         code, stdout, stderr = self.runner(command)
         ended = self.clock()
@@ -341,9 +553,16 @@ class ReadOnlyAdmissionAdapter:
         if kind == "cluster-members":
             items = parsed.get("items")
             if not isinstance(items, list): refuse("cluster member aggregate schema differs")
-            aggregate = {"member_count": len(items),
-                         "ready_count": sum(1 for item in items if isinstance(item, dict)
-                                            and item.get("ready") is True)}
+            ready = 0
+            for item in items:
+                conditions = item.get("status", {}).get("conditions") if isinstance(item, dict) else None
+                if not isinstance(conditions, list): refuse("Kubernetes Ready condition list differs")
+                matches = [condition for condition in conditions if isinstance(condition, dict)
+                           and condition.get("type") == "Ready"]
+                if len(matches) != 1 or matches[0].get("status") not in {"True", "False", "Unknown"}:
+                    refuse("Kubernetes Ready condition differs")
+                ready += matches[0]["status"] == "True"
+            aggregate = {"member_count": len(items), "ready_count": ready}
         elif kind == "provider-inventory":
             items = parsed.get("instances")
             if not isinstance(items, list): refuse("provider inventory aggregate schema differs")
