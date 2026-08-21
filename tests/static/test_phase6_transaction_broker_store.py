@@ -45,6 +45,8 @@ def secure_probe(path: pathlib.Path) -> dict:
 
 class DurableBrokerStoreTests(unittest.TestCase):
     def store(self, root: pathlib.Path, operation: str = FIXTURES.OPERATION, **kwargs):
+        if "verifier" in kwargs:
+            kwargs["allow_test_verifier"] = True
         return STORE.DurableBrokerStore(operation_id=operation, base=root,
                                         clock=lambda: NOW, security_probe=kwargs.pop("security_probe", secure_probe),
                                         **kwargs)
@@ -294,7 +296,9 @@ class DurableBrokerStoreTests(unittest.TestCase):
                 lambda command: (calls.append(command) or (0, '{"values":{"root_module":{"resources":[]}}}', "")),
                 lambda: NOW)
             receipt = adapter.collect("terraform-state")
-            self.assertEqual(calls[0][-1], str(store.state_path))
+            self.assertNotEqual(calls[0][-1], str(store.state_path))
+            self.assertEqual(receipt["canonical_state_path"], str(store.state_path))
+            self.assertEqual(receipt["state_snapshot_sha256"], hashlib.sha256(b"{}").hexdigest())
             self.assertEqual(receipt["aggregate"], {"resource_count": 0})
             provider = STORE.ReadOnlyAdmissionAdapter(store,
                 lambda _command: (0, '{"instances":[{"status":"running","instance_type":"CPU.8V.32G"},'

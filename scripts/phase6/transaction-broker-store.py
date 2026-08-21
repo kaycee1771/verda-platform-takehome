@@ -308,6 +308,11 @@ class NamedMutex:
                 refuse("broker lock directory ownership/mode/identity differs")
             self.directory_handle = os.open(lock_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                                              | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                fcntl.flock(self.directory_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (OSError, BlockingIOError):
+                os.close(self.directory_handle); self.directory_handle = None
+                refuse("another writer holds the shared protected-state lock parent")
             filename = f"verda-{digest_bytes(self.name.encode())}.lockdir"
             try: os.mkdir(filename, 0o700, dir_fd=self.directory_handle)
             except FileExistsError: pass
@@ -346,6 +351,7 @@ class NamedMutex:
             fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
             self.handle.close()
             if self.directory_handle is not None:
+                fcntl.flock(self.directory_handle, fcntl.LOCK_UN)
                 os.close(self.directory_handle); self.directory_handle = None
 
 
@@ -354,6 +360,7 @@ class DurableBrokerStore:
                  clock: Callable[[], dt.datetime], security_probe: Callable[[pathlib.Path], dict[str, Any]] = default_security_probe,
                  verifier: SynchronousAuthorizationVerifier |
                  Callable[[pathlib.Path, bytes, dict[str, Any]], dict[str, Any]] | None = None,
+                 allow_test_verifier: bool = False,
                  state_path: pathlib.Path | None = None,
                  crash_hook: Callable[[str], None] = lambda _stage: None) -> None:
         if not DIGEST.fullmatch(operation_id):
@@ -368,6 +375,9 @@ class DurableBrokerStore:
         self.temp_path = self.root / f"broker-{operation_id}.envelope-v2.tmp"
         self.clock, self.security_probe = clock, security_probe
         self.verifier = CallableAuthorizationVerifier(verifier) if callable(verifier) else verifier
+        self.allow_test_verifier = allow_test_verifier
+        if isinstance(self.verifier, CallableAuthorizationVerifier) and not allow_test_verifier:
+            refuse("callable authorization verifier is test-only")
         self.crash_hook = crash_hook
         self.operation_mutex = f"Local\\VerdaPhase6Broker-{operation_id}"
         expected_state = pathlib.Path(os.environ.get("VERDA_TF_STATE_PATH",
@@ -658,6 +668,8 @@ class DurableBrokerStore:
                    "cost": "cost_sha256", "capacity": "capacity_sha256", "collector": "collector_sha256",
                    "provider_facts": "provider_facts_sha256", "journal": "journal_sha256"}
         required = set(mapping) | {"state_receipt"}
+        if not isinstance(self.verifier, CheckedInAuthorizationVerifier) and not self.allow_test_verifier:
+            refuse("production admission requires the checked-in authorization verifier adapter")
         auth_before = self._secure(authorization_path, regular=True)
         authorization_raw = self._stable_bytes(authorization_path)
         auth_after = self._secure(authorization_path, regular=True)
@@ -736,12 +748,27 @@ class ReadOnlyAdmissionAdapter:
         if kind not in READ_ONLY_COMMANDS:
             refuse("read-only adapter command is not fixed/allowed")
         command = READ_ONLY_COMMANDS[kind]
+        snapshot_digest = None
         if kind == "terraform-state":
-            self.store._secure(self.store.state_path, regular=True)
-            command = command + (str(self.store.state_path),)
-        started = self.clock()
-        code, stdout, stderr = self.runner(command)
-        ended = self.clock()
+            with self.store.locked():
+                self.store.initialize()
+                self.store._secure(self.store.state_path, regular=True)
+                raw = self.store._stable_bytes(self.store.state_path)
+                snapshot_digest = digest_bytes(raw)
+                snapshot = self.store.root / f"state-{snapshot_digest}.read-only.tfstate"
+                fd = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                try:
+                    if os.name == "nt": _protect_windows_path(snapshot)
+                    os.write(fd, raw); os.fsync(fd)
+                finally:
+                    os.close(fd)
+                try:
+                    command = command + (str(snapshot),)
+                    started = self.clock(); code, stdout, stderr = self.runner(command); ended = self.clock()
+                finally:
+                    snapshot.unlink(missing_ok=True)
+        else:
+            started = self.clock(); code, stdout, stderr = self.runner(command); ended = self.clock()
         if code != 0 or stderr.strip():
             refuse("read-only adapter failed or emitted stderr")
         try:
@@ -794,6 +821,9 @@ class ReadOnlyAdmissionAdapter:
                      "started_at": utc_text(started), "ended_at": utc_text(ended),
                      "duration_ms": int(duration * 1000), "freshness_seconds": 10,
                      "aggregate": aggregate, "raw_values_recorded": False}
+        if kind == "terraform-state":
+            sanitized["state_snapshot_sha256"] = snapshot_digest
+            sanitized["canonical_state_path"] = str(self.store.state_path)
         return sanitized
 
 

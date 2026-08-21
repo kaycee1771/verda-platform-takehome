@@ -146,6 +146,11 @@ public static class VerdaPhase2PosixLock {
         $lockDigest = [Convert]::ToHexString(
             [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($mutexName))
         ).ToLowerInvariant()
+        $parentFd = [VerdaPhase2PosixLock]::open($lockRoot, (0 -bor 65536 -bor 131072 -bor 524288), 448)
+        if ($parentFd -lt 0 -or [VerdaPhase2PosixLock]::flock($parentFd, 6) -ne 0) {
+            if ($parentFd -ge 0) { [void][VerdaPhase2PosixLock]::close($parentFd) }
+            throw 'Another process holds the stable shared lock-parent inode.'
+        }
         $lockPath = Join-Path $lockRoot "verda-$lockDigest.lockdir"
         [IO.Directory]::CreateDirectory($lockPath) | Out-Null
         [IO.File]::SetUnixFileMode($lockPath, [IO.UnixFileMode]::UserRead -bor
@@ -156,18 +161,24 @@ public static class VerdaPhase2PosixLock {
         # Linux: flock the stable, owner-only directory inode itself. Its
         # nonempty sentinel prevents unlink/recreate from splitting contenders.
         $fd = [VerdaPhase2PosixLock]::open($lockPath, (0 -bor 65536 -bor 131072 -bor 524288), 448)
-        if ($fd -lt 0) { throw 'Unable to open the OS-exclusive protected-state lock without following links.' }
+        if ($fd -lt 0) {
+            [void][VerdaPhase2PosixLock]::flock($parentFd, 8); [void][VerdaPhase2PosixLock]::close($parentFd)
+            throw 'Unable to open the OS-exclusive protected-state lock without following links.'
+        }
         if ([VerdaPhase2PosixLock]::flock($fd, 6) -ne 0) {
             [void][VerdaPhase2PosixLock]::close($fd)
+            [void][VerdaPhase2PosixLock]::flock($parentFd, 8); [void][VerdaPhase2PosixLock]::close($parentFd)
             throw 'Another Phase 2 process holds the OS-exclusive protected-state mutex.'
         }
         $heldTarget = (Get-Item -LiteralPath "/proc/self/fd/$fd" -Force).Target
         if ((Get-CanonicalBoundaryPath -Path $heldTarget) -ne (Get-CanonicalBoundaryPath -Path $lockPath)) {
             [void][VerdaPhase2PosixLock]::flock($fd, 8)
             [void][VerdaPhase2PosixLock]::close($fd)
+            [void][VerdaPhase2PosixLock]::flock($parentFd, 8)
+            [void][VerdaPhase2PosixLock]::close($parentFd)
             throw 'The shared Phase 2 lock path identity changed after flock acquisition.'
         }
-        return [pscustomobject]@{ Kind = 'PosixFlock'; Fd = $fd; Path = $lockPath }
+        return [pscustomobject]@{ Kind = 'PosixFlock'; Fd = $fd; ParentFd = $parentFd; Path = $lockPath }
     }
     $mutex = [Threading.Mutex]::new($false, $mutexName)
     $acquired = $false
@@ -191,7 +202,11 @@ function Exit-Phase2MutationLease {
 
     if ($Lease.PSObject.Properties['Kind'] -and $Lease.Kind -eq 'PosixFlock') {
         try { [void][VerdaPhase2PosixLock]::flock($Lease.Fd, 8) }
-        finally { [void][VerdaPhase2PosixLock]::close($Lease.Fd) }
+        finally {
+            [void][VerdaPhase2PosixLock]::close($Lease.Fd)
+            [void][VerdaPhase2PosixLock]::flock($Lease.ParentFd, 8)
+            [void][VerdaPhase2PosixLock]::close($Lease.ParentFd)
+        }
         return
     }
     try { $Lease.ReleaseMutex() } finally { $Lease.Dispose() }
