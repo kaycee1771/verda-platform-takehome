@@ -70,6 +70,70 @@ HISTORY_KEYS = {"generation", "from_state", "to_state", "event", "receipt_sha256
 BACKUP_KEYS = {"receipt_sha256", "backup_identity_sha256", "state_lineage_sha256", "state_serial", "verified_at"}
 BACKUP_FIELDS = {"state_backup_sha256", "pre_apply_backup_sha256", "post_apply_backup_sha256",
                  "pre_rollback_backup_sha256", "post_rollback_backup_sha256"}
+EFFECT_RECEIPT_KEYS = {"operation_id", "lease_id", "lease_epoch", "action", "outcome", "evidence_sha256"}
+
+
+def _allowed_event_fields(event: str) -> set[str]:
+    exact = {
+        "START_SPEC": set(), "ADOPT_LEASE": {"lease_id"},
+        "BEGIN_PREPARE": {"latest_gate_sha256"},
+        "PREPARE_SUCCEEDED": {"prepare_receipt_sha256"},
+        "ADOPT_PREPARE_COMPLETE": {"prepare_receipt_sha256"},
+        "BEGIN_APPLY": {"latest_gate_sha256"},
+        "APPLY_SUCCEEDED": {"apply_receipt_sha256", "state_backup_sha256", "pre_apply_backup_sha256",
+                            "post_apply_backup_sha256", "state_serial_after"},
+        "ADOPT_APPLY_COMPLETE": {"apply_receipt_sha256", "state_backup_sha256", "pre_apply_backup_sha256",
+                                 "post_apply_backup_sha256", "state_serial_after"},
+        "BEGIN_RECOVERY": {"latest_gate_sha256"},
+        "RECOVERY_SUCCEEDED": {"recovery_receipt_sha256"},
+        "ADOPT_RECOVERY_COMPLETE": {"recovery_receipt_sha256"},
+        "BEGIN_POSTFLIGHT": {"latest_gate_sha256"},
+        "POSTFLIGHT_SUCCEEDED": {"postflight_sha256", "rollback_required"},
+        "ADOPT_POSTFLIGHT_COMPLETE": {"postflight_sha256", "rollback_required"},
+        "FAIL_RECOVERY_UNSAFE": {"failure_class", "rollback_required"},
+        "FAIL_POSTFLIGHT_UNSAFE": {"failure_class", "rollback_required"},
+        "BEGIN_ROLLBACK": {"latest_gate_sha256", "rollback_milestone", "rollback_plan_sha256",
+                           "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
+                           "pre_rollback_backup_sha256"},
+        "ROLLBACK_SUCCEEDED": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
+        "ADOPT_ROLLBACK_COMPLETE": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
+        "FAIL_ROLLBACK_UNSAFE": {"failure_class", "rollback_required"},
+        "DEADLINE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
+        "RESOURCE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
+        "ADOPT_PREPARE_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
+        "ADOPT_PREPARE_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required"},
+        "PREPARE_ABORTED": {"failure_class", "rollback_required", "manual_intervention_required"},
+        "ADOPT_APPLY_PARTIAL": {"failure_class", "state_backup_sha256", "rollback_required",
+                                "manual_intervention_required"},
+        "ADOPT_APPLY_UNKNOWN": {"failure_class", "state_backup_sha256", "rollback_required",
+                                "manual_intervention_required"},
+    }
+    if event in exact:
+        return exact[event]
+    if event in {"ADOPT_PREPARE_NOT_STARTED", "UNPREPARE_SUCCEEDED", "ADOPT_APPLY_NOT_STARTED"}:
+        return set()
+    if event.startswith("RECOVERY_") and event[9:] in RECOVERY_MILESTONES[1:]:
+        return {"recovery_milestone"}
+    if event.startswith("ROLLBACK_") and event[9:] in ROLLBACK_MILESTONES[2:]:
+        return {"rollback_milestone"}
+    refuse(f"transaction replay has no closed payload schema for {event}")
+
+
+def _effect_receipt(*, projection: dict[str, Any], action: str, evidence: str, outcome: str = "VERIFIED") -> dict[str, Any]:
+    _digest(evidence, "effect evidence")
+    return {"operation_id": projection["operation_id"], "lease_id": projection["lease_id"],
+            "lease_epoch": projection["lease_epoch"], "action": action, "outcome": outcome,
+            "evidence_sha256": evidence}
+
+
+def _validate_effect_receipt(receipt: object, *, projection: dict[str, Any], action: str) -> dict[str, Any]:
+    value = exact_keys(receipt, EFFECT_RECEIPT_KEYS, "effect receipt")
+    if (value["operation_id"] != projection["operation_id"] or value["lease_id"] != projection["lease_id"]
+            or value["lease_epoch"] != projection["lease_epoch"] or value["action"] != action
+            or value["outcome"] != "VERIFIED"):
+        refuse("effect receipt is not bound to the current fenced session")
+    _digest(value["evidence_sha256"], "effect receipt evidence")
+    return value
 
 # This is deliberately a closed replay grammar.  Journal validation never trusts
 # the materialized head merely because its last history row names the same state.
@@ -137,12 +201,15 @@ def _replay_history(history: list[dict[str, Any]]) -> dict[str, Any]:
         if not isinstance(payload, dict):
             refuse("transaction replay event payload differs")
         if index == 1:
-            if entry["event"] != "START_SPEC" or payload != {"authorization_sha256": entry["receipt_sha256"]}:
+            if entry["event"] != "START_SPEC" or set(payload) != {"receipt"}:
                 refuse("transaction replay genesis is not exact START_SPEC")
             expected = copy.deepcopy(projection)
             if (expected["generation"] != 1 or expected["state"] != "AUTHORIZED"
                     or expected["lease_epoch"] != entry["lease_epoch"] or expected["lease_epoch"] < 0):
                 refuse("transaction replay genesis projection differs")
+            receipt = _validate_effect_receipt(payload["receipt"], projection=expected, action="START_SPEC")
+            if canonical_digest(receipt) != entry["receipt_sha256"]:
+                refuse("START_SPEC receipt digest differs")
             for key in (JOURNAL_KEYS - IMMUTABLE_PROJECTION_KEYS - {"history", "generation", "cas_nonce",
                         "lease_id", "lease_epoch", "state", "updated_at", "manual_intervention_required"}):
                 if key.endswith("_sha256") and expected[key] is not None:
@@ -166,19 +233,14 @@ def _replay_history(history: list[dict[str, Any]]) -> dict[str, Any]:
             else:
                 if projection["lease_epoch"] != previous["lease_epoch"] or projection["lease_id"] != previous["lease_id"]:
                     refuse("transaction replay effect changed its lease fence")
-            allowed = set(payload.get("updates", {}))
-            if set(payload) - {"updates", "lease_id", "effect_receipt_sha256"}:
+            allowed = _allowed_event_fields(event)
+            if set(payload) != {"receipt"} | allowed:
                 refuse("transaction replay payload schema differs")
-            expected_bound_receipt = (canonical_digest({"event": entry["event"],
-                                                        "effect_receipt_sha256": payload.get("effect_receipt_sha256"),
-                                                        "lease_epoch": entry["lease_epoch"]})
-                                      if payload.get("effect_receipt_sha256") is not None else None)
-            if expected_bound_receipt != entry["receipt_sha256"]:
-                refuse("transaction replay receipt is not bound to its effect")
-            updates = payload.get("updates", {})
-            if not isinstance(updates, dict):
-                refuse("transaction replay updates differ")
-            expected.update(updates)
+            receipt = _validate_effect_receipt(payload["receipt"], projection=expected, action=event)
+            if canonical_digest(receipt) != entry["receipt_sha256"]:
+                refuse("transaction replay receipt digest differs")
+            for key in allowed:
+                expected[key] = copy.deepcopy(payload[key])
             if expected != projection:
                 refuse("transaction replay projection differs from canonical event reduction")
         previous = copy.deepcopy(projection)
@@ -454,12 +516,29 @@ def validate_journal(journal: dict[str, Any]) -> None:
             journal["apply_receipt_sha256"] is None or journal["state_backup_sha256"] is None or after is None
             or journal["pre_apply_backup_sha256"] is None or journal["post_apply_backup_sha256"] is None):
         refuse("post-apply journal lacks the protected apply/backup receipt")
+    if journal["state"] in {"PREPARED", "APPLYING", "APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT",
+                             "COMPLETED", "ROLLBACK_REQUIRED", "ROLLING_BACK", "ROLLED_BACK"} and journal["prepare_receipt_sha256"] is None:
+        refuse("prepared-or-later journal lacks prepare evidence")
     if journal["state"] in {"RECOVERED", "POSTFLIGHT", "COMPLETED"} and journal["recovery_receipt_sha256"] is None:
         refuse("recovered journal lacks its exact-effect receipt")
     if journal["state"] == "COMPLETED" and journal["postflight_sha256"] is None:
         refuse("completed journal lacks postflight evidence")
     if journal["state"] == "ROLLED_BACK" and journal["rollback_receipt_sha256"] is None:
         refuse("rolled-back journal lacks rollback evidence")
+    if journal["state"] == "ROLLED_BACK" and (
+            journal["rollback_milestone"] != "ZERO_DRIFT_VERIFIED"
+            or journal["rollback_plan_sha256"] is None or journal["rollback_plan_semantic_sha256"] is None
+            or journal["rollback_current_state_receipt_sha256"] is None
+            or journal["pre_rollback_backup_sha256"] is None or journal["post_rollback_backup_sha256"] is None
+            or journal["rollback_required"] is not False):
+        refuse("rolled-back journal lacks its exact plan/current-state/backup/zero-drift matrix")
+    if journal["state"] not in {"RECOVERING", "RECOVERED", "POSTFLIGHT", "COMPLETED",
+                                 "ROLLBACK_REQUIRED", "ROLLING_BACK", "ROLLED_BACK", "FAILED_SAFE"} \
+            and journal["recovery_milestone"] != "NONE":
+        refuse("recovery milestone exists before recovery")
+    if journal["state"] not in {"ROLLING_BACK", "ROLLED_BACK", "FAILED_SAFE"} \
+            and journal["rollback_milestone"] != "NONE":
+        refuse("rollback milestone exists before rollback")
 
 
 def _gate(event: dict[str, Any], policy: dict[str, Any], kind: str, now: dt.datetime) -> str:
@@ -556,11 +635,13 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
         "history": [],
         "raw_values_recorded": False,
     }
+    start_receipt = _effect_receipt(projection=journal, action="START_SPEC",
+                                    evidence=authorization["authorization_sha256"])
     journal["history"].append(_seal_entry({
         "generation": 1, "from_state": None, "to_state": "AUTHORIZED",
-        "event": "START_SPEC", "receipt_sha256": authorization["authorization_sha256"],
+        "event": "START_SPEC", "receipt_sha256": canonical_digest(start_receipt),
         "cas_nonce": nonce, "captured_at": captured, "lease_epoch": lease.epoch,
-        "event_payload": {"authorization_sha256": authorization["authorization_sha256"]},
+        "event_payload": {"receipt": start_receipt},
         "previous_entry_sha256": None,
         "projection": _projection_value(journal), "projection_sha256": _projection(journal),
     }))
@@ -605,17 +686,14 @@ def adopt_spec_journal(*, policy: dict[str, Any], journal: dict[str, Any], lease
     candidate["generation"] += 1
     candidate["cas_nonce"] = nonce
     candidate["updated_at"] = utc_text(now)
-    adoption_effect_receipt = canonical_digest(boundary)
-    adoption_bound_receipt = canonical_digest({"event": "ADOPT_LEASE",
-                                               "effect_receipt_sha256": adoption_effect_receipt,
-                                               "lease_epoch": lease.epoch})
+    adoption_effect_receipt = _effect_receipt(projection=candidate, action="ADOPT_LEASE",
+                                              evidence=canonical_digest(boundary))
     candidate["history"].append(_seal_entry({
         "generation": candidate["generation"], "from_state": candidate["state"],
-        "to_state": candidate["state"], "event": "ADOPT_LEASE", "receipt_sha256": adoption_bound_receipt,
+        "to_state": candidate["state"], "event": "ADOPT_LEASE", "receipt_sha256": canonical_digest(adoption_effect_receipt),
         "cas_nonce": nonce, "captured_at": candidate["updated_at"],
         "lease_epoch": lease.epoch,
-        "event_payload": {"lease_id": lease.lease_id, "updates": {},
-                          "effect_receipt_sha256": adoption_effect_receipt},
+        "event_payload": {"lease_id": lease.lease_id, "receipt": adoption_effect_receipt},
         "previous_entry_sha256": journal["history"][-1]["entry_sha256"],
         "projection": _projection_value(candidate), "projection_sha256": _projection(candidate),
     }))
@@ -687,15 +765,16 @@ class BrokerModelSession:
         candidate["generation"] += 1
         candidate["cas_nonce"] = nonce
         candidate["updated_at"] = utc_text(now)
-        bound_receipt = (canonical_digest({"event": event_name, "effect_receipt_sha256": receipt,
-                                           "lease_epoch": self.lease_epoch}) if receipt is not None else None)
+        evidence = receipt or canonical_digest({"event": event_name, "generation": candidate["generation"]})
+        effect_receipt = _effect_receipt(projection=candidate, action=event_name, evidence=evidence)
+        event_payload = {"receipt": effect_receipt}
+        event_payload.update(copy.deepcopy(updates or {}))
         candidate["history"].append(_seal_entry({
             "generation": candidate["generation"], "from_state": previous, "to_state": to_state,
-            "event": event_name, "receipt_sha256": bound_receipt, "cas_nonce": nonce,
+            "event": event_name, "receipt_sha256": canonical_digest(effect_receipt), "cas_nonce": nonce,
             "captured_at": candidate["updated_at"],
             "lease_epoch": self.lease_epoch,
-            "event_payload": {"updates": copy.deepcopy(updates or {}),
-                              "effect_receipt_sha256": receipt},
+            "event_payload": event_payload,
             "previous_entry_sha256": self.journal["history"][-1]["entry_sha256"],
             "projection": _projection_value(candidate), "projection_sha256": _projection(candidate),
         }))
@@ -723,7 +802,7 @@ class BrokerModelSession:
                                  receipt=canonical_digest({"deadline": self.journal["resource_expiry_utc"]}),
                                  updates={"failure_class": "POLICY_REFUSAL", "rollback_required": False,
                                           "manual_intervention_required": True}, terminalize=True)
-        if state in {"AUTHORIZED", "PREPARING", "PREPARED", "APPLYING"} and current >= complete_by:
+        if state in {"AUTHORIZED", "PREPARED"} and current >= complete_by:
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name="DEADLINE_EXPIRED", to_state="FAILED_SAFE", now=now,
                                  receipt=canonical_digest({"deadline": self.journal["complete_by"]}),
