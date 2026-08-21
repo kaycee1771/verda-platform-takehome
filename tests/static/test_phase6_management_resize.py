@@ -238,6 +238,29 @@ class PlanTests(unittest.TestCase):
 
 
 class JournalAndLeaseTests(unittest.TestCase):
+    def test_control_root_must_be_the_single_contract_adjacent_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            repository = root / "repository"
+            external = root / "external"
+            repository.mkdir()
+            external.mkdir()
+            contract = external / "active-contract.json"
+            contract.write_text("{}", encoding="utf-8")
+            canonical = external / "phase6-resize-control"
+            self.assertEqual(
+                RESIZE.canonical_control_root(repository, contract, canonical), canonical.resolve()
+            )
+            alternate = root / "alternate" / "phase6-resize-control"
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "canonical active-contract"):
+                RESIZE.canonical_control_root(repository, contract, alternate)
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "canonical active-contract"):
+                RESIZE.adopt_reviewed_apply(
+                    repository=repository, contract_path=contract,
+                    progress_path=external / "progress.json", control_root=alternate,
+                    operation_id="1" * 64, git_commit="a" * 40,
+                )
+
     def test_nonce_is_used_once_and_postflight_is_hash_bound(self) -> None:
         contract = active_contract()
         operation = "1" * 64
@@ -636,11 +659,11 @@ class RecoverySourceTests(unittest.TestCase):
         parser = RESIZE.build_parser()
         choices = next(action.choices for action in parser._actions if getattr(action, "choices", None))
         self.assertEqual(
-            set(choices), {"validate-contract", "assert-saved-plan", "apply-node", "adopt-apply", "recover-node"}
+            set(choices), {"validate-contract", "assert-saved-plan", "adopt-apply", "recover-node"}
         )
         phase2 = (ROOT / "scripts" / "infra" / "phase2.ps1").read_text()
-        self.assertIn("phase6-resize-apply", phase2)
-        self.assertIn("Invoke-Phase6ResizeApply", phase2)
+        self.assertNotIn("phase6-resize-apply", phase2)
+        self.assertNotIn("Invoke-Phase6ResizeApply", phase2)
 
 
 class ProtectedStateSourceTests(unittest.TestCase):
@@ -651,13 +674,13 @@ class ProtectedStateSourceTests(unittest.TestCase):
     def section(self, start: str, end: str) -> str:
         return self.source.split(start, 1)[1].split(end, 1)[0]
 
-    def test_phase6_has_explicit_plan_apply_state_and_output_boundaries(self) -> None:
+    def test_phase6_has_explicit_disabled_plan_state_and_output_boundaries(self) -> None:
         self.assertIn("'phase6-resize-plan'", self.source)
-        self.assertIn("'phase6-resize-apply'", self.source)
+        self.assertNotIn("'phase6-resize-apply'", self.source)
         self.assertIn("'phase6-resize-state'", self.source)
         self.assertIn("'phase6-resize-no-drift'", self.source)
         self.assertIn("'phase6-resize-output'", self.source)
-        self.assertIn("Invoke-Phase6ResizeApply", self.source)
+        self.assertNotIn("Invoke-Phase6ResizeApply", self.source)
         self.assertIn("Assert-OutsideRepository -Path $statePath", self.source)
         self.assertIn("Close-SealedState -Paths $paths", self.source)
         self.assertIn("$phase6ProtectedTarget -and $phase6StateOpened", self.source)

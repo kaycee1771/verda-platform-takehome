@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import os
-import importlib.util
-import json
 import pathlib
 import subprocess
 import tempfile
@@ -16,13 +14,6 @@ import unittest
 
 ROOT = pathlib.Path(__file__).parents[2]
 PHASE2 = ROOT / "scripts" / "infra" / "phase2.ps1"
-CONTROLLER = ROOT / "scripts" / "phase6" / "management-node-resize.py"
-SPEC = importlib.util.spec_from_file_location("phase6_resize_capability", CONTROLLER)
-assert SPEC and SPEC.loader
-RESIZE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(RESIZE)
-
-
 @unittest.skipUnless(os.name == "nt", "Windows DPAPI/file-share behavior")
 class Phase2MutationSafetyTests(unittest.TestCase):
     def pwsh(self, source: str) -> subprocess.CompletedProcess[str]:
@@ -62,87 +53,89 @@ if (Get-Command Invoke-Phase6ResizePlan -ErrorAction SilentlyContinue) {{ exit 9
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("dot-source-refused", result.stdout)
 
-    def test_phase6_apply_capability_direct_tampered_stale_and_wrong_journal_never_reach_terraform(self) -> None:
-        cases = ("direct", "tampered", "stale", "wrong-journal")
-        for case in cases:
-            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+    def test_public_phase6_apply_is_absent_and_refuses_before_state_or_terraform(self) -> None:
+        source = PHASE2.read_text(encoding="utf-8")
+        self.assertNotIn("phase6-resize-apply", source)
+        self.assertNotIn("Invoke-Phase6ResizeApply", source)
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            base, backup = root / "base", root / "backup"
+            state = base / "terraform" / "management.tfstate"
+            state.parent.mkdir(parents=True)
+            backup.mkdir()
+            state.write_text("state-must-not-be-opened", encoding="utf-8")
+            marker = root / "terraform-called"
+            result = self.pwsh(rf"""
+$env:VERDA_TAKEHOME_CONFIG_DIR = '{base}'
+$env:VERDA_TF_BACKUP_DIR = '{backup}'
+function terraform {{ New-Item -ItemType File -Force -Path '{marker}' | Out-Null }}
+try {{ & '{PHASE2}' -Target phase6-resize-apply; exit 81 }} catch {{}}
+if (Test-Path -LiteralPath '{marker}') {{ exit 82 }}
+if ((Get-Content -Raw -LiteralPath '{state}') -ne 'state-must-not-be-opened') {{ exit 83 }}
+'public-apply-absent-before-state-open'
+""")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("public-apply-absent-before-state-open", result.stdout)
+            self.assertFalse(marker.exists())
+
+    def test_prepared_or_invalid_phase6_sentinel_blocks_generic_state_open(self) -> None:
+        for state in ("PREPARED", "invalid-schema"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
                 base, backup = root / "base", root / "backup"
-                plans, control = base / "phase6" / "plans", base / "phase6-resize-control"
-                plans.mkdir(parents=True)
-                control.mkdir()
+                control = base / "phase6-resize-control"
+                state_path = base / "terraform" / "management.tfstate"
+                control.mkdir(parents=True)
+                state_path.parent.mkdir()
                 backup.mkdir()
-                operation = "1" * 64
-                commit = subprocess.run(
-                    ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True,
-                ).stdout.strip()
-                plan = plans / "reviewed.tfplan"
-                plan.write_bytes(b"reviewed-plan")
-                plan_sha = RESIZE.digest_file(plan)
-                semantic_sha, lineage = "2" * 64, "3" * 64
-                approval, preflight, prepare = "4" * 64, "5" * 64, "6" * 64
-                contract = root / "active-contract.json"
-                contract.write_text(json.dumps({
-                    "phase": 6, "cluster": "management",
-                    "activation": {"enabled": True, "writes_allowed": True, "integrated_commit": commit},
-                    "terraform": {"target_resource_expiry_utc": "2026-08-27T21:00:00Z"},
-                }), encoding="utf-8")
-                journal = control / f"phase6-resize-operation-{operation}.json"
-                journal.write_text(json.dumps({
-                    "schema_version": 1, "phase": 6, "integrated_commit": commit,
-                    "operation_id": operation, "generation": 2, "state": "APPLYING",
-                    "node": "03", "direction": "resize", "plan_sha256": plan_sha,
-                    "state_lineage_sha256": lineage, "state_serial_before": 9,
-                    "review_sha256": approval, "prepare_sha256": prepare,
-                }), encoding="utf-8")
-                authorization = control / f"phase6-resize-authorization-{operation}-apply.json"
-                secret = control / f"phase6-resize-capability-{operation}.dpapi"
-                RESIZE.create_apply_authorization(
-                    path=authorization, capability_secret_path=secret, contract_path=contract,
-                    journal_path=journal, integrated_commit=commit, operation_id=operation,
-                    node="03", direction="resize", journal_generation=2, plan_sha256=plan_sha,
-                    plan_semantic_sha256=semantic_sha, state_lineage_sha256=lineage, state_serial=9,
-                    approval_sha256=approval, preflight_sha256=preflight,
-                    prepare_sha256=prepare, now=RESIZE.dt.datetime.now(RESIZE.dt.timezone.utc),
-                )
-                if case == "direct":
-                    authorization.unlink()
-                elif case == "tampered":
-                    value = json.loads(authorization.read_text(encoding="utf-8"))
-                    value["plan_semantic_sha256"] = "7" * 64
-                    authorization.write_text(json.dumps(value), encoding="utf-8")
-                elif case == "stale":
-                    value = json.loads(authorization.read_text(encoding="utf-8"))
-                    value["expires_at"] = "2026-08-20T00:00:00+00:00"
-                    authorization.write_text(json.dumps(value), encoding="utf-8")
+                state_path.write_text("state-must-remain-closed", encoding="utf-8")
+                journal = control / f"phase6-resize-operation-{'1' * 64}.json"
+                if state == "PREPARED":
+                    journal.write_text(
+                        '{"schema_version":1,"phase":6,"state":"PREPARED"}', encoding="utf-8"
+                    )
                 else:
-                    value = json.loads(journal.read_text(encoding="utf-8"))
-                    value["generation"] = 3
-                    journal.write_text(json.dumps(value), encoding="utf-8")
+                    journal.write_text(
+                        '{"schema_version":99,"phase":6,"state":"COMPLETED"}', encoding="utf-8"
+                    )
                 marker = root / "terraform-called"
                 result = self.pwsh(rf"""
 $env:VERDA_TAKEHOME_CONFIG_DIR = '{base}'
 $env:VERDA_TF_BACKUP_DIR = '{backup}'
-$env:VERDA_CLIENT_ID = 'test-client'
-$env:VERDA_CLIENT_SECRET = 'test-secret'
-$env:CONFIRM_PHASE6_RESIZE = 'yes'
-function terraform {{ New-Item -ItemType File -Force -Path '{marker}' | Out-Null; throw 'unreachable' }}
-try {{
-  & '{PHASE2}' -Target phase6-resize-apply -Confirm -SavedPlan '{plan}' `
-    -ExpectedPlanSha256 '{plan_sha}' -ExpectedPlanSemanticSha256 '{semantic_sha}' `
-    -ExpectedStateLineageSha256 '{lineage}' -ExpectedStateSerial 9 `
-    -ExpectedJournalGeneration 2 -OperationId '{operation}' -Authorization '{authorization}' `
-    -CapabilitySecret '{secret}' -ActiveContract '{contract}' -OperationJournal '{journal}' `
-    -ResizeNode 03 -ResizeDirection resize -ExpectedApprovalSha256 '{approval}' `
-    -ExpectedPreflightSha256 '{preflight}' -ExpectedPrepareSha256 '{prepare}'
-  exit 81
-}} catch {{}}
+function terraform {{ New-Item -ItemType File -Force -Path '{marker}' | Out-Null }}
+try {{ & '{PHASE2}' -Target init; exit 81 }} catch {{}}
 if (Test-Path -LiteralPath '{marker}') {{ exit 82 }}
-'capability-refused-before-terraform'
+if ((Get-Content -Raw -LiteralPath '{state_path}') -ne 'state-must-remain-closed') {{ exit 83 }}
+'sentinel-refused-before-state-open'
 """)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("capability-refused-before-terraform", result.stdout)
+                self.assertIn("sentinel-refused-before-state-open", result.stdout)
                 self.assertFalse(marker.exists())
+
+    def test_disabled_phase6_plan_refuses_tampered_plan_before_state_open_or_terraform(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            base, backup = root / "base", root / "backup"
+            state_path = base / "terraform" / "management.tfstate"
+            plan = base / "phase6" / "plans" / "tampered.tfplan"
+            state_path.parent.mkdir(parents=True)
+            plan.parent.mkdir(parents=True)
+            backup.mkdir()
+            state_path.write_text("state-must-remain-closed", encoding="utf-8")
+            plan.write_text("unreviewed-plan-bytes", encoding="utf-8")
+            marker = root / "terraform-called"
+            result = self.pwsh(rf"""
+$env:VERDA_TAKEHOME_CONFIG_DIR = '{base}'
+$env:VERDA_TF_BACKUP_DIR = '{backup}'
+function terraform {{ New-Item -ItemType File -Force -Path '{marker}' | Out-Null }}
+try {{ & '{PHASE2}' -Target phase6-resize-plan -SavedPlan '{plan}'; exit 81 }} catch {{}}
+if (Test-Path -LiteralPath '{marker}') {{ exit 82 }}
+if ((Get-Content -Raw -LiteralPath '{state_path}') -ne 'state-must-remain-closed') {{ exit 83 }}
+'disabled-plan-refused-before-state-open'
+""")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("disabled-plan-refused-before-state-open", result.stdout)
+            self.assertFalse(marker.exists())
 
     def test_phase6_state_alias_matrix_preserves_every_asset_and_never_calls_terraform(self) -> None:
         for alias in ("private", "public", "known", "backup", "sealed_new", "hardlink"):

@@ -11,16 +11,13 @@ exact clean integrated commit and reviewed, protected operation inputs.
 from __future__ import annotations
 
 import argparse
-import ctypes
 import datetime as dt
 import hashlib
-import hmac
 import ipaddress
 import json
 import os
 import pathlib
 import re
-import secrets
 import stat
 import subprocess
 import sys
@@ -747,41 +744,6 @@ def write_json_atomic(path: pathlib.Path, value: dict[str, Any]) -> None:
             temporary.unlink()
 
 
-def dpapi_protect(secret: bytes) -> bytes:
-    if os.name != "nt":
-        refuse("Phase 6 apply capabilities require Windows DPAPI protection")
-
-    class DataBlob(ctypes.Structure):
-        _fields_ = [("size", ctypes.c_ulong), ("data", ctypes.POINTER(ctypes.c_ubyte))]
-
-    source_buffer = ctypes.create_string_buffer(secret)
-    source = DataBlob(len(secret), ctypes.cast(source_buffer, ctypes.POINTER(ctypes.c_ubyte)))
-    protected = DataBlob()
-    if not ctypes.windll.crypt32.CryptProtectData(
-        ctypes.byref(source), None, None, None, None, 0, ctypes.byref(protected)
-    ):
-        refuse("unable to DPAPI-protect the controller capability secret")
-    try:
-        return ctypes.string_at(protected.data, protected.size)
-    finally:
-        ctypes.windll.kernel32.LocalFree(protected.data)
-
-
-def write_bytes_atomic(path: pathlib.Path, payload: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".new", dir=path.parent)
-    temporary = pathlib.Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
-
-
 def create_operation_authorization(
     *, path: pathlib.Path, contract_path: pathlib.Path, journal_path: pathlib.Path,
     integrated_commit: str, operation_id: str, node: str, direction: str,
@@ -801,62 +763,6 @@ def create_operation_authorization(
         "expires_at": (now.astimezone(dt.timezone.utc) + dt.timedelta(minutes=5)).isoformat(),
         "raw_values_recorded": False,
     }
-    write_json_atomic(path, authorization)
-    if os.name != "nt":
-        path.chmod(0o600)
-    return authorization
-
-
-def create_apply_authorization(
-    *, path: pathlib.Path, capability_secret_path: pathlib.Path,
-    contract_path: pathlib.Path, journal_path: pathlib.Path,
-    integrated_commit: str, operation_id: str, node: str, direction: str,
-    journal_generation: int, plan_sha256: str, plan_semantic_sha256: str,
-    state_lineage_sha256: str, state_serial: int, approval_sha256: str,
-    preflight_sha256: str, prepare_sha256: str, now: dt.datetime,
-) -> dict[str, Any]:
-    if (
-        path.parent != journal_path.parent or path.parent.name != "phase6-resize-control"
-        or path.name != f"phase6-resize-authorization-{operation_id}-apply.json"
-        or capability_secret_path.parent != path.parent
-        or capability_secret_path.name != f"phase6-resize-capability-{operation_id}.dpapi"
-        or journal_generation < 1 or state_serial < 0
-        or any(not DIGEST_RE.fullmatch(value) for value in (
-            operation_id, plan_sha256, plan_semantic_sha256, state_lineage_sha256,
-            approval_sha256, preflight_sha256, prepare_sha256,
-        ))
-    ):
-        refuse("apply authorization must use the exact protected reviewed operation binding")
-    journal = read_json(journal_path)
-    if (
-        journal.get("state") != "APPLYING" or journal.get("generation") != journal_generation
-        or journal.get("operation_id") != operation_id or journal.get("node") != node
-        or journal.get("direction") != direction or journal.get("plan_sha256") != plan_sha256
-        or journal.get("state_lineage_sha256") != state_lineage_sha256
-        or journal.get("state_serial_before") != state_serial
-        or journal.get("review_sha256") != approval_sha256
-        or journal.get("prepare_sha256") != prepare_sha256
-    ):
-        refuse("APPLYING journal differs before capability issuance")
-    secret = secrets.token_bytes(32)
-    authorization = {
-        "schema_version": 1, "phase": 6, "status": "CONTROLLER_APPLY_AUTHORIZED",
-        "integrated_commit": integrated_commit, "operation_id": operation_id,
-        "node": node, "direction": direction, "mode": "apply",
-        "contract_sha256": digest_file(contract_path), "journal_sha256": digest_file(journal_path),
-        "journal_generation": journal_generation, "plan_sha256": plan_sha256,
-        "plan_semantic_sha256": plan_semantic_sha256,
-        "state_lineage_sha256": state_lineage_sha256, "state_serial": state_serial,
-        "approval_sha256": approval_sha256, "preflight_sha256": preflight_sha256,
-        "prepare_sha256": prepare_sha256,
-        "capability_secret_sha256": hashlib.sha256(secret).hexdigest(),
-        "expires_at": (now.astimezone(dt.timezone.utc) + dt.timedelta(minutes=5)).isoformat(),
-        "raw_values_recorded": False,
-    }
-    authorization["capability_hmac_sha256"] = hmac.new(
-        secret, json.dumps(authorization, sort_keys=True, separators=(",", ":")).encode("utf-8"), hashlib.sha256,
-    ).hexdigest()
-    write_bytes_atomic(capability_secret_path, dpapi_protect(secret))
     write_json_atomic(path, authorization)
     if os.name != "nt":
         path.chmod(0o600)
@@ -1495,28 +1401,10 @@ class LocalExecutionAdapter:
             "raw_values_recorded": False,
         }
 
-    def phase2_apply(
-        self, *, saved_plan: pathlib.Path, plan_sha256: str, lineage_sha256: str,
-        state_serial: int, operation_id: str, authorization_path: pathlib.Path,
-        capability_secret_path: pathlib.Path,
-        contract_path: pathlib.Path, journal_path: pathlib.Path, journal_generation: int,
-        node: str, direction: str, plan_semantic_sha256: str, approval_sha256: str,
-        preflight_sha256: str, prepare_sha256: str,
-    ) -> dict[str, Any]:
-        return self._json([
-            "pwsh", "-NoLogo", "-NoProfile", "-File", str(self.phase2),
-            "-Target", "phase6-resize-apply", "-SavedPlan", str(saved_plan),
-            "-ExpectedPlanSha256", plan_sha256, "-ExpectedStateLineageSha256", lineage_sha256,
-            "-ExpectedStateSerial", str(state_serial), "-OperationId", operation_id, "-Confirm",
-            "-Authorization", str(authorization_path), "-ActiveContract", str(contract_path),
-            "-CapabilitySecret", str(capability_secret_path),
-            "-OperationJournal", str(journal_path), "-ExpectedJournalGeneration", str(journal_generation),
-            "-ResizeNode", node, "-ResizeDirection", direction,
-            "-ExpectedPlanSemanticSha256", plan_semantic_sha256,
-            "-ExpectedApprovalSha256", approval_sha256,
-            "-ExpectedPreflightSha256", preflight_sha256,
-            "-ExpectedPrepareSha256", prepare_sha256,
-        ], environment={"CONFIRM_PHASE6_RESIZE": "yes"})
+    def phase2_apply(self, **_: Any) -> dict[str, Any]:
+        refuse(
+            "protected Phase 6 apply is unavailable until a hosted-CI approval root and non-exported child channel exist"
+        )
 
     def phase2_state(self, *, lineage_sha256: str, operation_id: str) -> dict[str, Any]:
         return self._json([
@@ -1716,6 +1604,28 @@ def operation_paths(control_root: pathlib.Path, operation_id: str) -> tuple[path
     )
 
 
+def canonical_control_root(
+    repository: pathlib.Path, contract_path: pathlib.Path, control_root: pathlib.Path,
+) -> pathlib.Path:
+    """Return the one control root adjacent to the external active contract."""
+    expected = contract_path.parent / "phase6-resize-control"
+    actual = control_root.resolve(strict=False)
+    expected_resolved = expected.resolve(strict=False)
+    if actual != expected_resolved:
+        refuse("Phase 6 control root is not the canonical active-contract control root")
+    repository_resolved = repository.resolve(strict=True)
+    try:
+        actual.relative_to(repository_resolved)
+    except ValueError:
+        pass
+    else:
+        refuse("Phase 6 control root must remain outside the repository")
+    for candidate in (expected, expected.parent):
+        if candidate.exists() and candidate.is_symlink():
+            refuse("Phase 6 control root traversal contains a link")
+    return expected_resolved
+
+
 def prepare_binding(
     *, repository: pathlib.Path, contract_path: pathlib.Path, inventory_path: pathlib.Path,
     runtime_vars_path: pathlib.Path, private_key_path: pathlib.Path, public_key_path: pathlib.Path,
@@ -1743,8 +1653,12 @@ def execute_reviewed_apply(
     adapter: Any | None = None, now: dt.datetime | None = None,
 ) -> dict[str, Any]:
     now = now or dt.datetime.now(dt.timezone.utc)
-    adapter = adapter or LocalExecutionAdapter(repository)
+    if adapter is None:
+        refuse(
+            "live apply is disabled until protected GitHub main/hosted CI provides an external approval root"
+        )
     contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
+    control_root = canonical_control_root(repository, contract_path, control_root)
     contract = read_json(contract_path)
     validate_contract(contract)
     integrated = require_activation(contract, git_commit)
@@ -1829,35 +1743,11 @@ def execute_reviewed_apply(
             if authorization_path.exists():
                 authorization_path.unlink()
         current = journal.begin_apply(expected_generation=current["generation"], captured_at=now.isoformat())
-        apply_authorization_path = control_root / f"phase6-resize-authorization-{operation_id}-apply.json"
-        capability_secret_path = control_root / f"phase6-resize-capability-{operation_id}.dpapi"
-        try:
-            create_apply_authorization(
-                path=apply_authorization_path, capability_secret_path=capability_secret_path,
-                contract_path=contract_path, journal_path=journal_path,
-                integrated_commit=integrated, operation_id=operation_id, node=node, direction=direction,
-                journal_generation=current["generation"], plan_sha256=approved["plan_sha256"],
-                plan_semantic_sha256=approved["plan_semantic_sha256"],
-                state_lineage_sha256=state_lineage_sha256, state_serial=state_serial,
-                approval_sha256=digest_file(review_path), preflight_sha256=approved["preflight_sha256"],
-                prepare_sha256=current["prepare_sha256"], now=now,
-            )
-            apply_receipt = adapter.phase2_apply(
-                saved_plan=saved_plan, plan_sha256=approved["plan_sha256"],
-                lineage_sha256=state_lineage_sha256, state_serial=state_serial,
-                operation_id=operation_id, authorization_path=apply_authorization_path,
-                capability_secret_path=capability_secret_path,
-                contract_path=contract_path, journal_path=journal_path,
-                journal_generation=current["generation"], node=node, direction=direction,
-                plan_semantic_sha256=approved["plan_semantic_sha256"],
-                approval_sha256=digest_file(review_path),
-                preflight_sha256=approved["preflight_sha256"], prepare_sha256=current["prepare_sha256"],
-            )
-        finally:
-            if apply_authorization_path.exists():
-                apply_authorization_path.unlink()
-            if capability_secret_path.exists():
-                capability_secret_path.unlink()
+        apply_receipt = adapter.phase2_apply(
+            saved_plan=saved_plan, plan_sha256=approved["plan_sha256"],
+            lineage_sha256=state_lineage_sha256, state_serial=state_serial,
+            operation_id=operation_id,
+        )
         state_serial_after = validate_apply_receipt(
             apply_receipt, operation_id=operation_id, plan_sha256=approved["plan_sha256"],
             lineage_sha256=state_lineage_sha256, state_serial_before=state_serial,
@@ -1890,6 +1780,7 @@ def adopt_reviewed_apply(
     now = now or dt.datetime.now(dt.timezone.utc)
     adapter = adapter or LocalExecutionAdapter(repository)
     contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
+    control_root = canonical_control_root(repository, contract_path, control_root)
     contract = read_json(contract_path)
     validate_contract(contract)
     integrated = require_activation(contract, git_commit)
@@ -1963,6 +1854,7 @@ def recover_reviewed_node(
     now = now or dt.datetime.now(dt.timezone.utc)
     adapter = adapter or LocalExecutionAdapter(repository)
     contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
+    control_root = canonical_control_root(repository, contract_path, control_root)
     contract = read_json(contract_path)
     validate_contract(contract)
     integrated = require_activation(contract, git_commit)
@@ -2169,19 +2061,6 @@ def build_parser() -> argparse.ArgumentParser:
     semantic.add_argument("--node", choices=("01", "02", "03"), required=True)
     semantic.add_argument("--direction", choices=("resize", "rollback"), required=True)
 
-    apply = sub.add_parser("apply-node")
-    for name in (
-        "progress", "saved-plan", "preflight", "review", "review-lease", "cost",
-        "capacity", "collector", "control-root", "inventory", "runtime-vars",
-        "private-key", "public-key", "known-hosts", "kubeconfig",
-    ):
-        apply.add_argument(f"--{name}", type=pathlib.Path, required=True)
-    apply.add_argument("--operation-id", required=True)
-    apply.add_argument("--survivor", choices=("01", "02", "03"), required=True)
-    apply.add_argument("--direction", choices=("resize", "rollback"), required=True)
-    apply.add_argument("--state-lineage-sha256", required=True)
-    apply.add_argument("--state-serial", type=int, required=True)
-
     adopt = sub.add_parser("adopt-apply")
     for name in ("progress", "control-root"):
         adopt.add_argument(f"--{name}", type=pathlib.Path, required=True)
@@ -2223,21 +2102,7 @@ def main() -> int:
                 "node": args.node, "direction": args.direction, "raw_values_recorded": False,
             })
             return 0
-        if args.action == "apply-node":
-            summary = execute_reviewed_apply(
-                repository=repository, contract_path=contract_path, progress_path=args.progress,
-                saved_plan=args.saved_plan, preflight_path=args.preflight, review_path=args.review,
-                review_lease_path=args.review_lease, cost_path=args.cost, capacity_path=args.capacity,
-                collector_path=args.collector, control_root=args.control_root,
-                inventory_path=args.inventory, runtime_vars_path=args.runtime_vars,
-                private_key_path=args.private_key, public_key_path=args.public_key,
-                known_hosts_path=args.known_hosts, operation_id=args.operation_id,
-                survivor=args.survivor, direction=args.direction,
-                kubeconfig_path=args.kubeconfig,
-                state_lineage_sha256=args.state_lineage_sha256, state_serial=args.state_serial,
-                git_commit=git_commit,
-            )
-        elif args.action == "adopt-apply":
+        if args.action == "adopt-apply":
             summary = adopt_reviewed_apply(
                 repository=repository, contract_path=contract_path, progress_path=args.progress,
                 control_root=args.control_root, operation_id=args.operation_id,

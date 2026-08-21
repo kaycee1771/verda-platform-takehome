@@ -1,27 +1,15 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('init', 'plan', 'apply', 'repair-node-02-plan', 'repair-node-02-apply', 'inventory', 'verify-hosts', 'lifecycle-check', 'cost-report', 'state-audit', 'destroy', 'phase6-resize-plan', 'phase6-resize-apply', 'phase6-resize-state', 'phase6-resize-no-drift', 'phase6-resize-output')]
+    [ValidateSet('init', 'plan', 'apply', 'repair-node-02-plan', 'repair-node-02-apply', 'inventory', 'verify-hosts', 'lifecycle-check', 'cost-report', 'state-audit', 'destroy', 'phase6-resize-plan', 'phase6-resize-state', 'phase6-resize-no-drift', 'phase6-resize-output')]
     [string]$Target,
     [ValidateSet('management')]
     [string]$Cluster = 'management',
     [switch]$Confirm,
     [string]$SavedPlan = '',
-    [string]$ExpectedPlanSha256 = '',
-    [string]$ExpectedPlanSemanticSha256 = '',
     [string]$ExpectedStateLineageSha256 = '',
     [long]$ExpectedStateSerial = -1,
-    [long]$ExpectedJournalGeneration = -1,
     [string]$OperationId = '',
-    [string]$Authorization = '',
-    [string]$CapabilitySecret = '',
-    [string]$ActiveContract = '',
-    [string]$OperationJournal = '',
-    [string]$ResizeNode = '',
-    [string]$ResizeDirection = '',
-    [string]$ExpectedApprovalSha256 = '',
-    [string]$ExpectedPreflightSha256 = '',
-    [string]$ExpectedPrepareSha256 = '',
     [string]$InventoryOutput = '',
     [string]$KnownHosts = ''
 )
@@ -968,104 +956,6 @@ function Assert-Phase6OutputArguments {
     Assert-OutsideRepository -Path $script:KnownHosts -Label 'Phase 6 known-hosts file'
 }
 
-function Assert-Phase6ApplyArguments {
-    param([Parameter(Mandatory)]$Paths)
-
-    if (-not $Confirm -or $env:CONFIRM_PHASE6_RESIZE -ne 'yes') {
-        throw 'Phase 6 apply requires both -Confirm and CONFIRM_PHASE6_RESIZE=yes.'
-    }
-    if ($OperationId -notmatch '^[0-9a-f]{64}$' -or $ExpectedPlanSha256 -notmatch '^[0-9a-f]{64}$') {
-        throw 'Phase 6 apply operation or reviewed plan digest is invalid.'
-    }
-    if ($ExpectedStateLineageSha256 -notmatch '^[0-9a-f]{64}$' -or $ExpectedStateSerial -lt 0) {
-        throw 'Expected Terraform state lineage/serial is invalid.'
-    }
-    if (-not $SavedPlan) { throw 'An external reviewed Phase 6 saved plan path is required.' }
-    $candidate = [IO.Path]::GetFullPath($SavedPlan)
-    $directory = [IO.Path]::GetFullPath($Paths.Phase6PlanDirectory)
-    Assert-NoReparsePath -Path $directory -Label 'Phase 6 saved-plan directory'
-    Assert-NoReparsePath -Path $candidate -Label 'Phase 6 reviewed saved plan'
-    Assert-SingleFileIdentity -Path $candidate -Label 'Phase 6 reviewed saved plan'
-    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf) -or
-        -not ([IO.Path]::GetFullPath((Split-Path -Parent $candidate))).Equals(
-            $directory, [StringComparison]::OrdinalIgnoreCase
-        ) -or
-        -not (Get-CanonicalBoundaryPath -Path (Split-Path -Parent $candidate)).Equals(
-            (Get-CanonicalBoundaryPath -Path $directory), [StringComparison]::OrdinalIgnoreCase
-        )) {
-        throw 'Phase 6 reviewed saved plan must be an existing direct child of its protected directory.'
-    }
-    Assert-OutsideRepository -Path $candidate -Label 'Phase 6 reviewed saved plan'
-    $script:SavedPlan = $candidate
-}
-
-function Assert-Phase6ApplyAuthorization {
-    param([Parameter(Mandatory)]$Paths)
-
-    $digests = @(
-        $ExpectedPlanSha256, $ExpectedPlanSemanticSha256, $ExpectedStateLineageSha256,
-        $ExpectedApprovalSha256, $ExpectedPreflightSha256, $ExpectedPrepareSha256
-    )
-    if (
-        $digests.Where({ $_ -notmatch '^[0-9a-f]{64}$' }).Count -ne 0 -or
-        $ExpectedJournalGeneration -lt 1 -or $ExpectedStateSerial -lt 0 -or
-        $ResizeNode -notmatch '^0[1-3]$' -or $ResizeDirection -notin @('resize', 'rollback')
-    ) { throw 'Phase 6 apply capability binding is incomplete.' }
-    if (-not $Authorization -or -not $CapabilitySecret -or -not $ActiveContract -or -not $OperationJournal) {
-        throw 'Controller-issued Phase 6 apply capability is required.'
-    }
-    $authorizationPath = [IO.Path]::GetFullPath($Authorization)
-    $secretPath = [IO.Path]::GetFullPath($CapabilitySecret)
-    $contractPath = [IO.Path]::GetFullPath($ActiveContract)
-    $journalPath = [IO.Path]::GetFullPath($OperationJournal)
-    $control = [IO.Path]::GetFullPath((Split-Path -Parent $authorizationPath))
-    if (
-        (Split-Path -Leaf $control) -ne 'phase6-resize-control' -or
-        -not $authorizationPath.Equals(
-            (Join-Path $control "phase6-resize-authorization-$OperationId-apply.json"),
-            [StringComparison]::OrdinalIgnoreCase
-        ) -or
-        -not $secretPath.Equals(
-            (Join-Path $control "phase6-resize-capability-$OperationId.dpapi"),
-            [StringComparison]::OrdinalIgnoreCase
-        ) -or
-        -not $journalPath.Equals(
-            (Join-Path $control "phase6-resize-operation-$OperationId.json"),
-            [StringComparison]::OrdinalIgnoreCase
-        )
-    ) { throw 'Phase 6 apply capability paths are not canonical.' }
-    foreach ($entry in @(
-        @($authorizationPath, 'apply authorization'), @($secretPath, 'encrypted capability secret'),
-        @($contractPath, 'active contract'), @($journalPath, 'operation journal')
-    )) {
-        Assert-NoReparsePath -Path $entry[0] -Label $entry[1]
-        Assert-SingleFileIdentity -Path $entry[0] -Label $entry[1]
-        Assert-OutsideRepository -Path $entry[0] -Label $entry[1]
-        if (-not (Test-Path -LiteralPath $entry[0] -PathType Leaf)) { throw "$($entry[1]) is absent." }
-    }
-    $pathsToCompare = @($authorizationPath, $secretPath, $contractPath, $journalPath, $SavedPlan)
-    for ($left = 0; $left -lt $pathsToCompare.Count; $left++) {
-        for ($right = $left + 1; $right -lt $pathsToCompare.Count; $right++) {
-            if ((Get-CanonicalBoundaryPath -Path $pathsToCompare[$left]).Equals(
-                (Get-CanonicalBoundaryPath -Path $pathsToCompare[$right]), [StringComparison]::OrdinalIgnoreCase
-            )) { throw 'Phase 6 apply capability inputs must be distinct files.' }
-        }
-    }
-    & python (Join-Path $repoRoot 'scripts\phase6\assert-operation-authorization.py') `
-        --authorization $authorizationPath --capability-secret $secretPath `
-        --contract $contractPath --journal $journalPath --authorization-sha256 `
-        (Get-FileHash -Algorithm SHA256 -LiteralPath $authorizationPath).Hash.ToLowerInvariant() `
-        --operation-id $OperationId --commit `
-        (Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json).activation.integrated_commit `
-        --node $ResizeNode --direction $ResizeDirection --mode apply --repository $repoRoot `
-        --journal-generation $ExpectedJournalGeneration --plan-sha256 $ExpectedPlanSha256 `
-        --plan-semantic-sha256 $ExpectedPlanSemanticSha256 `
-        --state-lineage-sha256 $ExpectedStateLineageSha256 --state-serial $ExpectedStateSerial `
-        --approval-sha256 $ExpectedApprovalSha256 --preflight-sha256 $ExpectedPreflightSha256 `
-        --prepare-sha256 $ExpectedPrepareSha256 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Controller-issued Phase 6 apply capability verification failed.' }
-}
-
 function Assert-NoActivePhase6MutationJournal {
     param([Parameter(Mandatory)]$Paths)
 
@@ -1078,8 +968,8 @@ function Assert-NoActivePhase6MutationJournal {
         try { $value = Get-Content -LiteralPath $journal.FullName -Raw | ConvertFrom-Json }
         catch { throw 'A Phase 6 durable operation sentinel is unreadable.' }
         if (
-            $value.schema_version -eq 1 -and $value.phase -eq 6 -and
-            $value.state -in @('APPLYING', 'APPLIED', 'RECOVERING', 'RECOVERED')
+            $value.schema_version -ne 1 -or $value.phase -ne 6 -or
+            $value.state -ne 'COMPLETED'
         ) {
             throw 'A durable Phase 6 operation is incomplete; generic Phase 2 state access is refused.'
         }
@@ -1145,66 +1035,6 @@ function Invoke-Phase6ResizePlan {
         state_serial = $receipt.serial
         raw_values_recorded = $false
     } | ConvertTo-Json -Compress
-}
-
-function Invoke-Phase6ResizeApply {
-    param([Parameter(Mandatory)]$Paths)
-
-    Assert-Credentials
-    $before = Get-Phase6StateReceipt -Paths $Paths
-    if ($before.lineage_sha256 -ne $ExpectedStateLineageSha256 -or $before.serial -ne $ExpectedStateSerial) {
-        throw 'Terraform state lineage/serial differs from the reviewed apply boundary.'
-    }
-    $stage = New-StagedReviewedPlan -Path $SavedPlan -Paths $Paths
-    try {
-        if ($stage.Sha256 -ne $ExpectedPlanSha256) {
-            throw 'Reviewed Phase 6 plan digest differs before apply.'
-        }
-        $semanticRaw = & python (Join-Path $repoRoot 'scripts\phase6\management-node-resize.py') `
-            --repository $repoRoot --contract $ActiveContract assert-saved-plan `
-            --saved-plan $stage.Path --node $ResizeNode --direction $ResizeDirection 2>$null
-        if ($LASTEXITCODE -ne 0) { throw 'Phase 6 semantic saved-plan verification failed.' }
-        try { $semantic = ($semanticRaw -join "`n") | ConvertFrom-Json }
-        catch { throw 'Phase 6 semantic saved-plan receipt is invalid.' }
-        if (
-            $semantic.schema_version -ne 1 -or $semantic.status -ne 'SEMANTIC_PLAN_VERIFIED' -or
-            $semantic.plan_sha256 -ne $ExpectedPlanSha256 -or
-            $semantic.plan_semantic_sha256 -ne $ExpectedPlanSemanticSha256 -or
-            $semantic.node -ne $ResizeNode -or $semantic.direction -ne $ResizeDirection -or
-            $semantic.raw_values_recorded -ne $false
-        ) { throw 'Phase 6 semantic saved-plan receipt differs from the apply capability.' }
-        $pathHandle = Open-VerifiedStagedPlanPath -Stage $stage
-        try {
-            Backup-State -Paths $Paths
-            try {
-                Invoke-Phase6Terraform -Arguments @(
-                    'apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $stage.Path
-                ) -LogName "phase6-apply-$OperationId.log" | Out-Null
-            } finally {
-                if (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf) {
-                    Backup-State -Paths $Paths
-                }
-            }
-        } finally {
-            $pathHandle.Dispose()
-        }
-        $after = Get-Phase6StateReceipt -Paths $Paths
-        if ($after.lineage_sha256 -ne $before.lineage_sha256 -or $after.serial -le $before.serial) {
-            throw 'Terraform state lineage changed or serial did not advance after apply.'
-        }
-        [ordered]@{
-            schema_version = 1
-            status = 'APPLY_COMPLETE_RECOVERY_REQUIRED'
-            operation_id = $OperationId
-            plan_sha256 = $ExpectedPlanSha256
-            state_lineage_sha256 = $after.lineage_sha256
-            state_serial_before = $before.serial
-            state_serial_after = $after.serial
-            raw_values_recorded = $false
-        } | ConvertTo-Json -Compress
-    } finally {
-        Remove-StagedReviewedPlan -Stage $stage
-    }
 }
 
 function Invoke-Phase6ResizeState {
@@ -1385,7 +1215,7 @@ function Write-LiveCostReport {
 }
 
 $phase6ProtectedTarget = $Target -in @(
-    'phase6-resize-plan', 'phase6-resize-apply', 'phase6-resize-state',
+    'phase6-resize-plan', 'phase6-resize-state',
     'phase6-resize-no-drift', 'phase6-resize-output'
 )
 if ($phase6ProtectedTarget -and -not $IsWindows) {
@@ -1393,6 +1223,7 @@ if ($phase6ProtectedTarget -and -not $IsWindows) {
 }
 $paths = Get-ExternalPaths
 $phase6StateOpened = $false
+$genericStateBoundaryAdmitted = $false
 $mutationTarget = $Target -in @('apply', 'repair-node-02-apply', 'destroy')
 $stateBoundaryLease = $null
 Assert-Phase6StateBoundary -Paths $paths
@@ -1405,20 +1236,13 @@ if (-not $phase6ProtectedTarget) {
 
 try {
 $stateBoundaryLease = Enter-Phase2MutationLease -Paths $paths
-if (-not $phase6ProtectedTarget) { Assert-NoActivePhase6MutationJournal -Paths $paths }
+if (-not $phase6ProtectedTarget) {
+    Assert-NoActivePhase6MutationJournal -Paths $paths
+    $genericStateBoundaryAdmitted = $true
+}
 switch ($Target) {
     'phase6-resize-plan' {
         throw 'Phase 6 saved-plan creation is disabled until its PREPARED capability route is integrated.'
-    }
-    'phase6-resize-apply' {
-        Assert-Credentials
-        Assert-Phase6ApplyArguments -Paths $paths
-        Assert-Phase6ApplyAuthorization -Paths $paths
-        Initialize-LocalBoundary -Paths $paths 6>$null
-        Open-SealedState -Paths $paths 6>$null
-        $phase6StateOpened = $true
-        Initialize-Phase6Terraform -Paths $paths 6>$null
-        Invoke-Phase6ResizeApply -Paths $paths 6>$null
     }
     'phase6-resize-state' {
         Assert-Credentials
@@ -1598,7 +1422,7 @@ switch ($Target) {
     try {
         if ($phase6ProtectedTarget -and $phase6StateOpened) {
             Close-SealedState -Paths $paths 6>$null
-        } elseif (-not $phase6ProtectedTarget) {
+        } elseif (-not $phase6ProtectedTarget -and $genericStateBoundaryAdmitted) {
             Close-SealedState -Paths $paths
         }
     } finally {
