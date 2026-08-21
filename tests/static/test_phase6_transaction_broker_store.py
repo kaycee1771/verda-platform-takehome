@@ -366,6 +366,42 @@ class DurableBrokerStoreTests(unittest.TestCase):
                     names = {item.name for item in store.root.iterdir() if item.name.startswith("state-")}
                     self.assertEqual(names, set())
 
+    def test_handle_bound_deletion_blocks_path_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = self.store(pathlib.Path(folder)); store.initialize()
+            target = store.root / f"state-{'a' * 64}-{'b' * 32}.read-only.tfstate"
+            target.write_bytes(b"bound"); STORE._protect_windows_path(target)
+            replacement = store.root / "replacement.tmp"
+            replacement.write_bytes(b"evil"); STORE._protect_windows_path(replacement)
+            blocked = []
+            def hook(stage):
+                if stage == "before_snapshot_tombstone_delete":
+                    try: os.replace(replacement, target)
+                    except OSError: blocked.append(True)
+            store.crash_hook = hook
+            store._delete_windows_write_through(target, original_name=target.name)
+            self.assertEqual(blocked, [True]); self.assertFalse(target.exists())
+            self.assertEqual(replacement.read_bytes(), b"evil")
+
+    def test_no_delete_share_directory_handle_blocks_ancestor_rename(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+        with tempfile.TemporaryDirectory() as folder:
+            ancestor = pathlib.Path(folder) / "held"; ancestor.mkdir()
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                             wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+            kernel32.CreateFileW.restype = wintypes.HANDLE
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,); kernel32.CloseHandle.restype = wintypes.BOOL
+            handle = kernel32.CreateFileW(str(ancestor), 0x80000000, 0x1 | 0x2, None, 3,
+                                          0x02000000 | 0x00200000, None)
+            self.assertNotEqual(handle, wintypes.HANDLE(-1).value)
+            try:
+                with self.assertRaises(OSError): os.replace(ancestor, ancestor.with_name("swapped"))
+                self.assertTrue(ancestor.is_dir())
+            finally:
+                kernel32.CloseHandle(handle)
+
     def test_admission_hashes_every_bound_artifact_and_calls_verifier_synchronously(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = pathlib.Path(folder); artifacts, authorization, authorization_path = self.admission(root)

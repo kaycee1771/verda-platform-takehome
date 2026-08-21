@@ -635,19 +635,49 @@ class DurableBrokerStore:
         import ctypes
         from ctypes import wintypes
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.MoveFileExW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD)
-        kernel32.MoveFileExW.restype = wintypes.BOOL
-        kernel32.DeleteFileW.argtypes = (wintypes.LPCWSTR,); kernel32.DeleteFileW.restype = wintypes.BOOL
-        tombstone = path if path.name.endswith(".deleting") else path.with_name(original_name + ".deleting")
+        kernel32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                         wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.GetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+        kernel32.GetFinalPathNameByHandleW.argtypes = (wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD)
+        kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+        kernel32.SetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+        kernel32.SetFileInformationByHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,); kernel32.CloseHandle.restype = wintypes.BOOL
+        class FILE_INFO(ctypes.Structure):
+            _fields_ = [("attributes", wintypes.DWORD), ("creation_low", wintypes.DWORD),
+                        ("creation_high", wintypes.DWORD), ("access_low", wintypes.DWORD),
+                        ("access_high", wintypes.DWORD), ("write_low", wintypes.DWORD),
+                        ("write_high", wintypes.DWORD), ("volume", wintypes.DWORD),
+                        ("size_high", wintypes.DWORD), ("size_low", wintypes.DWORD),
+                        ("links", wintypes.DWORD), ("index_high", wintypes.DWORD), ("index_low", wintypes.DWORD)]
+        handle = kernel32.CreateFileW(str(path), 0x80000000 | 0x00010000, 0x1 | 0x2, None, 3, 0x00200000, None)
+        if handle == wintypes.HANDLE(-1).value: refuse("unable to hold exact snapshot object for deletion")
         kind = "manifest" if ".manifest.json" in original_name else "snapshot"
-        self.crash_hook(f"before_{kind}_tombstone_rename")
-        if path != tombstone and not kernel32.MoveFileExW(str(path), str(tombstone), 0x1 | 0x8):
-            refuse("snapshot write-through tombstone rename failed")
-        self.crash_hook(f"after_{kind}_tombstone_rename")
-        self.crash_hook(f"before_{kind}_tombstone_delete")
-        if not kernel32.DeleteFileW(str(tombstone)):
-            refuse("snapshot tombstone deletion failed")
-        self.crash_hook(f"after_{kind}_tombstone_delete")
+        try:
+            before = FILE_INFO(); length = kernel32.GetFinalPathNameByHandleW(handle, None, 0, 0)
+            final = ctypes.create_unicode_buffer(length + 1)
+            if (not kernel32.GetFileInformationByHandle(handle, ctypes.byref(before)) or before.links != 1
+                    or before.attributes & 0x400 or not length
+                    or not kernel32.GetFinalPathNameByHandleW(handle, final, len(final), 0)
+                    or pathlib.Path(final.value.removeprefix("\\\\?\\")).resolve(strict=False)
+                    != path.resolve(strict=True)):
+                refuse("held snapshot deletion handle identity/path differs")
+            self.crash_hook(f"before_{kind}_tombstone_rename")
+            after = FILE_INFO()
+            if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(after)) or \
+                    (before.volume, before.index_high, before.index_low) != \
+                    (after.volume, after.index_high, after.index_low):
+                refuse("held snapshot deletion identity changed")
+            self.crash_hook(f"after_{kind}_tombstone_rename")
+            self.crash_hook(f"before_{kind}_tombstone_delete")
+            disposition = wintypes.DWORD(0x1 | 0x2 | 0x10)
+            if not kernel32.SetFileInformationByHandle(handle, 21, ctypes.byref(disposition), ctypes.sizeof(disposition)):
+                refuse("handle-bound snapshot disposition failed")
+            self.crash_hook(f"after_{kind}_tombstone_delete")
+        finally:
+            kernel32.CloseHandle(handle)
 
     def _read_json(self, path: pathlib.Path) -> dict[str, Any]:
         before = self._secure(path, regular=True)
@@ -709,7 +739,7 @@ class DurableBrokerStore:
         ancestor_handles = []
         for ancestor in reversed(path.resolve(strict=True).parents):
             if not ancestor.exists(): continue
-            directory_handle = kernel32.CreateFileW(str(ancestor), 0x80000000, 0x1 | 0x2 | 0x4, None, 3,
+            directory_handle = kernel32.CreateFileW(str(ancestor), 0x80000000, 0x1 | 0x2, None, 3,
                                                      0x02000000 | 0x00200000, None)
             if directory_handle == wintypes.HANDLE(-1).value:
                 for held, *_ in ancestor_handles: kernel32.CloseHandle(held)
