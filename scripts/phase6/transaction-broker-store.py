@@ -256,6 +256,37 @@ def _protect_windows_path(path: pathlib.Path) -> None:
         kernel32.LocalFree(descriptor)
 
 
+def _windows_mutex_handle_trusted(handle: Any) -> bool:
+    """Validate an existing kernel mutex's protected explicit allowlist."""
+    import ctypes
+    from ctypes import wintypes
+    advapi, kernel32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+    descriptor = ctypes.c_void_p()
+    advapi.GetSecurityInfo.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                       ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                       ctypes.POINTER(ctypes.c_void_p))
+    advapi.GetSecurityInfo.restype = wintypes.DWORD
+    advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = (
+        ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(wintypes.LPWSTR),
+        ctypes.POINTER(wintypes.DWORD))
+    advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = (ctypes.c_void_p,); kernel32.LocalFree.restype = ctypes.c_void_p
+    if advapi.GetSecurityInfo(handle, 6, 0x1 | 0x4, None, None, None, None, ctypes.byref(descriptor)) != 0:
+        return False
+    text = wintypes.LPWSTR()
+    try:
+        if not advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor, 1, 0x1 | 0x4, ctypes.byref(text), None): return False
+        value = text.value or ""
+        if "D:P" not in value: return False
+        allowed = {"OW", "SY", "BA"}
+        principals = re.findall(r"\(A;[^)]*;;;([^)]+)\)", value)
+        return bool(principals) and set(principals) <= allowed and "O:" in value
+    finally:
+        if text: kernel32.LocalFree(text)
+        kernel32.LocalFree(descriptor)
+
+
 class NamedMutex:
     """OS mutex in production; process lock fallback keeps tests deterministic."""
 
@@ -310,11 +341,9 @@ class NamedMutex:
             if not self.handle:
                 refuse("unable to create the named broker/state mutex")
             if already_exists:
-                # A pre-existing kernel object cannot be trusted until its
-                # owner/DACL has been inspected through the native object ACL
-                # API. Refusal is safer than inheriting an attacker ACL.
-                kernel32.CloseHandle(self.handle); self.handle = None
-                refuse("another writer or untrusted pre-existing named mutex is present")
+                if not _windows_mutex_handle_trusted(self.handle):
+                    kernel32.CloseHandle(self.handle); self.handle = None
+                    refuse("untrusted pre-existing named mutex DACL/owner differs")
             result = kernel32.WaitForSingleObject(self.handle, 0)
             try:
                 self._accept_wait_result(result)
@@ -488,42 +517,42 @@ class DurableBrokerStore:
             yield
 
     def _recover_stale_snapshots(self) -> None:
-        grammar = re.compile(r"state-[0-9a-f]{64}-[0-9a-f]{32}\.read-only\.tfstate")
-        deleted = False
-        for candidate in self.root.iterdir():
-            if not candidate.name.startswith("state-"):
-                continue
-            if not grammar.fullmatch(candidate.name):
-                refuse("ambiguous stale Terraform snapshot filename")
-            before = self._secure(candidate, regular=True)
-            self._stable_bytes(candidate)
-            after = self._secure(candidate, regular=True)
-            if (before.get("device"), before.get("identity")) != (after.get("device"), after.get("identity")):
-                refuse("stale Terraform snapshot identity changed")
-            candidate.unlink()
-            deleted = True
-        if os.name == "nt" and deleted:
-            # Opening the directory with backup semantics and flushing it is
-            # performed by the durable Windows replacement boundary.
-            self._flush_windows_directory(self.root)
+        grammar = re.compile(r"(state-([0-9a-f]{64})-([0-9a-f]{32})\.read-only\.tfstate)(\.deleting)?")
+        entries = {item.name: item for item in self.root.iterdir() if item.name.startswith("state-")}
+        manifests = {name: path for name, path in entries.items() if name.endswith(".manifest.json")}
+        snapshots = {name: path for name, path in entries.items() if not name.endswith(".manifest.json")}
+        for name, candidate in list(snapshots.items()):
+            match = grammar.fullmatch(name)
+            if not match: refuse("ambiguous stale Terraform snapshot filename")
+            original = match.group(1); marker_name = original + ".manifest.json"
+            marker = manifests.pop(marker_name, None)
+            if marker is None: refuse("stale Terraform snapshot lacks exact manifest")
+            manifest = self._read_json(marker)
+            if (set(manifest) != {"schema_version", "operation_id", "snapshot_name", "snapshot_sha256",
+                                  "created_at", "raw_values_recorded"}
+                    or manifest["schema_version"] != 1 or manifest["operation_id"] != self.operation_id
+                    or manifest["snapshot_name"] != original or manifest["snapshot_sha256"] != match.group(2)
+                    or manifest["raw_values_recorded"] is not False):
+                refuse("stale Terraform snapshot manifest differs")
+            if digest_bytes(self._stable_bytes(candidate)) != manifest["snapshot_sha256"]:
+                refuse("stale Terraform snapshot digest differs from manifest")
+            self._delete_windows_write_through(candidate, original_name=original)
+            self._delete_windows_write_through(marker, original_name=marker_name)
+        if manifests: refuse("orphan Terraform snapshot manifest differs")
 
     @staticmethod
-    def _flush_windows_directory(path: pathlib.Path) -> None:
+    def _delete_windows_write_through(path: pathlib.Path, *, original_name: str) -> None:
         import ctypes
         from ctypes import wintypes
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
-                                         wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
-        kernel32.CreateFileW.restype = wintypes.HANDLE
-        kernel32.FlushFileBuffers.argtypes = (wintypes.HANDLE,); kernel32.FlushFileBuffers.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,); kernel32.CloseHandle.restype = wintypes.BOOL
-        handle = kernel32.CreateFileW(str(path), 0x80000000, 0x1 | 0x2 | 0x4, None, 3,
-                                      0x02000000 | 0x00200000, None)
-        if handle == wintypes.HANDLE(-1).value: refuse("unable to hold snapshot directory for flush")
-        try:
-            if not kernel32.FlushFileBuffers(handle): refuse("unable to flush snapshot directory")
-        finally:
-            kernel32.CloseHandle(handle)
+        kernel32.MoveFileExW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD)
+        kernel32.MoveFileExW.restype = wintypes.BOOL
+        kernel32.DeleteFileW.argtypes = (wintypes.LPCWSTR,); kernel32.DeleteFileW.restype = wintypes.BOOL
+        tombstone = path if path.name.endswith(".deleting") else path.with_name(original_name + ".deleting")
+        if path != tombstone and not kernel32.MoveFileExW(str(path), str(tombstone), 0x1 | 0x8):
+            refuse("snapshot write-through tombstone rename failed")
+        if not kernel32.DeleteFileW(str(tombstone)):
+            refuse("snapshot tombstone deletion failed")
 
     def _read_json(self, path: pathlib.Path) -> dict[str, Any]:
         before = self._secure(path, regular=True)
@@ -880,6 +909,7 @@ class ReadOnlyAdmissionAdapter:
                 raw = self.store._stable_bytes(self.store.state_path)
                 snapshot_digest = digest_bytes(raw)
                 snapshot = self.store.root / f"state-{snapshot_digest}-{secrets.token_hex(16)}.read-only.tfstate"
+                marker = snapshot.with_name(snapshot.name + ".manifest.json")
                 fd = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 try:
                     if os.name == "nt": _protect_windows_path(snapshot)
@@ -890,19 +920,21 @@ class ReadOnlyAdmissionAdapter:
                 if self.store._stable_bytes(snapshot) != raw:
                     snapshot.unlink(missing_ok=True)
                     refuse("protected Terraform snapshot bytes differ")
-                if os.name != "nt":
-                    root_fd = os.open(self.store.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-                    try: os.fsync(root_fd)
-                    finally: os.close(root_fd)
+                manifest = {"schema_version": 1, "operation_id": self.store.operation_id,
+                            "snapshot_name": snapshot.name, "snapshot_sha256": snapshot_digest,
+                            "created_at": utc_text(self.clock()), "raw_values_recorded": False}
+                marker_fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                try:
+                    _protect_windows_path(marker)
+                    write_all(marker_fd, canonical_bytes(manifest) + b"\n"); os.fsync(marker_fd)
+                finally:
+                    os.close(marker_fd)
                 try:
                     command = command + (str(snapshot),)
                     started = self.clock(); code, stdout, stderr = self.runner(command); ended = self.clock()
                 finally:
-                    snapshot.unlink(missing_ok=True)
-                    if os.name != "nt":
-                        root_fd = os.open(self.store.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-                        try: os.fsync(root_fd)
-                        finally: os.close(root_fd)
+                    self.store._delete_windows_write_through(snapshot, original_name=snapshot.name)
+                    self.store._delete_windows_write_through(marker, original_name=marker.name)
         else:
             started = self.clock(); code, stdout, stderr = self.runner(command); ended = self.clock()
         if code != 0 or stderr.strip():

@@ -132,6 +132,18 @@ class DurableBrokerStoreTests(unittest.TestCase):
                        "ReadFile.argtypes", "MoveFileExW.argtypes"):
             self.assertIn(marker, source)
         self.assertIn("D:P(A;;GA;;;OW)(A;;GA;;;SY)(A;;GA;;;BA)", source)
+        name = "Local\\VerdaPhase6Broker-" + digest("mutex-wrapper")
+        with STORE.NamedMutex(name) as held:
+            self.assertTrue(STORE._windows_mutex_handle_trusted(held.handle))
+            outcomes = []
+            def contender():
+                try:
+                    with STORE.NamedMutex(name): pass
+                except STORE.StoreRefused as error:
+                    outcomes.append(str(error))
+            thread = threading.Thread(target=contender); thread.start(); thread.join()
+            self.assertEqual(len(outcomes), 1)
+            self.assertIn("another writer", outcomes[0])
 
     def test_windows_default_security_probe_accepts_protected_base(self) -> None:
         base = pathlib.Path(os.environ["LOCALAPPDATA"]) / f"VerdaStoreProbe-{uuid.uuid4().hex}"
@@ -305,6 +317,15 @@ class DurableBrokerStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(STORE.StoreRefused, "Ready condition"):
                 malformed.collect("cluster-members")
             calls = []
+            store.initialize()
+            stale_digest = hashlib.sha256(b"{}").hexdigest()
+            stale = store.root / f"state-{stale_digest}-{'a' * 32}.read-only.tfstate"
+            stale.write_bytes(b"{}"); STORE._protect_windows_path(stale)
+            stale_marker = stale.with_name(stale.name + ".manifest.json")
+            stale_marker.write_text(json.dumps({"schema_version": 1, "operation_id": FIXTURES.OPERATION,
+                "snapshot_name": stale.name, "snapshot_sha256": stale_digest,
+                "created_at": "2026-08-21T12:00:00Z", "raw_values_recorded": False}), encoding="utf-8")
+            STORE._protect_windows_path(stale_marker)
             adapter = STORE.ReadOnlyAdmissionAdapter(store,
                 lambda command: (calls.append(command) or (0, '{"values":{"root_module":{"resources":[]}}}', "")),
                 lambda: NOW)
@@ -312,6 +333,7 @@ class DurableBrokerStoreTests(unittest.TestCase):
             self.assertNotEqual(calls[0][-1], str(store.state_path))
             self.assertEqual(receipt["canonical_state_path"], str(store.state_path))
             self.assertEqual(receipt["state_snapshot_sha256"], hashlib.sha256(b"{}").hexdigest())
+            self.assertFalse(stale.exists()); self.assertFalse(stale_marker.exists())
             self.assertEqual(receipt["aggregate"], {"resource_count": 0})
             provider = STORE.ReadOnlyAdmissionAdapter(store,
                 lambda _command: (0, '{"instances":[{"status":"running","instance_type":"CPU.8V.32G"},'
