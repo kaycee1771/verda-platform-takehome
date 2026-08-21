@@ -1364,77 +1364,11 @@ def reviewed_plan_snapshot(
 
 
 class LocalExecutionAdapter:
-    """Production subprocess boundary; raw stdout/stderr never crosses into evidence."""
+    """Removed production boundary retained only as an explicit fail-closed tombstone."""
 
     def __init__(self, repository: pathlib.Path) -> None:
-        self.repository = repository
-        self.phase2 = repository / "scripts" / "infra" / "phase2.ps1"
-
-    @staticmethod
-    def _json(argv: list[str], *, environment: dict[str, str] | None = None) -> dict[str, Any]:
-        merged = os.environ.copy()
-        if environment:
-            merged.update(environment)
-        result = subprocess.run(argv, check=False, capture_output=True, text=True, env=merged)
-        if result.returncode != 0:
-            refuse("protected execution failed; raw diagnostic withheld")
-        lines = [line for line in result.stdout.splitlines() if line.strip()]
-        if len(lines) != 1:
-            refuse("protected execution did not emit exactly one sanitized JSON object")
-        try:
-            value = json.loads(lines[0])
-        except json.JSONDecodeError:
-            refuse("protected execution emitted invalid sanitized JSON")
-        if not isinstance(value, dict):
-            refuse("protected execution receipt is not one JSON object")
-        return value
-
-    def run_container(self, command: list[str], command_receipt: dict[str, Any]) -> dict[str, Any]:
-        result = subprocess.run(command, check=False, capture_output=True)
-        if result.returncode != 0:
-            refuse("pinned Phase 6 container execution failed; raw diagnostic withheld")
-        return {
-            "schema_version": 1, "status": "PINNED_CONTAINER_COMPLETE",
-            "mode": command_receipt["mode"], "node": command_receipt["node"],
-            "survivor_node": command_receipt["survivor_node"],
-            "command_receipt_sha256": canonical_digest(command_receipt),
-            "raw_values_recorded": False,
-        }
-
-    def phase2_apply(self, **_: Any) -> dict[str, Any]:
-        refuse(
-            "protected Phase 6 apply is unavailable until a hosted-CI approval root and non-exported child channel exist"
-        )
-
-    def phase2_state(self, *, lineage_sha256: str, operation_id: str) -> dict[str, Any]:
-        return self._json([
-            "pwsh", "-NoLogo", "-NoProfile", "-File", str(self.phase2),
-            "-Target", "phase6-resize-state", "-ExpectedStateLineageSha256", lineage_sha256,
-            "-OperationId", operation_id,
-        ])
-
-    def phase2_output(
-        self, *, inventory_output: pathlib.Path, known_hosts: pathlib.Path,
-        lineage_sha256: str, state_serial: int, operation_id: str,
-    ) -> dict[str, Any]:
-        return self._json([
-            "pwsh", "-NoLogo", "-NoProfile", "-File", str(self.phase2),
-            "-Target", "phase6-resize-output", "-InventoryOutput", str(inventory_output),
-            "-KnownHosts", str(known_hosts), "-ExpectedStateLineageSha256", lineage_sha256,
-            "-ExpectedStateSerial", str(state_serial), "-OperationId", operation_id,
-        ])
-
-    def phase2_no_drift(
-        self, *, lineage_sha256: str, state_serial: int, operation_id: str,
-    ) -> dict[str, Any]:
-        return self._json([
-            "pwsh", "-NoLogo", "-NoProfile", "-File", str(self.phase2),
-            "-Target", "phase6-resize-no-drift", "-ExpectedStateLineageSha256", lineage_sha256,
-            "-ExpectedStateSerial", str(state_serial), "-OperationId", operation_id,
-        ])
-
-    def collect(self, command: list[str]) -> dict[str, Any]:
-        return self._json(command)
+        del repository
+        refuse("the importable Phase 6 live execution adapter is disabled")
 
 
 def validate_apply_receipt(
@@ -1604,15 +1538,25 @@ def operation_paths(control_root: pathlib.Path, operation_id: str) -> tuple[path
     )
 
 
-def canonical_control_root(
-    repository: pathlib.Path, contract_path: pathlib.Path, control_root: pathlib.Path,
-) -> pathlib.Path:
-    """Return the one control root adjacent to the external active contract."""
-    expected = contract_path.parent / "phase6-resize-control"
+def canonical_control_root(repository: pathlib.Path, control_root: pathlib.Path) -> pathlib.Path:
+    """Return the exact Phase 2 Base control root, never a caller-named directory."""
+    if os.name == "nt":
+        base_value = os.environ.get("VERDA_TAKEHOME_CONFIG_DIR") or str(
+            pathlib.Path(os.environ["LOCALAPPDATA"]) / "VerdaPlatformTakehome"
+        )
+    else:
+        config_home = os.environ.get("XDG_CONFIG_HOME") or str(pathlib.Path.home() / ".config")
+        base_value = os.environ.get("VERDA_TAKEHOME_CONFIG_DIR") or str(
+            pathlib.Path(config_home) / "verda-takehome"
+        )
+    base = pathlib.Path(base_value)
+    if not base.is_absolute():
+        refuse("Phase 2 Base must be an absolute canonical path")
+    expected = base / "phase6-resize-control"
     actual = control_root.resolve(strict=False)
     expected_resolved = expected.resolve(strict=False)
     if actual != expected_resolved:
-        refuse("Phase 6 control root is not the canonical active-contract control root")
+        refuse("Phase 6 control root is not the exact Phase 2 Base control root")
     repository_resolved = repository.resolve(strict=True)
     try:
         actual.relative_to(repository_resolved)
@@ -1620,7 +1564,7 @@ def canonical_control_root(
         pass
     else:
         refuse("Phase 6 control root must remain outside the repository")
-    for candidate in (expected, expected.parent):
+    for candidate in (expected, base):
         if candidate.exists() and candidate.is_symlink():
             refuse("Phase 6 control root traversal contains a link")
     return expected_resolved
@@ -1652,13 +1596,15 @@ def execute_reviewed_apply(
     kubeconfig_path: pathlib.Path, state_lineage_sha256: str, state_serial: int, git_commit: str,
     adapter: Any | None = None, now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    now = now or dt.datetime.now(dt.timezone.utc)
-    if adapter is None:
-        refuse(
-            "live apply is disabled until protected GitHub main/hosted CI provides an external approval root"
-        )
+    del repository, contract_path, progress_path, saved_plan, preflight_path, review_path
+    del review_lease_path, cost_path, capacity_path, collector_path, control_root, inventory_path
+    del runtime_vars_path, private_key_path, public_key_path, known_hosts_path, operation_id
+    del survivor, direction, kubeconfig_path, state_lineage_sha256, state_serial, git_commit, adapter, now
+    refuse("Phase 6 prepare/apply orchestration is disabled pending the trusted external broker")
+    # The unreachable specification below is retained temporarily for pure contract review.
+    now = dt.datetime.now(dt.timezone.utc)
     contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
-    control_root = canonical_control_root(repository, contract_path, control_root)
+    control_root = canonical_control_root(repository, control_root)
     contract = read_json(contract_path)
     validate_contract(contract)
     integrated = require_activation(contract, git_commit)
@@ -1777,10 +1723,13 @@ def adopt_reviewed_apply(
     control_root: pathlib.Path, operation_id: str, git_commit: str,
     adapter: Any | None = None, now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    now = now or dt.datetime.now(dt.timezone.utc)
+    del repository, contract_path, progress_path, control_root, operation_id, git_commit, adapter, now
+    refuse("Phase 6 apply adoption is disabled pending the trusted external broker")
+    # Unreachable recovery specification.
+    now = dt.datetime.now(dt.timezone.utc)
     adapter = adapter or LocalExecutionAdapter(repository)
     contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
-    control_root = canonical_control_root(repository, contract_path, control_root)
+    control_root = canonical_control_root(repository, control_root)
     contract = read_json(contract_path)
     validate_contract(contract)
     integrated = require_activation(contract, git_commit)
@@ -1851,10 +1800,15 @@ def recover_reviewed_node(
     known_hosts_path: pathlib.Path, kubeconfig_path: pathlib.Path, git_commit: str,
     adapter: Any | None = None, now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    now = now or dt.datetime.now(dt.timezone.utc)
+    del repository, contract_path, progress_path, control_root, operation_id, survivor
+    del inventory_output, runtime_vars_path, private_key_path, public_key_path, known_hosts_path
+    del kubeconfig_path, git_commit, adapter, now
+    refuse("Phase 6 node recovery is disabled pending the trusted external broker")
+    # Unreachable recovery specification.
+    now = dt.datetime.now(dt.timezone.utc)
     adapter = adapter or LocalExecutionAdapter(repository)
     contract_path = assert_external_regular_file(contract_path, repository, "active Phase 6 contract")
-    control_root = canonical_control_root(repository, contract_path, control_root)
+    control_root = canonical_control_root(repository, control_root)
     contract = read_json(contract_path)
     validate_contract(contract)
     integrated = require_activation(contract, git_commit)
@@ -2061,19 +2015,6 @@ def build_parser() -> argparse.ArgumentParser:
     semantic.add_argument("--node", choices=("01", "02", "03"), required=True)
     semantic.add_argument("--direction", choices=("resize", "rollback"), required=True)
 
-    adopt = sub.add_parser("adopt-apply")
-    for name in ("progress", "control-root"):
-        adopt.add_argument(f"--{name}", type=pathlib.Path, required=True)
-    adopt.add_argument("--operation-id", required=True)
-
-    recover = sub.add_parser("recover-node")
-    for name in (
-        "progress", "control-root", "inventory-output", "runtime-vars", "private-key",
-        "public-key", "known-hosts", "kubeconfig",
-    ):
-        recover.add_argument(f"--{name}", type=pathlib.Path, required=True)
-    recover.add_argument("--operation-id", required=True)
-    recover.add_argument("--survivor", choices=("01", "02", "03"), required=True)
     return parser
 
 
@@ -2102,25 +2043,7 @@ def main() -> int:
                 "node": args.node, "direction": args.direction, "raw_values_recorded": False,
             })
             return 0
-        if args.action == "adopt-apply":
-            summary = adopt_reviewed_apply(
-                repository=repository, contract_path=contract_path, progress_path=args.progress,
-                control_root=args.control_root, operation_id=args.operation_id,
-                git_commit=git_commit,
-            )
-        elif args.action == "recover-node":
-            summary = recover_reviewed_node(
-                repository=repository, contract_path=contract_path, progress_path=args.progress,
-                control_root=args.control_root, operation_id=args.operation_id,
-                survivor=args.survivor, inventory_output=args.inventory_output,
-                runtime_vars_path=args.runtime_vars, private_key_path=args.private_key,
-                public_key_path=args.public_key, known_hosts_path=args.known_hosts,
-                kubeconfig_path=args.kubeconfig, git_commit=git_commit,
-            )
-        else:
-            refuse("unsupported controller action")
-        emit(summary)
-        return 0
+        refuse("unsupported controller action")
 
     except ResizeRefused as error:
         print(f"REFUSED: {error}", file=sys.stderr)

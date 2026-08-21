@@ -79,7 +79,7 @@ if ((Get-Content -Raw -LiteralPath '{state}') -ne 'state-must-not-be-opened') {{
             self.assertFalse(marker.exists())
 
     def test_prepared_or_invalid_phase6_sentinel_blocks_generic_state_open(self) -> None:
-        for state in ("PREPARED", "invalid-schema"):
+        for state in ("PREPARED", "invalid-schema", "forged-completed"):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
                 base, backup = root / "base", root / "backup"
@@ -94,9 +94,13 @@ if ((Get-Content -Raw -LiteralPath '{state}') -ne 'state-must-not-be-opened') {{
                     journal.write_text(
                         '{"schema_version":1,"phase":6,"state":"PREPARED"}', encoding="utf-8"
                     )
-                else:
+                elif state == "invalid-schema":
                     journal.write_text(
                         '{"schema_version":99,"phase":6,"state":"COMPLETED"}', encoding="utf-8"
+                    )
+                else:
+                    journal.write_text(
+                        '{"schema_version":1,"phase":6,"state":"COMPLETED"}', encoding="utf-8"
                     )
                 marker = root / "terraform-called"
                 result = self.pwsh(rf"""

@@ -967,9 +967,67 @@ function Assert-NoActivePhase6MutationJournal {
         Assert-SingleFileIdentity -Path $journal.FullName -Label 'Phase 6 durable operation sentinel'
         try { $value = Get-Content -LiteralPath $journal.FullName -Raw | ConvertFrom-Json }
         catch { throw 'A Phase 6 durable operation sentinel is unreadable.' }
+        $expectedNames = @(
+            'schema_version', 'phase', 'integrated_commit', 'operation_id', 'generation', 'state',
+            'node', 'direction', 'plan_sha256', 'review_sha256', 'prepare_sha256',
+            'state_lineage_sha256', 'state_serial_before', 'apply_receipt_sha256',
+            'recovery_receipt_sha256', 'postflight_sha256', 'progress_sha256', 'created_at',
+            'apply_started_at', 'adopted_at', 'applied_at', 'recovered_at', 'completed_at'
+        )
+        $actualNames = @($value.PSObject.Properties.Name)
+        $nameDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)
+        $operationFromName = $journal.BaseName -replace '^phase6-resize-operation-', ''
+        $digestValues = @(
+            $value.plan_sha256, $value.review_sha256, $value.prepare_sha256,
+            $value.state_lineage_sha256, $value.apply_receipt_sha256,
+            $value.recovery_receipt_sha256, $value.postflight_sha256, $value.progress_sha256
+        )
+        $timestampValues = @(
+            $value.created_at, $value.apply_started_at, $value.applied_at,
+            $value.recovered_at, $value.completed_at
+        )
+        $timestampsValid = $true
+        $previousTimestamp = [DateTimeOffset]::MinValue
+        foreach ($timestampValue in $timestampValues) {
+            $parsedTimestamp = [DateTimeOffset]::MinValue
+            if (
+                $timestampValue -isnot [string] -or
+                -not [DateTimeOffset]::TryParse(
+                    $timestampValue, [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsedTimestamp
+                ) -or $parsedTimestamp.Offset -ne [TimeSpan]::Zero -or
+                $parsedTimestamp -lt $previousTimestamp
+            ) {
+                $timestampsValid = $false
+                break
+            }
+            $previousTimestamp = $parsedTimestamp
+        }
+        if ($timestampsValid -and $null -ne $value.adopted_at) {
+            $adoptedTimestamp = [DateTimeOffset]::MinValue
+            $applyStartedTimestamp = [DateTimeOffset]::Parse($value.apply_started_at)
+            $appliedTimestamp = [DateTimeOffset]::Parse($value.applied_at)
+            if (
+                $value.adopted_at -isnot [string] -or
+                -not [DateTimeOffset]::TryParse(
+                    $value.adopted_at, [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::RoundtripKind, [ref]$adoptedTimestamp
+                ) -or $adoptedTimestamp.Offset -ne [TimeSpan]::Zero -or
+                $adoptedTimestamp -lt $applyStartedTimestamp -or $adoptedTimestamp -gt $appliedTimestamp
+            ) { $timestampsValid = $false }
+        }
         if (
-            $value.schema_version -ne 1 -or $value.phase -ne 6 -or
-            $value.state -ne 'COMPLETED'
+            $nameDifference.Count -ne 0 -or
+            $value.schema_version -ne 1 -or $value.phase -ne 6 -or $value.state -ne 'COMPLETED' -or
+            $value.integrated_commit -notmatch '^[0-9a-f]{40}$' -or
+            $value.operation_id -notmatch '^[0-9a-f]{64}$' -or
+            $value.operation_id -ne $operationFromName -or
+            (($value.generation -isnot [long]) -and ($value.generation -isnot [int])) -or
+            $value.generation -lt 5 -or $value.node -notmatch '^0[1-3]$' -or
+            $value.direction -notin @('resize', 'rollback') -or
+            $digestValues.Where({ $_ -isnot [string] -or $_ -notmatch '^[0-9a-f]{64}$' }).Count -ne 0 -or
+            (($value.state_serial_before -isnot [long]) -and ($value.state_serial_before -isnot [int])) -or
+            $value.state_serial_before -lt 0 -or -not $timestampsValid
         ) {
             throw 'A durable Phase 6 operation is incomplete; generic Phase 2 state access is refused.'
         }

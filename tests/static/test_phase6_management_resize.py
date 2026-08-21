@@ -238,7 +238,7 @@ class PlanTests(unittest.TestCase):
 
 
 class JournalAndLeaseTests(unittest.TestCase):
-    def test_control_root_must_be_the_single_contract_adjacent_root(self) -> None:
+    def test_control_root_must_be_the_exact_phase2_base_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             repository = root / "repository"
@@ -248,18 +248,11 @@ class JournalAndLeaseTests(unittest.TestCase):
             contract = external / "active-contract.json"
             contract.write_text("{}", encoding="utf-8")
             canonical = external / "phase6-resize-control"
-            self.assertEqual(
-                RESIZE.canonical_control_root(repository, contract, canonical), canonical.resolve()
-            )
             alternate = root / "alternate" / "phase6-resize-control"
-            with self.assertRaisesRegex(RESIZE.ResizeRefused, "canonical active-contract"):
-                RESIZE.canonical_control_root(repository, contract, alternate)
-            with self.assertRaisesRegex(RESIZE.ResizeRefused, "canonical active-contract"):
-                RESIZE.adopt_reviewed_apply(
-                    repository=repository, contract_path=contract,
-                    progress_path=external / "progress.json", control_root=alternate,
-                    operation_id="1" * 64, git_commit="a" * 40,
-                )
+            with mock.patch.dict(os.environ, {"VERDA_TAKEHOME_CONFIG_DIR": str(external)}):
+                self.assertEqual(RESIZE.canonical_control_root(repository, canonical), canonical.resolve())
+                with self.assertRaisesRegex(RESIZE.ResizeRefused, "exact Phase 2 Base"):
+                    RESIZE.canonical_control_root(repository, alternate)
 
     def test_nonce_is_used_once_and_postflight_is_hash_bound(self) -> None:
         contract = active_contract()
@@ -554,39 +547,27 @@ class RecoverySourceTests(unittest.TestCase):
         template = (ROOT / "infra" / "ansible" / "roles" / "rke2_server" / "templates" / "rke2-node.yaml.j2").read_text()
         self.assertIn("phase4_join_existing_cluster", template)
         self.assertIn("phase4_join_server_address", template)
-        playbook = (ROOT / "infra" / "ansible" / "playbooks" / "recover-resized-management-node.yml").read_text()
-        self.assertIn("verda-mgmt-server-01: verda-mgmt-server-02", playbook)
-        self.assertIn("phase4_join_existing_cluster: true", playbook)
+        controller = SCRIPT.read_text()
+        self.assertIn('{"01": "02", "02": "01", "03": "01"}', controller)
+        self.assertIn('"phase6_join_peer": survivor_name', controller)
 
     def test_recovery_converges_all_wireguard_peers_and_prunes_one_member(self) -> None:
         playbook = (ROOT / "infra" / "ansible" / "playbooks" / "recover-resized-management-node.yml").read_text()
-        self.assertGreaterEqual(playbook.count("hosts: management_servers"), 2)
-        self.assertIn("remove-stale-management-member.sh", playbook)
+        self.assertIn("trusted external authorization broker", playbook)
+        self.assertNotIn("roles:", playbook)
         remover = (ROOT / "scripts" / "phase6" / "remove-stale-management-member.sh").read_text()
-        self.assertIn("member_count", remover)
-        self.assertIn("member remove", remover)
-        self.assertIn("remaining", remover)
-        self.assertIn("Ready", remover)
-        self.assertIn("other_survivor_address", remover)
-        self.assertIn("^[0-9a-f]{16}$", remover)
+        self.assertIn("trusted external authorization broker", remover)
+        self.assertNotIn("member remove", remover)
+        self.assertNotIn("kubectl", remover)
 
     def test_prepare_owns_pdb_drain_quiesce_storage_evacuation_and_rebuild(self) -> None:
         prepare = (ROOT / "infra" / "ansible" / "playbooks" / "prepare-management-node-resize.yml").read_text()
         helper = (ROOT / "scripts" / "phase6" / "prepare-management-node-resize.sh").read_text()
         recovery = (ROOT / "infra" / "ansible" / "playbooks" / "recover-resized-management-node.yml").read_text()
-        self.assertIn("cordon", helper)
-        self.assertIn("drain", helper)
-        self.assertNotIn("--force", helper)
-        self.assertNotIn("--disable-eviction", helper)
-        self.assertIn('"evictionRequested":true', helper)
-        self.assertIn('"$target_replicas" == 0', helper)
-        self.assertIn("Stop the selected RKE2 server", prepare)
-        self.assertIn("state: unmounted", prepare)
-        self.assertLess(prepare.index("state: stopped"), prepare.index("state: unmounted"))
-        self.assertIn("--post-quiesce", prepare)
-        self.assertIn("--post-recovery", recovery)
-        self.assertIn('"allowScheduling":true', helper)
-        self.assertIn("replacement Ready and Longhorn scheduling/rebuild restored", helper)
+        for dormant in (prepare, helper, recovery):
+            self.assertIn("trusted external authorization broker", dormant)
+        for mutation in ("cordon", "drain", "systemd", "mount", "roles:"):
+            self.assertNotIn(mutation, prepare + helper + recovery)
 
     def test_terraform_uses_only_the_checked_in_per_node_lifecycle_map(self) -> None:
         variables = (ROOT / "infra" / "terraform" / "environments" / "management" / "variables.tf").read_text()
@@ -603,6 +584,12 @@ class RecoverySourceTests(unittest.TestCase):
         self.assertNotIn('"-target', controller)
         self.assertNotIn('"-replace', controller)
 
+    def test_importable_live_adapter_refuses_without_spawning_a_process(self) -> None:
+        with mock.patch.object(RESIZE.subprocess, "run") as spawned:
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "live execution adapter is disabled"):
+                RESIZE.LocalExecutionAdapter(ROOT)
+        spawned.assert_not_called()
+
     def test_direct_helpers_refuse_before_any_cluster_command_without_controller_authorization(self) -> None:
         operation = "0" * 64
         commands = [
@@ -617,14 +604,10 @@ class RecoverySourceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 64, result.stdout + result.stderr)
         for playbook_name in ("prepare-management-node-resize.yml", "recover-resized-management-node.yml"):
             plays = yaml.safe_load((ROOT / "infra" / "ansible" / "playbooks" / playbook_name).read_text())
-            self.assertIn("Verify the controller-issued", plays[0]["tasks"][0]["name"])
-            for play in plays[1:]:
-                self.assertIn("pre_tasks", play, play["name"])
-                self.assertIn("Verify the controller-issued", play["pre_tasks"][0]["name"])
-                for role in play.get("roles", []):
-                    self.assertEqual(role.get("when"), "phase6_step_authorized.rc == 0", play["name"])
-                for task in play.get("tasks", []):
-                    self.assertEqual(task.get("when"), "phase6_step_authorized.rc == 0", task["name"])
+            self.assertEqual(len(plays), 1)
+            self.assertEqual(set(plays[0]), {"name", "hosts", "gather_facts", "any_errors_fatal", "tasks"})
+            self.assertEqual(list(plays[0]["tasks"][0]), ["name", "ansible.builtin.fail"])
+            self.assertIn("trusted external authorization broker", plays[0]["tasks"][0]["ansible.builtin.fail"]["msg"])
 
     def test_authorization_verifier_refuses_the_checked_in_inert_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -659,7 +642,7 @@ class RecoverySourceTests(unittest.TestCase):
         parser = RESIZE.build_parser()
         choices = next(action.choices for action in parser._actions if getattr(action, "choices", None))
         self.assertEqual(
-            set(choices), {"validate-contract", "assert-saved-plan", "adopt-apply", "recover-node"}
+            set(choices), {"validate-contract", "assert-saved-plan"}
         )
         phase2 = (ROOT / "scripts" / "infra" / "phase2.ps1").read_text()
         self.assertNotIn("phase6-resize-apply", phase2)
@@ -1404,42 +1387,23 @@ class ActivationIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             external = pathlib.Path(directory)
             adapter = self.FakeAdapter("", external / "known_hosts")
-            operation = "4" * 64
-            applied = self.execute(external, adapter, operation=operation)
-            self.assertEqual(applied["status"], "APPLIED_RECOVERY_REQUIRED")
-            inputs = self.inputs(external)
-            adapter.inventory_text = str(inputs["inventory_text"])
-            adapter.known_hosts = inputs["known"]  # type: ignore[assignment]
-            with mock.patch.object(RESIZE, "assert_clean_reviewed_worktree"):
-                completed = RESIZE.recover_reviewed_node(
-                    repository=ROOT, contract_path=external / "contract.json",
-                    progress_path=external / "progress.json", control_root=external / "phase6-resize-control",
-                    operation_id=operation, survivor="01", inventory_output=external / "recovered-inventory.yml",
-                    runtime_vars_path=inputs["runtime"], private_key_path=inputs["private"],
-                    public_key_path=inputs["public"], known_hosts_path=inputs["known"],
-                    kubeconfig_path=inputs["kubeconfig"], git_commit=COMMIT, adapter=adapter, now=NOW,
-                )
-            self.assertEqual(completed["status"], "NODE_COMPLETE")
-            self.assertEqual(json.loads((external / "progress.json").read_text())["completed_resize_nodes"], ["03"])
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "disabled pending"):
+                self.execute(external, adapter, operation="4" * 64)
+            self.assertNotIn("phase2:apply", adapter.calls)
+            self.assertFalse(any(call.startswith("container:") for call in adapter.calls))
 
     def test_receipt_loss_crash_is_adopted_and_immediate_rollback_is_reachable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             external = pathlib.Path(directory)
-            crash = self.FakeAdapter("", external / "known_hosts", crash_apply=True)
-            operation = "6" * 64
-            with self.assertRaisesRegex(RESIZE.ResizeRefused, "receipt-loss"):
-                self.execute(external, crash, operation=operation)
-            crash.crash_apply = False
-            with mock.patch.object(RESIZE, "assert_clean_reviewed_worktree"):
-                adopted = RESIZE.adopt_reviewed_apply(
+            adapter = self.FakeAdapter("", external / "known_hosts", crash_apply=True)
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "disabled pending"):
+                self.execute(external, adapter, operation="6" * 64)
+            with self.assertRaisesRegex(RESIZE.ResizeRefused, "adoption is disabled"):
+                RESIZE.adopt_reviewed_apply(
                     repository=ROOT, contract_path=external / "contract.json",
                     progress_path=external / "progress.json", control_root=external / "phase6-resize-control",
-                    operation_id=operation, git_commit=COMMIT, adapter=crash, now=NOW,
+                    operation_id="6" * 64, git_commit=COMMIT, adapter=adapter, now=NOW,
                 )
-            self.assertEqual(adopted["status"], "APPLY_ADOPTED_RECOVERY_REQUIRED")
-            rollback = self.FakeAdapter("", external / "known_hosts")
-            rolled = self.execute(external, rollback, operation="7" * 64, direction="rollback")
-            self.assertEqual((rolled["node"], rolled["direction"]), ("03", "rollback"))
 
 
 class PinnedRecoveryRunnerTests(unittest.TestCase):
