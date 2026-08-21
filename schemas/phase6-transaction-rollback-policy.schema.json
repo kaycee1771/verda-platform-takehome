@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://verda.example/schemas/phase6-transaction-rollback-policy.schema.json",
+  "title": "Dormant Phase 6 transaction rollback policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "phase", "status", "execution_enabled", "automatic_rollback_failure_classes", "requires_two_survivor_gate", "requires_refreshed_inventory", "requires_refreshed_known_hosts", "requires_applied_state_receipt", "requires_verified_state_backup", "requires_zero_drift_after_rollback", "rollback_order", "maximum_concurrent_replacements", "rollback_must_finish_before_resource_expiry", "unsafe_or_unknown_terminal_state", "raw_values_recorded"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "phase": {"const": 6},
+    "status": {"const": "DORMANT_TRANSACTION_ROLLBACK_SPEC"},
+    "execution_enabled": {"const": false},
+    "automatic_rollback_failure_classes": {"const": ["APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE", "POSTFLIGHT_UNSAFE"]},
+    "requires_two_survivor_gate": {"const": true},
+    "requires_refreshed_inventory": {"const": true},
+    "requires_refreshed_known_hosts": {"const": true},
+    "requires_applied_state_receipt": {"const": true},
+    "requires_verified_state_backup": {"const": true},
+    "requires_zero_drift_after_rollback": {"const": true},
+    "rollback_order": {"const": "REVERSE_COMPLETED_RESIZE_PREFIX"},
+    "maximum_concurrent_replacements": {"const": 1},
+    "rollback_must_finish_before_resource_expiry": {"const": true},
+    "unsafe_or_unknown_terminal_state": {"const": "FAILED_SAFE"},
+    "raw_values_recorded": {"const": false}
+  }
+}

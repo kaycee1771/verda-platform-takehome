@@ -692,10 +692,19 @@ def verify_authorization(*, repository: RepositoryView, github: GitHubView, oper
     if final_workflow != hosted["workflow"]:
         refuse("newest exact hosted workflow attempt changed before verifier receipt")
 
+    history_sha256 = hashlib.sha256(json.dumps([
+        {"commit": candidate["commit"], "path": candidate["path"],
+         "authorization_sha256": hashlib.sha256(candidate["payload"]).hexdigest(),
+         "operation_id": candidate["artifact"]["operation_id"],
+         "operation_nonce": candidate["artifact"]["operation_nonce"]}
+        for candidate in candidates
+    ], sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
     return {
         "schema_version": 1, "status": "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT",
         "phase": 6, "authorization_mode": "TRANSACTION", "operation_id": operation_id,
         "authorization_commit": head, "authorization_sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+        "authorization_history_sha256": history_sha256,
         "source_parent_commit": artifact["source_parent_commit"], "workflow_id": WORKFLOW_ID,
         "pr_number": hosted["pr_number"], "complete_by": artifact["complete_by"],
         "web_flow_fingerprint": WEB_FLOW_FINGERPRINT, "requires_reverification_before_use": True,

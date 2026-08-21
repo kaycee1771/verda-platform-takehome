@@ -164,6 +164,7 @@ class TransactionVerifierTests(unittest.TestCase):
             self.assertEqual(receipt["status"], "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT")
             self.assertEqual(receipt["authorization_mode"], "TRANSACTION")
             self.assertIs(receipt["requires_reverification_before_use"], True)
+            self.assertRegex(receipt["authorization_history_sha256"], r"^[0-9a-f]{64}$")
             self.assertNotIn("operation_nonce", receipt)
 
     def test_exact_schema_digest_boolean_integer_and_review_distinctness(self):

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "phase": 6,
+  "status": "DORMANT_TRANSACTION_ROLLBACK_SPEC",
+  "execution_enabled": false,
+  "automatic_rollback_failure_classes": ["APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE", "POSTFLIGHT_UNSAFE"],
+  "requires_two_survivor_gate": true,
+  "requires_refreshed_inventory": true,
+  "requires_refreshed_known_hosts": true,
+  "requires_applied_state_receipt": true,
+  "requires_verified_state_backup": true,
+  "requires_zero_drift_after_rollback": true,
+  "rollback_order": "REVERSE_COMPLETED_RESIZE_PREFIX",
+  "maximum_concurrent_replacements": 1,
+  "rollback_must_finish_before_resource_expiry": true,
+  "unsafe_or_unknown_terminal_state": "FAILED_SAFE",
+  "raw_values_recorded": false
+}
