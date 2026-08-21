@@ -215,14 +215,18 @@ class GitRepository:
 
     @staticmethod
     def _gpg() -> str:
+        def command_path(value: str | pathlib.Path) -> str:
+            resolved = pathlib.Path(value).resolve()
+            return resolved.as_posix() if os.name == "nt" else str(resolved)
+
         found = shutil.which("gpg")
         if found:
-            return found
+            return command_path(found)
         git = shutil.which("git")
         if git and os.name == "nt":
             bundled = pathlib.Path(git).resolve().parents[1] / "usr" / "bin" / "gpg.exe"
             if bundled.is_file():
-                return str(bundled)
+                return command_path(bundled)
         refuse("pinned OpenPGP verifier is unavailable")
 
     def signature_fingerprint(self, commit: str) -> str:

@@ -11,6 +11,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).parents[2]
@@ -264,6 +265,15 @@ class GitHubAuthorizationTests(unittest.TestCase):
         if present.returncode != 0:
             self.skipTest("known signed GitHub squash commit is absent from this checkout")
         self.assertEqual(AUTH.GitRepository(ROOT).signature_fingerprint(known_commit), AUTH.WEB_FLOW_FINGERPRINT)
+
+    @unittest.skipUnless(AUTH.os.name == "nt", "Windows bundled Git path regression")
+    def test_space_containing_bundled_gpg_path_is_posix_normalized_for_git_config(self) -> None:
+        git = pathlib.Path("C:/Program Files/Git/cmd/git.exe")
+        with mock.patch.object(AUTH.shutil, "which", side_effect=lambda name: None if name == "gpg" else str(git)), \
+             mock.patch.object(AUTH.pathlib.Path, "is_file", return_value=True):
+            gpg = AUTH.GitRepository._gpg()
+        self.assertEqual(gpg, "C:/Program Files/Git/usr/bin/gpg.exe")
+        self.assertNotIn("\\", gpg)
 
     def test_schema_and_readme_keep_authorization_dormant(self) -> None:
         schema = json.loads((ROOT / "schemas" / "phase6-github-authorization.schema.json").read_text())
