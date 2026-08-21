@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import secrets
 import stat
 import sys
@@ -447,6 +448,8 @@ class DurableBrokerStore:
         return self.security_probe(absolute) if absolute.exists() else {}
 
     def initialize(self) -> None:
+        if os.name != "nt":
+            refuse("protected Phase 6 broker store is Windows-only")
         self.base.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.root.mkdir(mode=0o700, exist_ok=True)
         if os.name == "nt":
@@ -458,16 +461,49 @@ class DurableBrokerStore:
 
     @contextlib.contextmanager
     def locked(self) -> Iterator[None]:
-        if os.name == "nt":
-            with NamedMutex(self.operation_mutex) as operation_lock, NamedMutex(self.state_mutex) as state_lock:
-                self.last_lock_abandoned = operation_lock.abandoned or state_lock.abandoned
-                yield
-        else:
-            with PosixLockParent() as parent_fd:
-                with NamedMutex(self.operation_mutex, held_parent_fd=parent_fd) as operation_lock, \
-                        NamedMutex(self.state_mutex, held_parent_fd=parent_fd) as state_lock:
-                    self.last_lock_abandoned = operation_lock.abandoned or state_lock.abandoned
-                    yield
+        if os.name != "nt":
+            refuse("protected Phase 6 broker store is Windows-only")
+        with NamedMutex(self.operation_mutex) as operation_lock, NamedMutex(self.state_mutex) as state_lock:
+            self.last_lock_abandoned = operation_lock.abandoned or state_lock.abandoned
+            yield
+
+    def _recover_stale_snapshots(self) -> None:
+        grammar = re.compile(r"state-[0-9a-f]{64}-[0-9a-f]{32}\.read-only\.tfstate")
+        deleted = False
+        for candidate in self.root.iterdir():
+            if not candidate.name.startswith("state-"):
+                continue
+            if not grammar.fullmatch(candidate.name):
+                refuse("ambiguous stale Terraform snapshot filename")
+            before = self._secure(candidate, regular=True)
+            self._stable_bytes(candidate)
+            after = self._secure(candidate, regular=True)
+            if (before.get("device"), before.get("identity")) != (after.get("device"), after.get("identity")):
+                refuse("stale Terraform snapshot identity changed")
+            candidate.unlink()
+            deleted = True
+        if os.name == "nt" and deleted:
+            # Opening the directory with backup semantics and flushing it is
+            # performed by the durable Windows replacement boundary.
+            self._flush_windows_directory(self.root)
+
+    @staticmethod
+    def _flush_windows_directory(path: pathlib.Path) -> None:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                         wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.FlushFileBuffers.argtypes = (wintypes.HANDLE,); kernel32.FlushFileBuffers.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,); kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.CreateFileW(str(path), 0x80000000, 0x1 | 0x2 | 0x4, None, 3,
+                                      0x02000000 | 0x00200000, None)
+        if handle == wintypes.HANDLE(-1).value: refuse("unable to hold snapshot directory for flush")
+        try:
+            if not kernel32.FlushFileBuffers(handle): refuse("unable to flush snapshot directory")
+        finally:
+            kernel32.CloseHandle(handle)
 
     def _read_json(self, path: pathlib.Path) -> dict[str, Any]:
         before = self._secure(path, regular=True)
@@ -519,8 +555,23 @@ class DurableBrokerStore:
                                       ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p)
         kernel32.ReadFile.restype = wintypes.BOOL
         kernel32.CloseHandle.argtypes = (wintypes.HANDLE,); kernel32.CloseHandle.restype = wintypes.BOOL
+        ancestor_handles = []
+        for ancestor in reversed(path.resolve(strict=True).parents):
+            if not ancestor.exists(): continue
+            directory_handle = kernel32.CreateFileW(str(ancestor), 0x80000000, 0x1 | 0x2 | 0x4, None, 3,
+                                                     0x02000000 | 0x00200000, None)
+            if directory_handle == wintypes.HANDLE(-1).value:
+                for held in ancestor_handles: kernel32.CloseHandle(held)
+                refuse("unable to hold protected artifact ancestor directory")
+            facts = self.security_probe(ancestor)
+            if facts.get("reparse") or not facts.get("owner_only", False):
+                kernel32.CloseHandle(directory_handle)
+                for held in ancestor_handles: kernel32.CloseHandle(held)
+                refuse("protected artifact ancestor DACL/owner differs while held")
+            ancestor_handles.append(directory_handle)
         handle = kernel32.CreateFileW(str(path), 0x80000000, 0x1, None, 3, 0x00200000, None)
         if handle == wintypes.HANDLE(-1).value:
+            for held in ancestor_handles: kernel32.CloseHandle(held)
             refuse("unable to open protected artifact without following reparse points")
         try:
             length = kernel32.GetFinalPathNameByHandleW(handle, None, 0, 0)
@@ -555,6 +606,7 @@ class DurableBrokerStore:
             return b"".join(chunks)
         finally:
             kernel32.CloseHandle(handle)
+            for held in reversed(ancestor_handles): kernel32.CloseHandle(held)
 
     def _load_unlocked(self) -> dict[str, Any]:
         self.initialize()
@@ -799,6 +851,7 @@ class ReadOnlyAdmissionAdapter:
         if kind == "terraform-state":
             with self.store.locked():
                 self.store.initialize()
+                self.store._recover_stale_snapshots()
                 self.store._secure(self.store.state_path, regular=True)
                 raw = self.store._stable_bytes(self.store.state_path)
                 snapshot_digest = digest_bytes(raw)

@@ -112,6 +112,10 @@ function Assert-SingleFileIdentity {
 function Enter-Phase2MutationLease {
     param([Parameter(Mandatory)]$Paths)
 
+    if (-not $IsWindows) {
+        throw 'Protected Phase 2 state mutation is Windows-only and is disabled on this host.'
+    }
+
     $canonicalState = (Get-CanonicalBoundaryPath -Path $Paths.StatePath).ToLowerInvariant()
     $stateDigest = [Convert]::ToHexString(
         [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonicalState))

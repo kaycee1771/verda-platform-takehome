@@ -43,6 +43,7 @@ def secure_probe(path: pathlib.Path) -> dict:
             "identity": status.st_ino, "owner_only": True}
 
 
+@unittest.skipUnless(os.name == "nt", "protected broker store is deliberately Windows-only")
 class DurableBrokerStoreTests(unittest.TestCase):
     def store(self, root: pathlib.Path, operation: str = FIXTURES.OPERATION, **kwargs):
         if "verifier" in kwargs:
@@ -355,6 +356,21 @@ class DurableBrokerStoreTests(unittest.TestCase):
             store = self.store(root, security_probe=swapping_probe, verifier=verifier)
             with self.assertRaisesRegex(STORE.StoreRefused, "identity changed"):
                 store.verify_admission(authorization_path=authorization_path, artifacts=artifacts)
+
+
+@unittest.skipIf(os.name == "nt", "non-Windows refusal contract")
+class NonWindowsStoreRefusalTests(unittest.TestCase):
+    def test_store_refuses_before_creating_or_reading_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            base = pathlib.Path(folder) / "must-not-exist"
+            store = STORE.DurableBrokerStore(operation_id=FIXTURES.OPERATION, base=base, clock=lambda: NOW)
+            with self.assertRaisesRegex(STORE.StoreRefused, "Windows-only"):
+                store.initialize()
+            self.assertFalse(base.exists())
+            with self.assertRaisesRegex(STORE.StoreRefused, "Windows-only"):
+                with store.locked():
+                    pass
+            self.assertFalse(base.exists())
 
 
 if __name__ == "__main__":
