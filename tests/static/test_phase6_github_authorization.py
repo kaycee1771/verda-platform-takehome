@@ -48,6 +48,7 @@ def artifact() -> dict:
         "journal_generation": 1, "journal_state": "AUTHORIZED",
         "approved_cost_ceiling_usd": AUTH.APPROVED_COST,
         "issued_at": "2026-08-21T11:30:00Z", "start_by": "2026-08-21T12:30:00Z",
+        "complete_by": "2026-08-21T16:30:00Z", "minimum_recovery_margin_seconds": 86400,
         "raw_values_recorded": False,
     }
     for key in AUTH.DIGEST_KEYS - {"source_tree_manifest_sha256", "operation_id", "operation_nonce"}:
@@ -80,11 +81,14 @@ class FakeRepository:
         path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
         self.blobs = {(HEAD, self.relative): path.read_bytes()}
         self.paths = [self.relative]
+        self.first_parent_values = [HEAD]
         self.origin_value = AUTH.ORIGIN
         self.clean_value = True
         self.head_value = HEAD
         self.parents_value = [PARENT]
+        self.parents_extra = {}
         self.changed_value = [("A", self.relative)]
+        self.changed_extra = {}
         self.parent_has_path = False
         self.tree_value = TREE
         self.manifest_value = MANIFEST
@@ -94,8 +98,9 @@ class FakeRepository:
     def origin(self): return self.origin_value
     def clean(self): return self.clean_value
     def head(self): return self.head_value
-    def parents(self, commit): return self.parents_value
-    def changed_entries(self, parent, commit): return self.changed_value
+    def parents(self, commit): return self.parents_extra.get(commit, self.parents_value)
+    def first_parent_commits(self, commit): return self.first_parent_values
+    def changed_entries(self, parent, commit): return self.changed_extra.get((parent, commit), self.changed_value)
     def path_exists(self, commit, path): return self.parent_has_path
     def tree_oid(self, commit): return HEAD_TREE if commit == HEAD else self.tree_value
     def tree_manifest_sha256(self, commit): return self.manifest_value
@@ -197,10 +202,17 @@ class TransactionVerifierTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository, github, value = self.fixture(directory)
             prior = f"config/phase6-authorizations/{'9' * 64}-transaction.json"
+            prior_commit, prior_parent = PARENT, "7" * 40
+            prior_value = artifact()
+            prior_value.update(operation_id="9" * 64, source_parent_commit=prior_parent)
             repository.paths.append(prior)
-            repository.blobs[(HEAD, prior)] = json.dumps({"operation_nonce": value["operation_nonce"]}).encode()
+            repository.blobs[(HEAD, prior)] = json.dumps(prior_value).encode()
+            repository.blobs[(prior_commit, prior)] = repository.blobs[(HEAD, prior)]
+            repository.first_parent_values = [HEAD, prior_commit]
+            repository.parents_extra[prior_commit] = [prior_parent]
+            repository.changed_extra[(prior_parent, prior_commit)] = [("A", prior)]
             # No prior worktree file exists: the verifier must still scan immutable HEAD.
-            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "already used"):
+            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "reused"):
                 self.verify(repository, github, value)
 
     def test_binding_and_immutable_worktree_blob_tamper_refused(self):
@@ -228,6 +240,48 @@ class TransactionVerifierTests(unittest.TestCase):
             repository, github, value = self.fixture(directory)
             github.pr["merged_at"] = "2026-08-21T11:00:00Z"
             with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+
+    def test_complete_by_and_resource_expiry_preserve_bounded_recovery_margin(self):
+        changes = {
+            "too-long": "2026-08-21T16:30:01Z",
+            "no-expiry-margin": "2026-08-27T00:00:00Z",
+            "before-start": "2026-08-21T12:29:59Z",
+        }
+        for name, complete_by in changes.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                repository, github, value = self.fixture(directory)
+                value["complete_by"] = complete_by; self.rewrite(repository, value)
+                with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+
+    def test_final_receipt_recheck_refuses_deadline_main_or_workflow_race(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository, github, value = self.fixture(directory)
+            times = iter([NOW, dt.datetime(2026, 8, 21, 12, 30, tzinfo=dt.timezone.utc)])
+            with self.assertRaises(AUTH.AuthorizationRefused):
+                AUTH.verify_authorization(repository=repository, github=github, operation_id=OPERATION,
+                                          binding=value, clock=lambda: next(times))
+        with tempfile.TemporaryDirectory() as directory:
+            repository, github, value = self.fixture(directory)
+            github.main_head = mock.Mock(side_effect=[HEAD, "1" * 40])
+            with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+        with tempfile.TemporaryDirectory() as directory:
+            repository, github, value = self.fixture(directory)
+            pending = copy.deepcopy(github.runs); pending[0].update(status="in_progress", conclusion=None, id=2)
+            github.workflow_runs = mock.Mock(side_effect=[github.runs, pending])
+            with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+
+    def test_append_only_history_rejects_modify_delete_and_rename_forever(self):
+        prior = f"config/phase6-authorizations/{'9' * 64}-transaction.json"
+        for status_entries in (
+            [("M", prior)], [("D", prior)], [("D", prior), ("A", f"config/phase6-authorizations/{'8' * 64}-transaction.json")],
+        ):
+            with self.subTest(entries=status_entries), tempfile.TemporaryDirectory() as directory:
+                repository, github, value = self.fixture(directory)
+                repository.first_parent_values = [HEAD, PARENT]
+                repository.parents_extra[PARENT] = ["7" * 40]
+                repository.changed_extra[("7" * 40, PARENT)] = status_entries
+                with self.assertRaisesRegex(AUTH.AuthorizationRefused, "modified, deleted, renamed"):
+                    self.verify(repository, github, value)
 
     def test_live_governance_all_material_fields_fail_closed(self):
         cases = {
@@ -279,6 +333,11 @@ class TransactionVerifierTests(unittest.TestCase):
                 github.runs.append(newest)
                 with self.assertRaisesRegex(AUTH.AuthorizationRefused, "newest"):
                     self.verify(repository, github, value)
+        with tempfile.TemporaryDirectory() as directory:
+            repository, github, value = self.fixture(directory)
+            github.runs[0]["run_attempt"] = True
+            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "run/attempt"):
+                self.verify(repository, github, value)
 
     def test_workflow_pagination_uses_all_statuses_and_refuses_truncation(self):
         api = AUTH.GitHubAPI()
@@ -286,12 +345,17 @@ class TransactionVerifierTests(unittest.TestCase):
         def pages(path, query=None):
             calls.append(copy.deepcopy(query))
             page = int(query["page"])
-            return {"total_count": 101, "workflow_runs": [{}] * (100 if page == 1 else 1)}
+            first = 1 if page == 1 else 101
+            count = 100 if page == 1 else 1
+            return {"total_count": 101, "workflow_runs": [{"id": index} for index in range(first, first + count)]}
         with mock.patch.object(api, "_get", side_effect=pages):
             self.assertEqual(len(api.workflow_runs(PR_HEAD)), 101)
         self.assertNotIn("status", calls[0])
         with mock.patch.object(api, "_get", return_value={"total_count": 101, "workflow_runs": [{}]}):
             with self.assertRaisesRegex(AUTH.AuthorizationRefused, "truncated"): api.workflow_runs(PR_HEAD)
+        with mock.patch.object(api, "_get", return_value={"total_count": 2,
+                                                           "workflow_runs": [{"id": 1}, {"id": 1}]}):
+            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "repeat"): api.workflow_runs(PR_HEAD)
 
     def test_duplicate_and_nonfinite_json_refused(self):
         for payload in (b'{"a":1,"a":2}', b'{"a":NaN}'):

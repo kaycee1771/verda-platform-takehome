@@ -22,7 +22,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 
 REPOSITORY = "kaycee1771/verda-platform-takehome"
@@ -42,6 +42,8 @@ WINDOWS_GPG_SHA256 = "22356f7af9f43c98339a51cee22ab9930688b699f71c5f964b0b07dfa0
 WINDOWS_GPG_VERSION_PREFIX = "gpg (GnuPG) 2.4.7"
 APPROVED_EXPIRY = "2026-08-27T21:00:00Z"
 APPROVED_COST = "70.46"
+MINIMUM_RECOVERY_MARGIN_SECONDS = 86400
+MAXIMUM_TRANSACTION_SECONDS = 14400
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
@@ -56,7 +58,8 @@ AUTHORIZATION_KEYS = {
     "security_approved", "reliability_approved", "preflight_sha256", "cost_sha256",
     "capacity_sha256", "collector_sha256", "etcd_backup_sha256", "data_backup_sha256",
     "provider_facts_sha256", "approved_resource_expiry_utc", "approved_cost_ceiling_usd",
-    "issued_at", "start_by", "raw_values_recorded",
+    "issued_at", "start_by", "complete_by", "minimum_recovery_margin_seconds",
+    "raw_values_recorded",
 }
 DIGEST_KEYS = {
     "source_tree_manifest_sha256", "operation_id", "operation_nonce", "plan_sha256",
@@ -129,12 +132,19 @@ def parse_timestamp(value: object, label: str) -> dt.datetime:
         refuse(f"{label} is invalid")
 
 
+def utc(value: dt.datetime) -> dt.datetime:
+    if value.tzinfo is None:
+        refuse("verification clock is not UTC-aware")
+    return value.astimezone(dt.timezone.utc)
+
+
 class RepositoryView(Protocol):
     root: pathlib.Path
     def origin(self) -> str: ...
     def clean(self) -> bool: ...
     def head(self) -> str: ...
     def parents(self, commit: str) -> list[str]: ...
+    def first_parent_commits(self, commit: str) -> list[str]: ...
     def changed_entries(self, parent: str, commit: str) -> list[tuple[str, str]]: ...
     def path_exists(self, commit: str, path: str) -> bool: ...
     def tree_oid(self, commit: str) -> str: ...
@@ -230,8 +240,14 @@ class GitRepository:
     def parents(self, commit: str) -> list[str]:
         return self._run(["rev-list", "--parents", "-n", "1", commit]).strip().split()[1:]
 
+    def first_parent_commits(self, commit: str) -> list[str]:
+        values = self._run(["rev-list", "--first-parent", "--max-count=10001", commit]).strip().splitlines()
+        if not values or len(values) > 10000 or any(not COMMIT.fullmatch(value) for value in values):
+            refuse("canonical first-parent authorization history is absent or exceeds its bound")
+        return values
+
     def changed_entries(self, parent: str, commit: str) -> list[tuple[str, str]]:
-        raw = self._run(["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", parent, commit], text=False)
+        raw = self._run(["diff-tree", "--no-commit-id", "--name-status", "--no-renames", "-r", "-z", parent, commit], text=False)
         parts = [part.decode("utf-8") for part in raw.split(b"\0") if part]
         if len(parts) % 2:
             refuse("authorization commit diff differs")
@@ -399,8 +415,14 @@ class GitHubAPI:
                 break
         else:
             refuse("canonical GitHub workflow response is truncated")
-        if reported_total is None or len(runs) < reported_total:
+        if reported_total is None or len(runs) != reported_total:
             refuse("canonical GitHub workflow response is truncated")
+        identifiers: set[int] = set()
+        for run in runs:
+            identifier = run.get("id")
+            if type(identifier) is not int or identifier < 1 or identifier in identifiers:
+                refuse("canonical GitHub workflow run identities differ or repeat")
+            identifiers.add(identifier)
         return runs
 
 
@@ -477,6 +499,8 @@ def validate_binding(binding: dict[str, Any], operation_id: str) -> None:
         refuse("reviewed state serial differs")
     if type(binding.get("journal_generation")) is not int or binding["journal_generation"] < 1:
         refuse("reviewed journal generation differs")
+    if binding.get("minimum_recovery_margin_seconds") != MINIMUM_RECOVERY_MARGIN_SECONDS:
+        refuse("reviewed recovery margin differs")
     approvals = [binding[key] for key in ("user_approval_sha256", "security_review_sha256", "reliability_review_sha256")]
     if len(set(approvals)) != 3 or binding["operation_nonce"] in approvals:
         refuse("user and independent review evidence is not distinct")
@@ -484,8 +508,141 @@ def validate_binding(binding: dict[str, Any], operation_id: str) -> None:
         refuse("operation nonce is not independent from reviewed evidence")
 
 
+def authorization_path_operation(path: str) -> str | None:
+    match = re.fullmatch(r"config/phase6-authorizations/([0-9a-f]{64})-transaction\.json", path)
+    return None if match is None else match.group(1)
+
+
+def scan_authorization_history(repository: RepositoryView, head: str) -> list[dict[str, Any]]:
+    """Scan immutable first-parent history and enforce an append-only authorization ledger."""
+    commits = repository.first_parent_commits(head)
+    candidates: list[dict[str, Any]] = []
+    operations: set[str] = set()
+    nonces: set[str] = set()
+    for commit in reversed(commits):
+        parents = repository.parents(commit)
+        if not parents:
+            continue
+        if len(parents) != 1:
+            refuse("transaction authorization is not an exact one-parent squash commit")
+        parent = parents[0]
+        entries = repository.changed_entries(parent, commit)
+        candidate_entries = [(status, path) for status, path in entries
+                             if authorization_path_operation(path) is not None]
+        if not candidate_entries:
+            continue
+        if len(candidate_entries) != 1 or entries != candidate_entries or candidate_entries[0][0] != "A":
+            refuse("transaction authorization history modified, deleted, renamed, or mixed a prior artifact")
+        _, path = candidate_entries[0]
+        operation_id = authorization_path_operation(path)
+        assert operation_id is not None
+        if repository.path_exists(parent, path):
+            refuse("transaction authorization addition was already present in its parent")
+        payload = repository.tracked_blob(commit, path)
+        artifact = parse_object_bytes(payload, "immutable transaction authorization history")
+        validate_binding(artifact, operation_id)
+        if artifact["source_parent_commit"] != parent or repository.tree_oid(parent) != artifact["source_tree_oid"]:
+            refuse("historical transaction authorization source parent/tree differs")
+        if repository.tree_manifest_sha256(parent) != artifact["source_tree_manifest_sha256"]:
+            refuse("historical transaction authorization source manifest differs")
+        nonce = artifact["operation_nonce"]
+        if operation_id in operations or nonce in nonces:
+            refuse("operation identity or nonce was reused in immutable authorization history")
+        operations.add(operation_id)
+        nonces.add(nonce)
+        candidates.append({"commit": commit, "parent": parent, "path": path,
+                           "artifact": artifact, "payload": payload})
+    tracked = {path for path in repository.tracked_paths(head, "config/phase6-authorizations")
+               if authorization_path_operation(path) is not None}
+    discovered = {candidate["path"] for candidate in candidates}
+    if tracked != discovered:
+        refuse("current authorization tree differs from immutable append-only history")
+    return candidates
+
+
+def authorization_times(artifact: dict[str, Any], *, now: dt.datetime | None = None) -> tuple[dt.datetime, ...]:
+    issued = parse_timestamp(artifact.get("issued_at"), "authorization issued_at")
+    start_by = parse_timestamp(artifact.get("start_by"), "authorization start_by")
+    complete_by = parse_timestamp(artifact.get("complete_by"), "authorization complete_by")
+    expiry = parse_timestamp(artifact.get("approved_resource_expiry_utc"), "approved resource expiry")
+    margin = artifact.get("minimum_recovery_margin_seconds")
+    if (margin != MINIMUM_RECOVERY_MARGIN_SECONDS or not issued < start_by < complete_by
+            or start_by > issued + dt.timedelta(hours=1)
+            or complete_by > start_by + dt.timedelta(seconds=MAXIMUM_TRANSACTION_SECONDS)
+            or not complete_by + dt.timedelta(seconds=margin) < expiry):
+        refuse("authorization start/completion/recovery-expiry boundary differs")
+    if now is not None:
+        current = utc(now)
+        if issued > current + dt.timedelta(seconds=30) or not current < start_by < complete_by < expiry:
+            refuse("authorization is future-dated or its transaction start window has closed")
+    return issued, start_by, complete_by, expiry
+
+
+def select_workflow(github: GitHubView, head_sha: str, pr_number: int) -> tuple[int, int, int]:
+    exact: list[dict[str, Any]] = []
+    for run in github.workflow_runs(head_sha):
+        matches = (run.get("workflow_id") == WORKFLOW_ID and run.get("head_sha") == head_sha
+                   and run.get("event") == "pull_request" and run.get("path") == WORKFLOW_PATH
+                   and isinstance(run.get("head_repository"), dict)
+                   and run["head_repository"].get("full_name") == REPOSITORY
+                   and isinstance(run.get("pull_requests"), list)
+                   and any(isinstance(item, dict) and item.get("number") == pr_number
+                           for item in run["pull_requests"]))
+        if not matches:
+            continue
+        if any(type(run.get(key)) is not int or run[key] < 1 for key in ("run_number", "run_attempt", "id")):
+            refuse("exact hosted workflow run/attempt identity differs")
+        exact.append(run)
+    if not exact:
+        refuse("exact hosted validation workflow did not run on the PR head")
+    latest = max(exact, key=lambda run: (run["run_number"], run["run_attempt"], run["id"]))
+    if latest.get("status") != "completed" or latest.get("conclusion") != "success":
+        refuse("newest exact hosted validation workflow did not complete successfully")
+    return latest["run_number"], latest["run_attempt"], latest["id"]
+
+
+def verify_hosted_candidate(*, repository: RepositoryView, github: GitHubView,
+                            candidate: dict[str, Any], now: dt.datetime | None) -> dict[str, Any]:
+    commit, parent, artifact = candidate["commit"], candidate["parent"], candidate["artifact"]
+    issued, start_by, _, _ = authorization_times(artifact, now=now)
+    if repository.signature_fingerprint(commit) != WEB_FLOW_FINGERPRINT:
+        refuse("authorization commit signer differs from pinned GitHub web-flow")
+    committer, email, subject = repository.commit_metadata(commit)
+    subject_match = re.search(r"\(#([1-9][0-9]*)\)$", subject)
+    pr_number = artifact["pr_number"]
+    if (committer != "GitHub" or email != "noreply@github.com" or subject_match is None
+            or int(subject_match.group(1)) != pr_number):
+        refuse("authorization commit is not the exact GitHub web-flow squash merge")
+    pr = github.pull_request(pr_number)
+    base, pr_head, merged_by = pr.get("base"), pr.get("head"), pr.get("merged_by")
+    if not isinstance(base, dict) or not isinstance(pr_head, dict) or not isinstance(merged_by, dict):
+        refuse("authorization PR metadata differs")
+    base_repo, head_repo = base.get("repo"), pr_head.get("repo")
+    if (pr.get("number") != pr_number or pr.get("state") != "closed" or pr.get("merged") is not True
+            or pr.get("merge_commit_sha") != commit or base.get("ref") != "main" or base.get("sha") != parent
+            or not isinstance(base_repo, dict) or base_repo.get("full_name") != REPOSITORY
+            or not isinstance(head_repo, dict) or head_repo.get("full_name") != REPOSITORY
+            or merged_by.get("login") != TRUSTED_MERGER or merged_by.get("type") != "User"
+            or not isinstance(pr_head.get("sha"), str) or not COMMIT.fullmatch(pr_head["sha"])):
+        refuse("authorization PR is not the exact trusted canonical merged source")
+    merged_at = parse_timestamp(pr.get("merged_at"), "authorization PR merged_at")
+    if merged_at < issued - dt.timedelta(seconds=30) or merged_at >= start_by:
+        refuse("authorization issue/start window does not bind the merge time")
+    pr_head_sha = pr_head["sha"]
+    if github.commit_tree(pr_head_sha) != repository.tree_oid(commit):
+        refuse("PR head tree differs from the signed squash authorization tree")
+    return {"pr_number": pr_number, "pr_head_sha": pr_head_sha,
+            "workflow": select_workflow(github, pr_head_sha, pr_number)}
+
+
 def verify_authorization(*, repository: RepositoryView, github: GitHubView, operation_id: str,
-                         binding: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
+                         binding: dict[str, Any], now: dt.datetime | None = None,
+                         clock: Callable[[], dt.datetime] | None = None) -> dict[str, Any]:
+    if now is not None and clock is not None:
+        refuse("verification accepts one internal clock source")
+    if clock is None:
+        clock = (lambda: now) if now is not None else (lambda: dt.datetime.now(dt.timezone.utc))
+    initial_now = utc(clock())
     validate_binding(binding, operation_id)
     relative = f"config/phase6-authorizations/{operation_id}-transaction.json"
     artifact_path = repository.root / pathlib.PurePosixPath(relative)
@@ -501,84 +658,41 @@ def verify_authorization(*, repository: RepositoryView, github: GitHubView, oper
     validate_binding(artifact, operation_id)
     if artifact != binding:
         refuse("tracked authorization differs from the local reviewed transaction binding")
-
-    parent = artifact["source_parent_commit"]
-    if repository.parents(head) != [parent]:
-        refuse("authorization commit is not a one-parent squash commit over the bound source")
-    if repository.changed_entries(parent, head) != [("A", relative)] or repository.path_exists(parent, relative):
-        refuse("authorization must be one newly added artifact absent from its parent")
-    if repository.tree_oid(parent) != artifact["source_tree_oid"]:
-        refuse("authorization source tree object differs")
-    if repository.tree_manifest_sha256(parent) != artifact["source_tree_manifest_sha256"]:
-        refuse("authorization source tree manifest differs")
-
-    nonce = artifact["operation_nonce"]
-    authorization_prefix = "config/phase6-authorizations"
-    for tracked in repository.tracked_paths(head, authorization_prefix):
-        name = pathlib.PurePosixPath(tracked).name
-        if tracked == relative or not name.endswith(".json") or name == "github-web-flow-key.provenance.json":
-            continue
-        other = parse_object_bytes(repository.tracked_blob(head, tracked), "prior tracked transaction authorization")
-        if other.get("operation_nonce") == nonce:
-            refuse("operation nonce was already used in the immutable authorization tree")
-
-    issued = parse_timestamp(artifact.get("issued_at"), "authorization issued_at")
-    start_by = parse_timestamp(artifact.get("start_by"), "authorization start_by")
-    if now.tzinfo is None:
-        refuse("verification clock is not UTC-aware")
-    utc_now = now.astimezone(dt.timezone.utc)
-    if not issued < start_by or start_by > issued + dt.timedelta(hours=1):
-        refuse("authorization start window differs")
-    if issued > utc_now + dt.timedelta(seconds=30) or utc_now >= start_by:
-        refuse("authorization is future-dated or its start window has closed")
-
+    candidates = scan_authorization_history(repository, head)
+    current = [candidate for candidate in candidates
+               if candidate["commit"] == head and candidate["path"] == relative]
+    if len(current) != 1 or current[0]["payload"] != artifact_bytes:
+        refuse("current transaction authorization is absent from immutable append-only history")
     verify_governance(github)
-    if repository.signature_fingerprint(head) != WEB_FLOW_FINGERPRINT:
-        refuse("authorization commit signer differs from pinned GitHub web-flow")
-    committer, email, subject = repository.commit_metadata(head)
-    subject_match = re.search(r"\(#([1-9][0-9]*)\)$", subject)
-    pr_number = artifact["pr_number"]
-    if committer != "GitHub" or email != "noreply@github.com" or subject_match is None or int(subject_match.group(1)) != pr_number:
-        refuse("authorization commit is not the exact GitHub web-flow squash merge")
+    hosted: dict[str, Any] | None = None
+    for candidate in candidates:
+        checked = verify_hosted_candidate(
+            repository=repository, github=github, candidate=candidate,
+            now=initial_now if candidate["commit"] == head else None,
+        )
+        if candidate["commit"] == head:
+            hosted = checked
+    if hosted is None:
+        refuse("current hosted transaction authorization was not verified")
 
-    pr = github.pull_request(pr_number)
-    base, pr_head, merged_by = pr.get("base"), pr.get("head"), pr.get("merged_by")
-    if not isinstance(base, dict) or not isinstance(pr_head, dict) or not isinstance(merged_by, dict):
-        refuse("authorization PR metadata differs")
-    base_repo, head_repo = base.get("repo"), pr_head.get("repo")
-    if (pr.get("number") != pr_number or pr.get("state") != "closed" or pr.get("merged") is not True
-            or pr.get("merge_commit_sha") != head or base.get("ref") != "main" or base.get("sha") != parent
-            or not isinstance(base_repo, dict) or base_repo.get("full_name") != REPOSITORY
-            or not isinstance(head_repo, dict) or head_repo.get("full_name") != REPOSITORY
-            or merged_by.get("login") != TRUSTED_MERGER or merged_by.get("type") != "User"
-            or not isinstance(pr_head.get("sha"), str) or not COMMIT.fullmatch(pr_head["sha"])):
-        refuse("authorization PR is not the exact trusted canonical merged source")
-    merged_at = parse_timestamp(pr.get("merged_at"), "authorization PR merged_at")
-    if merged_at < issued - dt.timedelta(seconds=30) or merged_at >= start_by:
-        refuse("authorization issue/start window does not bind the merge time")
-    pr_head_sha = pr_head["sha"]
-    if github.commit_tree(pr_head_sha) != repository.tree_oid(head):
-        refuse("PR head tree differs from the signed squash authorization tree")
-
-    matching = [run for run in github.workflow_runs(pr_head_sha)
-                if run.get("workflow_id") == WORKFLOW_ID and run.get("head_sha") == pr_head_sha
-                and run.get("event") == "pull_request" and run.get("path") == WORKFLOW_PATH
-                and isinstance(run.get("head_repository"), dict)
-                and run["head_repository"].get("full_name") == REPOSITORY
-                and isinstance(run.get("pull_requests"), list)
-                and any(isinstance(item, dict) and item.get("number") == pr_number for item in run["pull_requests"])]
-    if not matching:
-        refuse("exact hosted validation workflow did not run on the PR head")
-    latest = max(matching, key=lambda run: tuple(run.get(key) if type(run.get(key)) is int else -1
-                                                 for key in ("run_number", "run_attempt", "id")))
-    if latest.get("status") != "completed" or latest.get("conclusion") != "success":
-        refuse("newest exact hosted validation workflow did not complete successfully")
+    # A receipt is emitted only after a new clock sample and new remote queries.
+    # A workflow rerun, main movement, local movement, or deadline crossing wins the race.
+    final_now = utc(clock())
+    _, start_by, complete_by, expiry = authorization_times(artifact, now=final_now)
+    if not final_now < start_by < complete_by < expiry:
+        refuse("transaction start boundary closed before verifier receipt")
+    if repository.head() != head or not repository.clean() or github.main_head() != head:
+        refuse("canonical main or clean local authorization commit changed before receipt")
+    final_workflow = select_workflow(github, hosted["pr_head_sha"], hosted["pr_number"])
+    if final_workflow != hosted["workflow"]:
+        refuse("newest exact hosted workflow attempt changed before verifier receipt")
 
     return {
         "schema_version": 1, "status": "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT",
         "phase": 6, "authorization_mode": "TRANSACTION", "operation_id": operation_id,
         "authorization_commit": head, "authorization_sha256": hashlib.sha256(artifact_bytes).hexdigest(),
-        "source_parent_commit": parent, "workflow_id": WORKFLOW_ID, "pr_number": pr_number,
+        "source_parent_commit": artifact["source_parent_commit"], "workflow_id": WORKFLOW_ID,
+        "pr_number": hosted["pr_number"], "complete_by": artifact["complete_by"],
         "web_flow_fingerprint": WEB_FLOW_FINGERPRINT, "requires_reverification_before_use": True,
         "raw_values_recorded": False,
     }
@@ -593,8 +707,7 @@ def main() -> int:
     try:
         receipt = verify_authorization(repository=GitRepository(args.repository), github=GitHubAPI(),
                                        operation_id=args.operation_id,
-                                       binding=read_object(args.binding, "local reviewed transaction binding"),
-                                       now=dt.datetime.now(dt.timezone.utc))
+                                       binding=read_object(args.binding, "local reviewed transaction binding"))
         print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
         return 0
     except AuthorizationRefused as error:

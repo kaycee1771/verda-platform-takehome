@@ -15,7 +15,7 @@
     "security_approved", "reliability_approved", "preflight_sha256", "cost_sha256",
     "capacity_sha256", "collector_sha256", "etcd_backup_sha256", "data_backup_sha256",
     "provider_facts_sha256", "approved_resource_expiry_utc", "approved_cost_ceiling_usd",
-    "issued_at", "start_by", "raw_values_recorded"
+    "issued_at", "start_by", "complete_by", "minimum_recovery_margin_seconds", "raw_values_recorded"
   ],
   "properties": {
     "schema_version": {"const": 1},
@@ -60,6 +60,8 @@
     "approved_cost_ceiling_usd": {"const": "70.46"},
     "issued_at": {"$ref": "#/$defs/utc"},
     "start_by": {"$ref": "#/$defs/utc"},
+    "complete_by": {"$ref": "#/$defs/utc"},
+    "minimum_recovery_margin_seconds": {"const": 86400},
     "raw_values_recorded": {"const": false}
   },
   "$defs": {
