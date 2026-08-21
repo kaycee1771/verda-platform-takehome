@@ -258,33 +258,77 @@ def _protect_windows_path(path: pathlib.Path) -> None:
 
 
 def _windows_mutex_handle_trusted(handle: Any) -> bool:
-    """Validate an existing kernel mutex's protected explicit allowlist."""
+    """Validate owner/protection and native ACEs of an existing mutex."""
     import ctypes
     from ctypes import wintypes
     advapi, kernel32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
-    descriptor = ctypes.c_void_p()
+    descriptor, owner, dacl = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
     advapi.GetSecurityInfo.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
                                        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
                                        ctypes.POINTER(ctypes.c_void_p))
     advapi.GetSecurityInfo.restype = wintypes.DWORD
-    advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = (
-        ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(wintypes.LPWSTR),
-        ctypes.POINTER(wintypes.DWORD))
-    advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
+    advapi.GetSecurityDescriptorControl.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.WORD),
+                                                     ctypes.POINTER(wintypes.DWORD))
+    advapi.GetSecurityDescriptorControl.restype = wintypes.BOOL
+    advapi.GetAclInformation.argtypes = (ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.c_int)
+    advapi.GetAclInformation.restype = wintypes.BOOL
+    advapi.GetAce.argtypes = (ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p))
+    advapi.GetAce.restype = wintypes.BOOL
+    advapi.ConvertSidToStringSidW.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR))
+    advapi.ConvertSidToStringSidW.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.argtypes = (); kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi.OpenProcessToken.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE))
+    advapi.OpenProcessToken.restype = wintypes.BOOL
+    advapi.GetTokenInformation.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                           wintypes.DWORD, ctypes.POINTER(wintypes.DWORD))
+    advapi.GetTokenInformation.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,); kernel32.CloseHandle.restype = wintypes.BOOL
     kernel32.LocalFree.argtypes = (ctypes.c_void_p,); kernel32.LocalFree.restype = ctypes.c_void_p
-    if advapi.GetSecurityInfo(handle, 6, 0x1 | 0x4, None, None, None, None, ctypes.byref(descriptor)) != 0:
+    if advapi.GetSecurityInfo(handle, 6, 0x1 | 0x4, ctypes.byref(owner), None,
+                              ctypes.byref(dacl), None, ctypes.byref(descriptor)) != 0:
         return False
-    text = wintypes.LPWSTR()
     try:
-        if not advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                descriptor, 1, 0x1 | 0x4, ctypes.byref(text), None): return False
-        value = text.value or ""
-        if "D:P" not in value: return False
-        allowed = {"OW", "SY", "BA"}
-        principals = re.findall(r"\(A;[^)]*;;;([^)]+)\)", value)
-        return bool(principals) and set(principals) <= allowed and "O:" in value
+        control, revision = wintypes.WORD(), wintypes.DWORD()
+        if (not dacl.value or not advapi.GetSecurityDescriptorControl(
+                descriptor, ctypes.byref(control), ctypes.byref(revision)) or not control.value & 0x1000):
+            return False
+        token, needed = wintypes.HANDLE(), wintypes.DWORD()
+        if not advapi.OpenProcessToken(kernel32.GetCurrentProcess(), 0x8, ctypes.byref(token)): return False
+        try:
+            advapi.GetTokenInformation(token, 1, None, 0, ctypes.byref(needed))
+            buffer = ctypes.create_string_buffer(needed.value)
+            if not advapi.GetTokenInformation(token, 1, buffer, needed, ctypes.byref(needed)): return False
+            current_sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]
+            current_text = wintypes.LPWSTR()
+            if not advapi.ConvertSidToStringSidW(current_sid, ctypes.byref(current_text)): return False
+            try: approved = {current_text.value, "S-1-5-18", "S-1-5-32-544"}
+            finally: kernel32.LocalFree(current_text)
+        finally: kernel32.CloseHandle(token)
+        owner_text = wintypes.LPWSTR()
+        if not advapi.ConvertSidToStringSidW(owner, ctypes.byref(owner_text)): return False
+        try:
+            if owner_text.value not in approved: return False
+        finally: kernel32.LocalFree(owner_text)
+        class ACL_SIZE_INFORMATION(ctypes.Structure):
+            _fields_ = [("AceCount", wintypes.DWORD), ("AclBytesInUse", wintypes.DWORD),
+                        ("AclBytesFree", wintypes.DWORD)]
+        info = ACL_SIZE_INFORMATION()
+        if not advapi.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), 2): return False
+        write_mask = 0x40000000 | 0x10000000 | 0x1 | 0x00010000 | 0x00040000 | 0x00080000
+        for index in range(info.AceCount):
+            ace = ctypes.c_void_p()
+            if not advapi.GetAce(dacl, index, ctypes.byref(ace)): return False
+            raw = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte)); ace_type = raw[0]
+            if ace_type not in {0, 1}: return False
+            if ace_type == 1: continue
+            mask = ctypes.cast(ace.value + 4, ctypes.POINTER(wintypes.DWORD))[0]
+            sid_text = wintypes.LPWSTR()
+            if not advapi.ConvertSidToStringSidW(ctypes.c_void_p(ace.value + 8), ctypes.byref(sid_text)): return False
+            try:
+                if sid_text.value not in approved | {"S-1-3-4"} and mask & write_mask: return False
+            finally: kernel32.LocalFree(sid_text)
+        return True
     finally:
-        if text: kernel32.LocalFree(text)
         kernel32.LocalFree(descriptor)
 
 
@@ -558,8 +602,7 @@ class DurableBrokerStore:
                 refuse("orphan Terraform snapshot intent differs")
             self._delete_windows_write_through(marker, original_name=marker_name)
 
-    @staticmethod
-    def _delete_windows_write_through(path: pathlib.Path, *, original_name: str) -> None:
+    def _delete_windows_write_through(self, path: pathlib.Path, *, original_name: str) -> None:
         import ctypes
         from ctypes import wintypes
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -567,10 +610,15 @@ class DurableBrokerStore:
         kernel32.MoveFileExW.restype = wintypes.BOOL
         kernel32.DeleteFileW.argtypes = (wintypes.LPCWSTR,); kernel32.DeleteFileW.restype = wintypes.BOOL
         tombstone = path if path.name.endswith(".deleting") else path.with_name(original_name + ".deleting")
+        kind = "manifest" if ".manifest.json" in original_name else "snapshot"
+        self.crash_hook(f"before_{kind}_tombstone_rename")
         if path != tombstone and not kernel32.MoveFileExW(str(path), str(tombstone), 0x1 | 0x8):
             refuse("snapshot write-through tombstone rename failed")
+        self.crash_hook(f"after_{kind}_tombstone_rename")
+        self.crash_hook(f"before_{kind}_tombstone_delete")
         if not kernel32.DeleteFileW(str(tombstone)):
             refuse("snapshot tombstone deletion failed")
+        self.crash_hook(f"after_{kind}_tombstone_delete")
 
     def _read_json(self, path: pathlib.Path) -> dict[str, Any]:
         before = self._secure(path, regular=True)
@@ -956,14 +1004,18 @@ class ReadOnlyAdmissionAdapter:
                             "created_at": utc_text(self.clock()), "raw_values_recorded": False}
                 marker_fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 try:
+                    self.store.crash_hook("after_intent_create")
                     _protect_windows_path(marker)
                     write_all(marker_fd, canonical_bytes(manifest) + b"\n"); os.fsync(marker_fd)
+                    self.store.crash_hook("after_intent_fsync")
                 finally:
                     os.close(marker_fd)
                 fd = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 try:
+                    self.store.crash_hook("after_snapshot_create")
                     if os.name == "nt": _protect_windows_path(snapshot)
                     write_all(fd, raw); os.fsync(fd)
+                    self.store.crash_hook("after_snapshot_fsync")
                 finally:
                     os.close(fd)
                 self.store._secure(snapshot, regular=True)

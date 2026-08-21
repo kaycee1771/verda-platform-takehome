@@ -342,6 +342,34 @@ class DurableBrokerStoreTests(unittest.TestCase):
         self.assertEqual(aggregate["status_counts"], {"running": 1, "stopped": 1, "other": 0})
         self.assertEqual(aggregate["instance_type_counts"], {"CPU.8V.32G": 2})
 
+    def test_snapshot_crash_boundaries_recover_or_refuse_without_unbound_state(self) -> None:
+        stages = ("after_intent_create", "after_intent_fsync", "after_snapshot_create", "after_snapshot_fsync",
+                  "before_snapshot_tombstone_rename", "after_snapshot_tombstone_rename",
+                  "before_snapshot_tombstone_delete", "after_snapshot_tombstone_delete",
+                  "before_manifest_tombstone_rename", "after_manifest_tombstone_rename",
+                  "before_manifest_tombstone_delete", "after_manifest_tombstone_delete")
+        for stage in stages:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as folder:
+                fired = []
+                def crash(point):
+                    if point == stage and not fired:
+                        fired.append(point); raise RuntimeError(stage)
+                store = self.adapter_store(pathlib.Path(folder)); store.crash_hook = crash
+                runner = lambda _command: (0, '{"values":{"root_module":{"resources":[]}}}', "")
+                with self.assertRaises(RuntimeError):
+                    STORE.ReadOnlyAdmissionAdapter(store, runner, lambda: NOW).collect("terraform-state")
+                try:
+                    STORE.ReadOnlyAdmissionAdapter(store, runner, lambda: NOW).collect("terraform-state")
+                except STORE.StoreRefused:
+                    pass
+                if store.root.exists():
+                    names = {item.name for item in store.root.iterdir() if item.name.startswith("state-")}
+                    for name in names:
+                        if ".read-only.tfstate" in name and ".manifest.json" not in name:
+                            original = name.removesuffix(".deleting")
+                            self.assertTrue(original + ".manifest.json" in names
+                                            or original + ".manifest.json.deleting" in names)
+
     def test_admission_hashes_every_bound_artifact_and_calls_verifier_synchronously(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = pathlib.Path(folder); artifacts, authorization, authorization_path = self.admission(root)
