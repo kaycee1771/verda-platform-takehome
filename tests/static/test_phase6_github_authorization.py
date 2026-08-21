@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free behavioral tests for the dormant GitHub authorization verifier."""
+"""Credential-free behavioral tests for the dormant transaction verifier."""
 
 from __future__ import annotations
 
@@ -8,7 +8,9 @@ import datetime as dt
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -16,7 +18,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts" / "phase6" / "verify-github-authorization.py"
-SPEC = importlib.util.spec_from_file_location("phase6_github_authorization", SCRIPT)
+SPEC = importlib.util.spec_from_file_location("phase6_github_transaction", SCRIPT)
 assert SPEC and SPEC.loader
 AUTH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(AUTH)
@@ -30,65 +32,92 @@ PR_HEAD = "e" * 40
 HEAD_TREE = "f" * 40
 
 
-def binding(stage: str = "PREPARE") -> dict:
+def digest(name: str) -> str:
+    return hashlib.sha256(name.encode()).hexdigest()
+
+
+def artifact() -> dict:
     value = {
-        "authorization_stage": stage, "operation_id": OPERATION, "node": "03", "direction": "resize",
-        "state_serial": 12, "journal_generation": 1,
-        "journal_state": "APPLIED" if stage == "RECOVER" else "PREPARED",
+        "schema_version": 1, "phase": 6, "status": "GITHUB_PROTECTED_MAIN_AUTHORIZED",
+        "authorization_mode": "TRANSACTION", "repository": AUTH.REPOSITORY,
+        "workflow_id": AUTH.WORKFLOW_ID, "pr_number": 31, "source_parent_commit": PARENT,
+        "source_tree_oid": TREE, "source_tree_manifest_sha256": MANIFEST,
+        "operation_id": OPERATION, "operation_nonce": "f" * 64, "node": "03",
+        "direction": "resize", "state_serial": 12, "security_approved": True,
+        "reliability_approved": True, "approved_resource_expiry_utc": AUTH.APPROVED_EXPIRY,
+        "journal_generation": 1, "journal_state": "AUTHORIZED",
+        "approved_cost_ceiling_usd": AUTH.APPROVED_COST,
+        "issued_at": "2026-08-21T11:30:00Z", "start_by": "2026-08-21T12:30:00Z",
         "raw_values_recorded": False,
     }
-    for key in sorted(AUTH.digest_bindings(stage) - {"operation_id"}):
-        value[key] = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    if stage == "APPLY":
-        value["prepare_authorization_commit"] = PARENT
-    elif stage == "RECOVER":
-        value["apply_authorization_commit"] = PARENT
-        value["applied_state_serial"] = 13
+    for key in AUTH.DIGEST_KEYS - {"source_tree_manifest_sha256", "operation_id", "operation_nonce"}:
+        value[key] = digest(key)
     return value
 
 
-def artifact(reviewed: dict) -> dict:
+def governance() -> dict:
     return {
-        "schema_version": 1, "phase": 6, "status": "GITHUB_PROTECTED_MAIN_AUTHORIZED",
-        "repository": AUTH.REPOSITORY, "workflow_id": AUTH.WORKFLOW_ID, "pr_number": 31,
-        "source_parent_commit": PARENT, "source_tree_oid": TREE,
-        "source_tree_manifest_sha256": MANIFEST, "operation_nonce": "f" * 64,
-        "issued_at": "2026-08-21T11:30:00Z", "expires_at": "2026-08-21T12:30:00Z",
-        **reviewed,
+        "required_status_checks": {
+            "strict": True, "contexts": [AUTH.WORKFLOW_CONTEXT],
+            "checks": [{"context": AUTH.WORKFLOW_CONTEXT, "app_id": AUTH.WORKFLOW_APP_ID}],
+        },
+        "enforce_admins": {"enabled": True},
+        "required_pull_request_reviews": {
+            "required_approving_review_count": 0, "bypass_pull_request_allowances": {},
+        },
+        "allow_force_pushes": {"enabled": False}, "allow_deletions": {"enabled": False},
+        "required_linear_history": {"enabled": True}, "restrictions": None,
+        "required_signatures": {"enabled": False},
     }
 
 
 class FakeRepository:
-    def __init__(self, root: pathlib.Path) -> None:
+    def __init__(self, root: pathlib.Path, value: dict) -> None:
         self.root = root
+        self.relative = f"config/phase6-authorizations/{OPERATION}-transaction.json"
+        path = root / pathlib.PurePosixPath(self.relative)
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        self.blobs = {(HEAD, self.relative): path.read_bytes()}
+        self.paths = [self.relative]
         self.origin_value = AUTH.ORIGIN
         self.clean_value = True
         self.head_value = HEAD
         self.parents_value = [PARENT]
-        self.changed_value = [f"config/phase6-authorizations/{OPERATION}-prepare.json"]
+        self.changed_value = [("A", self.relative)]
+        self.parent_has_path = False
         self.tree_value = TREE
         self.manifest_value = MANIFEST
-        self.metadata_value = ("GitHub", "noreply@github.com", "ops(phase6): authorize node 03 (#31)")
         self.signature_value = AUTH.WEB_FLOW_FINGERPRINT
+        self.metadata_value = ("GitHub", "noreply@github.com", "ops: authorize transaction (#31)")
 
-    def origin(self) -> str: return self.origin_value
-    def clean(self) -> bool: return self.clean_value
-    def head(self) -> str: return self.head_value
-    def parents(self, commit: str) -> list[str]: return self.parents_value
-    def changed_paths(self, parent: str, commit: str) -> list[str]: return self.changed_value
-    def tree_oid(self, commit: str) -> str: return HEAD_TREE if commit == HEAD else self.tree_value
-    def tree_manifest_sha256(self, commit: str) -> str: return self.manifest_value
-    def tracked_blob(self, commit: str, path: str) -> bytes: return (self.root / pathlib.PurePosixPath(path)).read_bytes()
-    def commit_metadata(self, commit: str) -> tuple[str, str, str]: return self.metadata_value
-    def signature_fingerprint(self, commit: str) -> str: return self.signature_value
+    def origin(self): return self.origin_value
+    def clean(self): return self.clean_value
+    def head(self): return self.head_value
+    def parents(self, commit): return self.parents_value
+    def changed_entries(self, parent, commit): return self.changed_value
+    def path_exists(self, commit, path): return self.parent_has_path
+    def tree_oid(self, commit): return HEAD_TREE if commit == HEAD else self.tree_value
+    def tree_manifest_sha256(self, commit): return self.manifest_value
+    def tracked_blob(self, commit, path): return self.blobs[(commit, path)]
+    def tracked_paths(self, commit, prefix): return self.paths
+    def commit_metadata(self, commit): return self.metadata_value
+    def signature_fingerprint(self, commit): return self.signature_value
 
 
 class FakeGitHub:
     def __init__(self) -> None:
         self.main_value = HEAD
-        self.commit_tree_value = HEAD_TREE
+        self.tree_value = HEAD_TREE
+        self.protection = governance()
+        self.settings = {
+            "full_name": AUTH.REPOSITORY, "default_branch": "main", "allow_squash_merge": True,
+            "allow_merge_commit": False, "allow_rebase_merge": False,
+        }
         self.pr = {
             "number": 31, "state": "closed", "merged": True, "merge_commit_sha": HEAD,
+            "merged_at": "2026-08-21T11:30:10Z",
+            "merged_by": {"login": AUTH.TRUSTED_MERGER, "type": "User"},
             "base": {"ref": "main", "sha": PARENT, "repo": {"full_name": AUTH.REPOSITORY}},
             "head": {"sha": PR_HEAD, "repo": {"full_name": AUTH.REPOSITORY}},
         }
@@ -98,218 +127,228 @@ class FakeGitHub:
             "head_repository": {"full_name": AUTH.REPOSITORY}, "run_number": 1,
             "run_attempt": 1, "id": 1, "pull_requests": [{"number": 31}],
         }]
+        self.signatures_enabled = False
 
-    def main_head(self) -> str: return self.main_value
-    def commit_tree(self, commit: str) -> str: return self.commit_tree_value
-    def pull_request(self, number: int) -> dict: return self.pr
-    def workflow_runs(self, head_sha: str) -> list[dict]: return self.runs
+    def main_head(self): return self.main_value
+    def commit_tree(self, commit): return self.tree_value
+    def pull_request(self, number): return self.pr
+    def workflow_runs(self, head_sha): return self.runs
+    def branch_protection(self): return self.protection
+    def repository_settings(self): return self.settings
+    def required_signatures_enabled(self): return self.signatures_enabled
 
 
-class GitHubAuthorizationTests(unittest.TestCase):
-    def fixture(
-        self, directory: str, stage: str = "PREPARE",
-    ) -> tuple[FakeRepository, FakeGitHub, dict, dict, pathlib.Path]:
-        root = pathlib.Path(directory)
-        auth_dir = root / "config" / "phase6-authorizations"
-        auth_dir.mkdir(parents=True)
-        reviewed = binding(stage)
-        authorized = artifact(reviewed)
-        path = auth_dir / f"{OPERATION}-{stage.lower()}.json"
-        path.write_text(json.dumps(authorized), encoding="utf-8")
-        repository = FakeRepository(root)
-        repository.changed_value = [path.relative_to(root).as_posix()]
-        prior_stage = {"APPLY": "prepare", "RECOVER": "apply"}.get(stage)
-        if prior_stage:
-            prior = auth_dir / f"{OPERATION}-{prior_stage}.json"
-            prior.write_text(json.dumps({
-                "operation_id": OPERATION, "authorization_stage": prior_stage.upper(),
-                "node": "03", "direction": "resize", "operation_nonce": "7" * 64,
-            }), encoding="utf-8")
-            reviewed[f"{prior_stage}_authorization_sha256"] = hashlib.sha256(prior.read_bytes()).hexdigest()
-            authorized[f"{prior_stage}_authorization_sha256"] = reviewed[f"{prior_stage}_authorization_sha256"]
-            path.write_text(json.dumps(authorized), encoding="utf-8")
-        return repository, FakeGitHub(), reviewed, authorized, path
+class TransactionVerifierTests(unittest.TestCase):
+    def fixture(self, directory: str):
+        value = artifact()
+        return FakeRepository(pathlib.Path(directory), value), FakeGitHub(), value
 
-    def verify(
-        self, repository: FakeRepository, github: FakeGitHub, reviewed: dict, stage: str = "PREPARE",
-    ) -> dict:
-        return AUTH.verify_authorization(
-            repository=repository, github=github, operation_id=OPERATION,
-            stage=stage, binding=reviewed, now=NOW,
-        )
+    def verify(self, repository, github, value):
+        return AUTH.verify_authorization(repository=repository, github=github,
+                                         operation_id=OPERATION, binding=value, now=NOW)
 
-    def test_exact_fake_github_protected_main_boundary_is_accepted_dormant(self) -> None:
+    def rewrite(self, repository, value):
+        path = repository.root / pathlib.PurePosixPath(repository.relative)
+        path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        repository.blobs[(HEAD, repository.relative)] = path.read_bytes()
+
+    def test_exact_transaction_is_accepted_only_as_dormant_reverify_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
-            repository, github, reviewed, _, _ = self.fixture(directory)
-            receipt = self.verify(repository, github, reviewed)
-            self.assertEqual(receipt["status"], "GITHUB_AUTHORIZATION_VERIFIED_DORMANT")
-            self.assertEqual(receipt["authorization_commit"], HEAD)
-            self.assertFalse(receipt["raw_values_recorded"])
+            repository, github, value = self.fixture(directory)
+            receipt = self.verify(repository, github, value)
+            self.assertEqual(receipt["status"], "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT")
+            self.assertEqual(receipt["authorization_mode"], "TRANSACTION")
+            self.assertIs(receipt["requires_reverification_before_use"], True)
+            self.assertNotIn("operation_nonce", receipt)
 
-    def test_prepare_apply_recover_capabilities_are_separate_and_chain_exactly(self) -> None:
-        for stage in ("PREPARE", "APPLY", "RECOVER"):
-            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
-                repository, github, reviewed, authorized, _ = self.fixture(directory, stage)
-                receipt = self.verify(repository, github, reviewed, stage)
-                self.assertEqual(receipt["authorization_stage"], stage)
-                if stage == "PREPARE":
-                    self.assertNotIn("prepare_sha256", authorized)
-                elif stage == "APPLY":
-                    self.assertIn("prepare_sha256", authorized)
-                    self.assertNotIn("apply_receipt_sha256", authorized)
-                else:
-                    self.assertIn("apply_receipt_sha256", authorized)
-        with tempfile.TemporaryDirectory() as directory:
-            repository, github, reviewed, authorized, path = self.fixture(directory, "APPLY")
-            authorized["prepare_authorization_commit"] = "1" * 40
-            reviewed["prepare_authorization_commit"] = "1" * 40
-            path.write_text(json.dumps(authorized), encoding="utf-8")
-            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "directly follow"):
-                self.verify(repository, github, reviewed, "APPLY")
-
-    def test_repository_commit_and_signature_mismatches_fail_closed(self) -> None:
-        cases = {
-            "origin_value": "https://github.com/attacker/repo.git",
-            "clean_value": False,
-            "parents_value": [PARENT, "2" * 40],
-            "changed_value": [f"config/phase6-authorizations/{OPERATION}.json", "scripts/phase6/evil.py"],
-            "tree_value": "3" * 40,
-            "manifest_value": "4" * 64,
-            "signature_value": "5" * 40,
-            "metadata_value": ("Local User", "local@example.invalid", "authorize (#31)"),
+    def test_exact_schema_digest_boolean_integer_and_review_distinctness(self):
+        mutations = {
+            "extra": lambda v: v.update(extra=True),
+            "missing": lambda v: v.pop("broker_sha256"),
+            "digest": lambda v: v.update(plan_sha256="bad"),
+            "bool-int": lambda v: v.update(state_serial=True),
+            "security": lambda v: v.update(security_approved=False),
+            "same-review": lambda v: v.update(reliability_review_sha256=v["security_review_sha256"]),
+            "same-nonce": lambda v: v.update(operation_nonce=v["user_approval_sha256"]),
+            "cost": lambda v: v.update(approved_cost_ceiling_usd=70.46),
         }
-        for attribute, bad in cases.items():
-            with self.subTest(attribute=attribute), tempfile.TemporaryDirectory() as directory:
-                repository, github, reviewed, _, _ = self.fixture(directory)
-                setattr(repository, attribute, bad)
-                with self.assertRaises(AUTH.AuthorizationRefused):
-                    self.verify(repository, github, reviewed)
-
-    def test_canonical_github_main_and_used_nonce_mismatches_fail_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            repository, github, reviewed, authorized, path = self.fixture(directory)
-            github.main_value = "1" * 40
-            with self.assertRaises(AUTH.AuthorizationRefused):
-                self.verify(repository, github, reviewed)
-            github.main_value = HEAD
-            prior = path.parent / f"{'9' * 64}-prepare.json"
-            prior.write_text(json.dumps({"operation_nonce": authorized["operation_nonce"]}), encoding="utf-8")
-            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "already used"):
-                self.verify(repository, github, reviewed)
-
-    def test_artifact_schema_binding_nonce_and_freshness_mismatches_fail_closed(self) -> None:
-        changes = {
-            "extra": lambda value, reviewed: value.update({"unexpected": True}),
-            "binding": lambda value, reviewed: value.update({"plan_sha256": "0" * 64}),
-            "nonce": lambda value, reviewed: value.update({"operation_nonce": reviewed["plan_sha256"]}),
-            "stale": lambda value, reviewed: value.update({"expires_at": "2026-08-21T11:59:59Z"}),
-            "long": lambda value, reviewed: value.update({"expires_at": "2026-08-21T13:00:01Z"}),
-            "workflow": lambda value, reviewed: value.update({"workflow_id": 1}),
-        }
-        for name, mutate in changes.items():
+        for name, mutate in mutations.items():
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
-                repository, github, reviewed, authorized, path = self.fixture(directory)
-                mutate(authorized, reviewed)
-                path.write_text(json.dumps(authorized), encoding="utf-8")
-                with self.assertRaises(AUTH.AuthorizationRefused):
-                    self.verify(repository, github, reviewed)
+                repository, github, value = self.fixture(directory)
+                mutate(value)
+                self.rewrite(repository, value)
+                with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
 
-    def test_boolean_integer_and_duplicate_json_fields_are_rejected(self) -> None:
+    def test_repository_commit_added_only_parent_and_signature_boundaries(self):
+        changes = {
+            "origin_value": "https://github.com/attacker/repo.git", "clean_value": False,
+            "parents_value": [PARENT, "1" * 40], "changed_value": [("M", "x")],
+            "parent_has_path": True, "tree_value": "2" * 40, "manifest_value": "3" * 64,
+            "signature_value": "4" * 40,
+            "metadata_value": ("Local", "local@example", "authorize (#31)"),
+        }
+        for name, bad in changes.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                repository, github, value = self.fixture(directory)
+                setattr(repository, name, bad)
+                with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+
+    def test_immutable_head_nonce_scan_ignores_worktree_and_rejects_reuse(self):
         with tempfile.TemporaryDirectory() as directory:
-            repository, github, reviewed, _, _ = self.fixture(directory)
-            reviewed["state_serial"] = True
-            with self.assertRaises(AUTH.AuthorizationRefused):
-                self.verify(repository, github, reviewed)
-            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "duplicate JSON field"):
-                AUTH.parse_object_bytes(b'{"phase":6,"phase":6}', "duplicate fixture")
+            repository, github, value = self.fixture(directory)
+            prior = f"config/phase6-authorizations/{'9' * 64}-transaction.json"
+            repository.paths.append(prior)
+            repository.blobs[(HEAD, prior)] = json.dumps({"operation_nonce": value["operation_nonce"]}).encode()
+            # No prior worktree file exists: the verifier must still scan immutable HEAD.
+            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "already used"):
+                self.verify(repository, github, value)
 
-    def test_pr_and_workflow_mismatches_fail_closed(self) -> None:
-        cases = (
-            "merge", "base", "head_repo", "head_tree", "workflow", "workflow_head",
-            "workflow_path", "workflow_pr",
-        )
-        for case in cases:
-            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
-                repository, github, reviewed, _, _ = self.fixture(directory)
-                if case == "merge": github.pr["merge_commit_sha"] = "1" * 40
-                elif case == "base": github.pr["base"]["sha"] = "2" * 40
-                elif case == "head_repo": github.pr["head"]["repo"]["full_name"] = "attacker/fork"
-                elif case == "head_tree": github.commit_tree_value = "4" * 40
-                elif case == "workflow": github.runs[0]["conclusion"] = "failure"
-                elif case == "workflow_head": github.runs[0]["head_sha"] = "3" * 40
-                elif case == "workflow_path": github.runs[0]["path"] = ".github/workflows/other.yml"
-                else: github.runs[0]["pull_requests"] = [{"number": 99}]
-                with self.assertRaises(AUTH.AuthorizationRefused):
-                    self.verify(repository, github, reviewed)
-
-    def test_latest_matching_workflow_attempt_must_pass(self) -> None:
+    def test_binding_and_immutable_worktree_blob_tamper_refused(self):
         with tempfile.TemporaryDirectory() as directory:
-            repository, github, reviewed, _, _ = self.fixture(directory)
-            github.runs.append({**github.runs[0], "run_attempt": 2, "id": 2, "conclusion": "failure"})
-            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "did not pass"):
-                self.verify(repository, github, reviewed)
+            repository, github, value = self.fixture(directory)
+            binding = copy.deepcopy(value); binding["plan_sha256"] = "9" * 64
+            with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, binding)
+            path = repository.root / pathlib.PurePosixPath(repository.relative)
+            path.write_text("{}", encoding="utf-8")
+            with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
 
-    def test_vendored_key_and_provenance_are_exactly_pinned(self) -> None:
-        key = ROOT / "config" / "phase6-authorizations" / "github-web-flow.gpg.asc"
-        provenance = json.loads((key.parent / "github-web-flow-key.provenance.json").read_text())
-        self.assertEqual(hashlib.sha256(key.read_bytes()).hexdigest(), AUTH.WEB_FLOW_KEY_SHA256)
-        self.assertEqual(provenance["accepted_primary_fingerprint"], AUTH.WEB_FLOW_FINGERPRINT)
-        self.assertEqual(provenance["accepted_key_id"], AUTH.WEB_FLOW_KEY_ID)
-
-    def test_real_vendored_key_verifies_known_web_flow_commit_when_available(self) -> None:
-        known_commit = "ac58095f8feab8c3febdb091080acaefb9d0e82a"
-        present = __import__("subprocess").run(
-            ["git", "cat-file", "-e", f"{known_commit}^{{commit}}"], cwd=ROOT, check=False,
-            capture_output=True,
-        )
-        if present.returncode != 0:
-            self.skipTest("known signed GitHub squash commit is absent from this checkout")
-        self.assertEqual(AUTH.GitRepository(ROOT).signature_fingerprint(known_commit), AUTH.WEB_FLOW_FINGERPRINT)
-
-    @unittest.skipUnless(AUTH.os.name == "nt", "Windows bundled Git path regression")
-    def test_space_containing_bundled_gpg_path_is_posix_normalized_for_git_config(self) -> None:
-        git = pathlib.Path("C:/Program Files/Git/cmd/git.exe")
-        with mock.patch.object(AUTH.shutil, "which", side_effect=lambda name: None if name == "gpg" else str(git)), \
-             mock.patch.object(AUTH.pathlib.Path, "is_file", return_value=True):
-            gpg = AUTH.GitRepository._gpg()
-        self.assertEqual(gpg, "C:/Program Files/Git/usr/bin/gpg.exe")
-        self.assertNotIn("\\", gpg)
-
-    def test_git_commands_pin_only_the_verifiers_exact_safe_directory(self) -> None:
-        repository = AUTH.GitRepository(ROOT)
-        completed = __import__("subprocess").CompletedProcess([], 0, stdout="ok\n", stderr="")
-        with mock.patch.object(AUTH.subprocess, "run", return_value=completed) as invoked:
-            self.assertEqual(repository._run(["rev-parse", "HEAD"]), "ok\n")
-        command = invoked.call_args.args[0]
-        self.assertIn(f"safe.directory={ROOT.resolve().as_posix()}", command)
-        self.assertNotIn("safe.directory=*", command)
-        environment = invoked.call_args.kwargs["env"]
-        self.assertEqual(environment["GIT_CONFIG_NOSYSTEM"], "1")
-        self.assertEqual(environment["GIT_CONFIG_GLOBAL"], AUTH.os.devnull)
-
-    def test_alternate_or_symlinked_repository_root_is_rejected(self) -> None:
+    def test_timestamps_are_exact_bounded_fresh_and_bind_merge(self):
+        mutations = {
+            "equal": ("2026-08-21T11:30:00Z", "2026-08-21T11:30:00Z"),
+            "long": ("2026-08-21T11:00:00Z", "2026-08-21T12:00:01Z"),
+            "expired": ("2026-08-21T11:00:00Z", "2026-08-21T12:00:00Z"),
+            "format": ("2026-08-21T11:30:00+00:00", "2026-08-21T12:30:00Z"),
+        }
+        for name, (issued, start_by) in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                repository, github, value = self.fixture(directory)
+                value.update(issued_at=issued, start_by=start_by); self.rewrite(repository, value)
+                with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "exact canonical checkout"):
+            repository, github, value = self.fixture(directory)
+            github.pr["merged_at"] = "2026-08-21T11:00:00Z"
+            with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+
+    def test_live_governance_all_material_fields_fail_closed(self):
+        cases = {
+            "strict": lambda p: p["required_status_checks"].update(strict=False),
+            "context": lambda p: p["required_status_checks"].update(contexts=["other"]),
+            "app": lambda p: p["required_status_checks"].update(checks=[{"context": AUTH.WORKFLOW_CONTEXT, "app_id": 1}]),
+            "admins": lambda p: p["enforce_admins"].update(enabled=False),
+            "pr-required": lambda p: p.update(required_pull_request_reviews=None),
+            "approvals": lambda p: p["required_pull_request_reviews"].update(required_approving_review_count=1),
+            "bypass": lambda p: p["required_pull_request_reviews"].update(bypass_pull_request_allowances={"users": [1]}),
+            "force": lambda p: p["allow_force_pushes"].update(enabled=True),
+            "delete": lambda p: p["allow_deletions"].update(enabled=True),
+            "linear": lambda p: p["required_linear_history"].update(enabled=False),
+            "restriction": lambda p: p.update(restrictions={"users": [1]}),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                repository, github, value = self.fixture(directory)
+                mutate(github.protection)
+                with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+        with tempfile.TemporaryDirectory() as directory:
+            repository, github, value = self.fixture(directory); github.signatures_enabled = True
+            with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+        settings = ("allow_squash_merge", "allow_merge_commit", "allow_rebase_merge")
+        for key in settings:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as directory:
+                repository, github, value = self.fixture(directory)
+                github.settings[key] = not github.settings[key]
+                with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+
+    def test_pr_actor_identity_and_tree_fail_closed(self):
+        cases = {
+            "merged_by": {"login": "attacker", "type": "User"},
+            "merge_commit_sha": "1" * 40, "merged": False,
+        }
+        for key, bad in cases.items():
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as directory:
+                repository, github, value = self.fixture(directory); github.pr[key] = bad
+                with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+        with tempfile.TemporaryDirectory() as directory:
+            repository, github, value = self.fixture(directory); github.tree_value = "2" * 40
+            with self.assertRaises(AUTH.AuthorizationRefused): self.verify(repository, github, value)
+
+    def test_newest_exact_workflow_attempt_must_be_completed_success(self):
+        for status, conclusion in (("in_progress", None), ("completed", "failure")):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                repository, github, value = self.fixture(directory)
+                newest = copy.deepcopy(github.runs[0]); newest.update(id=2, run_attempt=2, status=status, conclusion=conclusion)
+                github.runs.append(newest)
+                with self.assertRaisesRegex(AUTH.AuthorizationRefused, "newest"):
+                    self.verify(repository, github, value)
+
+    def test_workflow_pagination_uses_all_statuses_and_refuses_truncation(self):
+        api = AUTH.GitHubAPI()
+        calls = []
+        def pages(path, query=None):
+            calls.append(copy.deepcopy(query))
+            page = int(query["page"])
+            return {"total_count": 101, "workflow_runs": [{}] * (100 if page == 1 else 1)}
+        with mock.patch.object(api, "_get", side_effect=pages):
+            self.assertEqual(len(api.workflow_runs(PR_HEAD)), 101)
+        self.assertNotIn("status", calls[0])
+        with mock.patch.object(api, "_get", return_value={"total_count": 101, "workflow_runs": [{}]}):
+            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "truncated"): api.workflow_runs(PR_HEAD)
+
+    def test_duplicate_and_nonfinite_json_refused(self):
+        for payload in (b'{"a":1,"a":2}', b'{"a":NaN}'):
+            with self.assertRaises(AUTH.AuthorizationRefused): AUTH.parse_object_bytes(payload, "test")
+
+    def test_tool_environment_is_minimal_and_caller_git_values_are_removed(self):
+        environment = {"PATH": "evil", "AWS_SECRET_ACCESS_KEY": "secret", "GIT_CONFIG_COUNT": "9",
+                       "TEMP": "tmp", "SystemRoot": "root"}
+        with mock.patch.dict(os.environ, environment, clear=True):
+            result = AUTH.GitRepository._minimal_environment()
+        self.assertNotIn("PATH", result); self.assertNotIn("AWS_SECRET_ACCESS_KEY", result)
+        self.assertNotIn("GIT_CONFIG_COUNT", result); self.assertEqual(result["TEMP"], "tmp")
+        self.assertEqual(result["GIT_CONFIG_NOSYSTEM"], "1")
+
+    def test_git_commands_use_absolute_attested_binary_and_exact_safe_directory(self):
+        repository = object.__new__(AUTH.GitRepository)
+        repository.root = pathlib.Path("C:/exact/repo")
+        repository.git = pathlib.Path("C:/Program Files/Git/cmd/git.exe")
+        command = repository._base()
+        self.assertTrue(pathlib.PureWindowsPath(command[0]).is_absolute())
+        self.assertIn("safe.directory=C:/exact/repo", command)
+        self.assertNotIn("*", command)
+
+    @unittest.skipUnless(os.name == "nt", "pinned production toolchain is Windows-only")
+    def test_pinned_space_containing_tools_verify_known_web_flow_signature(self):
+        known = "ac58095f8feab8c3febdb091080acaefb9d0e82a"
+        probe = subprocess.run([r"C:\Program Files\Git\cmd\git.exe", "-c",
+                                f"safe.directory={ROOT.as_posix()}", "cat-file", "-e", known],
+                               cwd=ROOT, capture_output=True)
+        if probe.returncode:
+            self.skipTest("known signed commit is not present in this checkout")
+        repository = object.__new__(AUTH.GitRepository)
+        repository.root = ROOT.resolve()
+        repository.git = repository._attest_git()
+        repository.gpg = repository._attest_gpg()
+        self.assertIn("Program Files", str(repository.gpg))
+        self.assertEqual(repository.signature_fingerprint(known), AUTH.WEB_FLOW_FINGERPRINT)
+
+    def test_caller_selected_repository_root_is_rejected_before_tools_or_git(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "canonical checkout"):
                 AUTH.GitRepository(pathlib.Path(directory))
-            link = pathlib.Path(directory) / "repo-link"
-            try:
-                link.symlink_to(ROOT, target_is_directory=True)
-            except OSError:
-                return
-            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "exact canonical checkout"):
-                AUTH.GitRepository(link)
 
-    def test_schema_and_readme_keep_authorization_dormant(self) -> None:
-        schema = json.loads((ROOT / "schemas" / "phase6-github-authorization.schema.json").read_text())
-        self.assertFalse(schema["additionalProperties"])
-        self.assertEqual(
-            set(schema["required"]), AUTH.AUTHORIZATION_ENVELOPE_KEYS | AUTH.COMMON_BINDING_KEYS
-        )
-        readme = (ROOT / "config" / "phase6-authorizations" / "README.md").read_text()
-        self.assertIn("contains no operation authorization", readme)
-        controller = (ROOT / "scripts" / "phase6" / "management-node-resize.py").read_text()
-        phase2 = (ROOT / "scripts" / "infra" / "phase2.ps1").read_text()
-        self.assertNotIn("verify-github-authorization.py", controller + phase2)
+    def test_pinned_key_provenance_and_schema_match_source_contract(self):
+        provenance = json.loads((ROOT / "config/phase6-authorizations/github-web-flow-key.provenance.json").read_text())
+        key = (ROOT / "config/phase6-authorizations/github-web-flow.gpg.asc").read_bytes()
+        self.assertEqual(hashlib.sha256(key).hexdigest(), AUTH.WEB_FLOW_KEY_SHA256)
+        self.assertEqual(provenance["accepted_primary_fingerprint"], AUTH.WEB_FLOW_FINGERPRINT)
+        schema = json.loads((ROOT / "schemas/phase6-github-authorization.schema.json").read_text())
+        self.assertEqual(set(schema["required"]), AUTH.AUTHORIZATION_KEYS)
+
+    def test_no_staged_schema_or_mutation_consumer_was_reintroduced(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("--stage", source)
+        self.assertNotIn("PREPARE", source)
+        self.assertNotIn("execute_reviewed_apply", source)
+        phase2 = (ROOT / "scripts/infra/phase2.ps1").read_text(encoding="utf-8")
         self.assertNotIn("phase6-resize-apply", phase2)
 
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Verify a dormant Phase 6 authorization against canonical GitHub protected main.
+"""Read-only verifier for one dormant Phase 6 TRANSACTION authorization.
 
-This verifier is read-only. No Phase 6 mutation route consumes its receipt.
+The receipt is deliberately non-capable: a future broker must invoke this verifier
+again synchronously while holding its operation lease.  No mutation route consumes
+the receipt shipped by this repository.
 """
 
 from __future__ import annotations
@@ -13,7 +15,6 @@ import json
 import os
 import pathlib
 import re
-import shutil
 import ssl
 import subprocess
 import sys
@@ -29,62 +30,47 @@ ORIGIN = "https://github.com/kaycee1771/verda-platform-takehome.git"
 MAIN_REF = "refs/heads/main"
 WORKFLOW_ID = 335664221
 WORKFLOW_PATH = ".github/workflows/validate.yml"
+WORKFLOW_CONTEXT = "Credential-free quality gates"
+WORKFLOW_APP_ID = 15368
+TRUSTED_MERGER = "kaycee1771"
 WEB_FLOW_FINGERPRINT = "968479A1AFF927E37D1A566BB5690EEEBB952194"
 WEB_FLOW_KEY_ID = "B5690EEEBB952194"
 WEB_FLOW_KEY_SHA256 = "40ce89d21fb075092d256f9fbf62a1c19299d3282cb913d3e61d08235d0c491a"
+WINDOWS_GIT_SHA256 = "c954fcc8e65a38450895ca65d308ecaee63f044d16494b5385faa5e036a3facb"
+WINDOWS_GIT_VERSION = "git version 2.50.1.windows.1"
+WINDOWS_GPG_SHA256 = "22356f7af9f43c98339a51cee22ab9930688b699f71c5f964b0b07dfa0bc0d73"
+WINDOWS_GPG_VERSION_PREFIX = "gpg (GnuPG) 2.4.7"
+APPROVED_EXPIRY = "2026-08-27T21:00:00Z"
+APPROVED_COST = "70.46"
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
-STAGES = {"PREPARE", "APPLY", "RECOVER"}
-AUTHORIZATION_ENVELOPE_KEYS = {
-    "schema_version", "phase", "status", "repository", "workflow_id", "pr_number",
-    "source_parent_commit", "source_tree_oid", "source_tree_manifest_sha256",
-    "operation_nonce", "issued_at", "expires_at",
+
+AUTHORIZATION_KEYS = {
+    "schema_version", "phase", "status", "authorization_mode", "repository", "workflow_id",
+    "pr_number", "source_parent_commit", "source_tree_oid", "source_tree_manifest_sha256",
+    "operation_id", "operation_nonce", "node", "direction", "plan_sha256",
+    "plan_semantic_sha256", "state_lineage_sha256", "state_serial", "contract_sha256",
+    "tool_lock_sha256", "broker_sha256", "transaction_policy_sha256", "rollback_policy_sha256",
+    "journal_sha256", "journal_generation", "journal_state",
+    "user_approval_sha256", "security_review_sha256", "reliability_review_sha256",
+    "security_approved", "reliability_approved", "preflight_sha256", "cost_sha256",
+    "capacity_sha256", "collector_sha256", "etcd_backup_sha256", "data_backup_sha256",
+    "provider_facts_sha256", "approved_resource_expiry_utc", "approved_cost_ceiling_usd",
+    "issued_at", "start_by", "raw_values_recorded",
 }
-COMMON_BINDING_KEYS = {
-    "authorization_stage", "operation_id", "node", "direction", "plan_sha256",
-    "plan_semantic_sha256", "state_lineage_sha256", "state_serial", "journal_sha256",
-    "journal_generation", "journal_state", "approval_sha256", "preflight_sha256",
-    "cost_sha256", "capacity_sha256", "collector_sha256", "tool_lock_sha256",
-    "contract_sha256", "raw_values_recorded",
+DIGEST_KEYS = {
+    "source_tree_manifest_sha256", "operation_id", "operation_nonce", "plan_sha256",
+    "plan_semantic_sha256", "state_lineage_sha256", "contract_sha256", "tool_lock_sha256",
+    "broker_sha256", "transaction_policy_sha256", "rollback_policy_sha256",
+    "journal_sha256",
+    "user_approval_sha256", "security_review_sha256", "reliability_review_sha256",
+    "preflight_sha256", "cost_sha256", "capacity_sha256", "collector_sha256",
+    "etcd_backup_sha256", "data_backup_sha256", "provider_facts_sha256",
 }
-STAGE_BINDING_KEYS = {
-    "PREPARE": set(),
-    "APPLY": {
-        "prepare_authorization_commit", "prepare_authorization_sha256", "prepare_sha256",
-        "two_survivor_collector_sha256",
-    },
-    "RECOVER": {
-        "apply_authorization_commit", "apply_authorization_sha256", "apply_receipt_sha256",
-        "applied_state_lineage_sha256", "applied_state_serial", "host_key_provenance_sha256",
-        "recovery_collector_sha256", "inventory_sha256", "known_hosts_sha256",
-    },
+MINIMAL_ENV_KEYS = {
+    "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "USERPROFILE", "APPDATA",
+    "LOCALAPPDATA", "PROGRAMDATA", "LANG", "LC_ALL",
 }
-COMMON_DIGEST_BINDINGS = {
-    "operation_id", "plan_sha256", "plan_semantic_sha256", "state_lineage_sha256",
-    "journal_sha256", "approval_sha256", "preflight_sha256", "cost_sha256",
-    "capacity_sha256", "collector_sha256", "tool_lock_sha256", "contract_sha256",
-}
-STAGE_DIGEST_BINDINGS = {
-    "PREPARE": set(),
-    "APPLY": {"prepare_authorization_sha256", "prepare_sha256", "two_survivor_collector_sha256"},
-    "RECOVER": {
-        "apply_authorization_sha256", "apply_receipt_sha256", "applied_state_lineage_sha256",
-        "host_key_provenance_sha256", "recovery_collector_sha256", "inventory_sha256",
-        "known_hosts_sha256",
-    },
-}
-
-
-def binding_keys(stage: str) -> set[str]:
-    return COMMON_BINDING_KEYS | STAGE_BINDING_KEYS[stage]
-
-
-def authorization_keys(stage: str) -> set[str]:
-    return AUTHORIZATION_ENVELOPE_KEYS | binding_keys(stage)
-
-
-def digest_bindings(stage: str) -> set[str]:
-    return COMMON_DIGEST_BINDINGS | STAGE_DIGEST_BINDINGS[stage]
 
 
 class AuthorizationRefused(ValueError):
@@ -95,25 +81,29 @@ def refuse(message: str) -> None:
     raise AuthorizationRefused(message)
 
 
-def read_object(path: pathlib.Path, label: str) -> dict[str, Any]:
+def sha256_file(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
     try:
-        return parse_object_bytes(path.read_bytes(), label)
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
     except OSError as error:
-        refuse(f"{label} is unreadable: {type(error).__name__}")
+        refuse(f"attested tool is unreadable: {type(error).__name__}")
+    return digest.hexdigest()
 
 
 def parse_object_bytes(payload: bytes, label: str) -> dict[str, Any]:
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        value: dict[str, Any] = {}
-        for key, item in pairs:
-            if key in value:
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
                 refuse(f"{label} contains a duplicate JSON field")
-            value[key] = item
-        return value
+            result[key] = value
+        return result
 
     try:
         value = json.loads(
-            payload.decode("utf-8"), object_pairs_hook=unique_object,
+            payload.decode("utf-8"), object_pairs_hook=unique,
             parse_constant=lambda _: refuse(f"{label} contains a non-finite JSON number"),
         )
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -123,49 +113,68 @@ def parse_object_bytes(payload: bytes, label: str) -> dict[str, Any]:
     return value
 
 
-def parse_timestamp(value: object, label: str) -> dt.datetime:
-    if not isinstance(value, str):
-        refuse(f"{label} is not a timestamp")
+def read_object(path: pathlib.Path, label: str) -> dict[str, Any]:
     try:
-        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_object_bytes(path.read_bytes(), label)
+    except OSError as error:
+        refuse(f"{label} is unreadable: {type(error).__name__}")
+
+
+def parse_timestamp(value: object, label: str) -> dt.datetime:
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value):
+        refuse(f"{label} is not an exact UTC timestamp")
+    try:
+        return dt.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
     except ValueError:
         refuse(f"{label} is invalid")
-    if parsed.tzinfo is None or parsed.utcoffset() != dt.timedelta(0):
-        refuse(f"{label} is not an exact UTC timestamp")
-    return parsed.astimezone(dt.timezone.utc)
 
 
 class RepositoryView(Protocol):
     root: pathlib.Path
-
     def origin(self) -> str: ...
     def clean(self) -> bool: ...
     def head(self) -> str: ...
     def parents(self, commit: str) -> list[str]: ...
-    def changed_paths(self, parent: str, commit: str) -> list[str]: ...
+    def changed_entries(self, parent: str, commit: str) -> list[tuple[str, str]]: ...
+    def path_exists(self, commit: str, path: str) -> bool: ...
     def tree_oid(self, commit: str) -> str: ...
     def tree_manifest_sha256(self, commit: str) -> str: ...
     def tracked_blob(self, commit: str, path: str) -> bytes: ...
+    def tracked_paths(self, commit: str, prefix: str) -> list[str]: ...
     def commit_metadata(self, commit: str) -> tuple[str, str, str]: ...
     def signature_fingerprint(self, commit: str) -> str: ...
 
 
 class GitRepository:
+    """Canonical local Git view with attested, absolute executables and no caller Git config."""
+
     def __init__(self, root: pathlib.Path) -> None:
         expected = pathlib.Path(__file__).resolve().parents[2]
         supplied = pathlib.Path(os.path.abspath(root))
         resolved = root.resolve(strict=True)
-        if (
-            root.is_symlink()
-            or os.path.normcase(str(supplied)) != os.path.normcase(str(resolved))
-            or resolved != expected
-        ):
+        if root.is_symlink() or os.path.normcase(str(supplied)) != os.path.normcase(str(resolved)) or resolved != expected:
             refuse("repository root is not the verifier's exact canonical checkout")
+        if os.name != "nt":
+            refuse("production authorization verification requires the protected Windows host")
         self.root = resolved
+        self.git = self._attest_git()
+        self.gpg = self._attest_gpg()
 
     @staticmethod
-    def _environment(extra: dict[str, str] | None = None) -> dict[str, str]:
-        environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+    def _resolve_exact() -> pathlib.Path:
+        candidate = pathlib.Path(r"C:\Program Files\Git\cmd\git.exe")
+        if not candidate.is_file():
+            refuse("attested tool is unavailable")
+        path = candidate
+        resolved = path.resolve(strict=True)
+        if path.is_symlink() or not resolved.is_file() or not resolved.is_absolute():
+            refuse("attested tool path differs")
+        return resolved
+
+    @staticmethod
+    def _minimal_environment(extra: dict[str, str] | None = None) -> dict[str, str]:
+        source = {key.upper(): (key, value) for key, value in os.environ.items()}
+        environment = {source[key][0]: source[key][1] for key in MINIMAL_ENV_KEYS if key in source}
         environment.update({
             "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_NO_REPLACE_OBJECTS": "1", "GIT_TERMINAL_PROMPT": "0",
@@ -174,18 +183,40 @@ class GitRepository:
             environment.update(extra)
         return environment
 
-    def _run(self, arguments: list[str], *, text: bool = True, env: dict[str, str] | None = None) -> Any:
-        result = subprocess.run(
-            [
-                "git", "--no-replace-objects", "-c", f"safe.directory={self.root.as_posix()}",
-                "-c", "core.fsmonitor=false", *arguments,
-            ],
-            cwd=self.root, check=False, capture_output=True, text=text,
-            env=self._environment(env),
-        )
-        if result.returncode != 0:
+    def _attest_git(self) -> pathlib.Path:
+        path = self._resolve_exact()
+        if sha256_file(path) != WINDOWS_GIT_SHA256:
+            refuse("Git executable digest differs from the reviewed tool lock")
+        result = subprocess.run([str(path), "--version"], capture_output=True, text=True, check=False,
+                                env=self._minimal_environment())
+        if result.returncode != 0 or result.stdout.strip() != WINDOWS_GIT_VERSION:
+            refuse("Git executable version differs from the reviewed tool lock")
+        return path
+
+    def _attest_gpg(self) -> pathlib.Path:
+        candidate = self.git.parents[1] / "usr" / "bin" / "gpg.exe"
+        if not candidate.is_file():
+            refuse("bundled OpenPGP verifier is unavailable")
+        path = candidate.resolve(strict=True)
+        if sha256_file(path) != WINDOWS_GPG_SHA256:
+            refuse("OpenPGP executable digest differs from the reviewed tool lock")
+        result = subprocess.run([str(path), "--version"], capture_output=True, text=True, check=False,
+                                env=self._minimal_environment())
+        if result.returncode != 0 or not result.stdout.startswith(WINDOWS_GPG_VERSION_PREFIX):
+            refuse("OpenPGP executable version differs from the reviewed tool lock")
+        return path
+
+    def _base(self) -> list[str]:
+        return [str(self.git), "--no-replace-objects", "-c", f"safe.directory={self.root.as_posix()}",
+                "-c", "core.fsmonitor=false"]
+
+    def _run(self, arguments: list[str], *, text: bool = True,
+             env: dict[str, str] | None = None, allow_failure: bool = False) -> Any:
+        result = subprocess.run(self._base() + arguments, cwd=self.root, capture_output=True, text=text,
+                                check=False, env=self._minimal_environment(env))
+        if result.returncode != 0 and not allow_failure:
             refuse("canonical Git repository verification failed")
-        return result.stdout
+        return result if allow_failure else result.stdout
 
     def origin(self) -> str:
         return self._run(["remote", "get-url", "origin"]).strip()
@@ -197,26 +228,38 @@ class GitRepository:
         return self._run(["rev-parse", "HEAD"]).strip()
 
     def parents(self, commit: str) -> list[str]:
-        values = self._run(["rev-list", "--parents", "-n", "1", commit]).strip().split()
-        return values[1:]
+        return self._run(["rev-list", "--parents", "-n", "1", commit]).strip().split()[1:]
 
-    def changed_paths(self, parent: str, commit: str) -> list[str]:
-        raw = self._run(
-            ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", parent, commit], text=False,
-        )
-        return [item.decode("utf-8") for item in raw.split(b"\0") if item]
+    def changed_entries(self, parent: str, commit: str) -> list[tuple[str, str]]:
+        raw = self._run(["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", parent, commit], text=False)
+        parts = [part.decode("utf-8") for part in raw.split(b"\0") if part]
+        if len(parts) % 2:
+            refuse("authorization commit diff differs")
+        return list(zip(parts[0::2], parts[1::2]))
+
+    def path_exists(self, commit: str, path: str) -> bool:
+        result = self._run(["cat-file", "-e", f"{commit}:{path}"], allow_failure=True)
+        return result.returncode == 0
 
     def tree_oid(self, commit: str) -> str:
         return self._run(["rev-parse", f"{commit}^{{tree}}"]).strip()
 
     def tree_manifest_sha256(self, commit: str) -> str:
-        raw = self._run(["ls-tree", "-r", "-z", "--full-tree", commit], text=False)
-        return hashlib.sha256(raw).hexdigest()
+        return hashlib.sha256(self._run(["ls-tree", "-r", "-z", "--full-tree", commit], text=False)).hexdigest()
+
+    @staticmethod
+    def _safe_path(path: str) -> None:
+        if path.startswith("/") or ".." in pathlib.PurePosixPath(path).parts or "\\" in path:
+            refuse("tracked authorization path is invalid")
 
     def tracked_blob(self, commit: str, path: str) -> bytes:
-        if path.startswith("/") or ".." in pathlib.PurePosixPath(path).parts:
-            refuse("tracked authorization path is invalid")
+        self._safe_path(path)
         return self._run(["show", f"{commit}:{path}"], text=False)
+
+    def tracked_paths(self, commit: str, prefix: str) -> list[str]:
+        self._safe_path(prefix)
+        raw = self._run(["ls-tree", "-r", "--name-only", "-z", commit, "--", prefix], text=False)
+        return [part.decode("utf-8") for part in raw.split(b"\0") if part]
 
     def commit_metadata(self, commit: str) -> tuple[str, str, str]:
         raw = self._run(["show", "-s", "--format=%cn%x00%ce%x00%s", commit], text=False)
@@ -225,68 +268,34 @@ class GitRepository:
             refuse("authorization commit metadata differs")
         return tuple(part.decode("utf-8") for part in parts)  # type: ignore[return-value]
 
-    @staticmethod
-    def _gpg() -> str:
-        def command_path(value: str | pathlib.Path) -> str:
-            resolved = pathlib.Path(value).resolve()
-            return resolved.as_posix() if os.name == "nt" else str(resolved)
-
-        found = shutil.which("gpg")
-        if found:
-            return command_path(found)
-        git = shutil.which("git")
-        if git and os.name == "nt":
-            bundled = pathlib.Path(git).resolve().parents[1] / "usr" / "bin" / "gpg.exe"
-            if bundled.is_file():
-                return command_path(bundled)
-        refuse("pinned OpenPGP verifier is unavailable")
-
     def signature_fingerprint(self, commit: str) -> str:
-        key = self.root / "config" / "phase6-authorizations" / "github-web-flow.gpg.asc"
-        provenance = read_object(
-            self.root / "config" / "phase6-authorizations" / "github-web-flow-key.provenance.json",
-            "web-flow key provenance",
-        )
-        if hashlib.sha256(key.read_bytes()).hexdigest() != WEB_FLOW_KEY_SHA256:
+        directory = self.root / "config" / "phase6-authorizations"
+        key = directory / "github-web-flow.gpg.asc"
+        provenance = read_object(directory / "github-web-flow-key.provenance.json", "web-flow key provenance")
+        if key.is_symlink() or not key.is_file() or sha256_file(key) != WEB_FLOW_KEY_SHA256:
             refuse("vendored web-flow key digest differs")
         if provenance != {
-            "schema_version": 1,
-            "source": "https://api.github.com/users/web-flow/gpg_keys",
-            "raw_endpoint": "https://github.com/web-flow.gpg",
-            "api_record_id": 3040729,
-            "retrieval_date_utc": "2026-08-21",
-            "armored_sha256": WEB_FLOW_KEY_SHA256,
-            "accepted_primary_fingerprint": WEB_FLOW_FINGERPRINT,
-            "accepted_key_id": WEB_FLOW_KEY_ID,
-            "accepted_uid": "GitHub <noreply@github.com>",
-            "raw_values_recorded": False,
+            "schema_version": 1, "source": "https://api.github.com/users/web-flow/gpg_keys",
+            "raw_endpoint": "https://github.com/web-flow.gpg", "api_record_id": 3040729,
+            "retrieval_date_utc": "2026-08-21", "armored_sha256": WEB_FLOW_KEY_SHA256,
+            "accepted_primary_fingerprint": WEB_FLOW_FINGERPRINT, "accepted_key_id": WEB_FLOW_KEY_ID,
+            "accepted_uid": "GitHub <noreply@github.com>", "raw_values_recorded": False,
         }:
             refuse("vendored web-flow key provenance differs")
-        gpg = self._gpg()
         with tempfile.TemporaryDirectory(prefix="phase6-web-flow-") as home:
-            environment = self._environment({"GNUPGHOME": home})
-            imported = subprocess.run(
-                [gpg, "--batch", "--import", str(key)], check=False, capture_output=True, env=environment,
-            )
-            fingerprints = subprocess.run(
-                [gpg, "--batch", "--with-colons", "--fingerprint"], check=False,
-                capture_output=True, text=True, env=environment,
-            )
-            if (
-                imported.returncode not in {0, 2} or fingerprints.returncode != 0
-                or f"fpr:::::::::{WEB_FLOW_FINGERPRINT}:" not in fingerprints.stdout
-            ):
+            environment = self._minimal_environment({"GNUPGHOME": home})
+            imported = subprocess.run([str(self.gpg), "--batch", "--import", str(key)], check=False,
+                                      capture_output=True, env=environment)
+            fingerprints = subprocess.run([str(self.gpg), "--batch", "--with-colons", "--fingerprint"],
+                                          check=False, capture_output=True, text=True, env=environment)
+            if (imported.returncode not in {0, 2} or fingerprints.returncode != 0 or
+                    f"fpr:::::::::{WEB_FLOW_FINGERPRINT}:" not in fingerprints.stdout):
                 refuse("vendored web-flow key fingerprint differs")
-            verified = subprocess.run(
-                [
-                    "git", "--no-replace-objects", "-c", f"safe.directory={self.root.as_posix()}",
-                    "-c", f"gpg.program={gpg}", "verify-commit", "--raw", commit,
-                ],
-                cwd=self.root, check=False, capture_output=True, text=True, env=environment,
-            )
-            status = verified.stderr + verified.stdout
-            match = re.search(r"\[GNUPG:\] VALIDSIG ([0-9A-F]{40}) ", status)
-            if verified.returncode != 0 or match is None:
+            result = subprocess.run(self._base() + ["-c", f"gpg.program={self.gpg.as_posix()}",
+                                    "verify-commit", "--raw", commit], cwd=self.root, check=False,
+                                    capture_output=True, text=True, env=environment)
+            match = re.search(r"\[GNUPG:\] VALIDSIG ([0-9A-F]{40}) ", result.stderr + result.stdout)
+            if result.returncode != 0 or match is None:
                 refuse("authorization commit lacks a valid pinned web-flow signature")
             return match.group(1)
 
@@ -296,102 +305,189 @@ class GitHubView(Protocol):
     def commit_tree(self, commit: str) -> str: ...
     def pull_request(self, number: int) -> dict[str, Any]: ...
     def workflow_runs(self, head_sha: str) -> list[dict[str, Any]]: ...
+    def branch_protection(self) -> dict[str, Any]: ...
+    def repository_settings(self) -> dict[str, Any]: ...
+    def required_signatures_enabled(self) -> bool: ...
 
 
 class GitHubAPI:
-    def _get(self, path: str, query: dict[str, str] | None = None) -> dict[str, Any]:
+    """Fixed-origin, read-only GitHub metadata client. No caller URLs or tokens are accepted."""
+
+    def _get(self, path: str, query: dict[str, str] | None = None, *,
+             allow_not_found: bool = False) -> dict[str, Any] | None:
+        if (path and not re.fullmatch(r"[A-Za-z0-9_./-]+", path)) or path.startswith("/") or ".." in path:
+            refuse("GitHub metadata path differs")
         url = f"https://api.github.com/repos/{REPOSITORY}/{path}"
         if query:
             url += "?" + urllib.parse.urlencode(query)
-        request = urllib.request.Request(
-            url, headers={"Accept": "application/vnd.github+json", "User-Agent": "verda-phase6-auth-v1"},
-        )
+        request = urllib.request.Request(url, headers={
+            "Accept": "application/vnd.github+json", "User-Agent": "verda-phase6-transaction-auth-v1",
+        })
         try:
-            opener = urllib.request.build_opener(
-                urllib.request.ProxyHandler({}),
-                urllib.request.HTTPSHandler(context=ssl.create_default_context()),
-            )
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                                  urllib.request.HTTPSHandler(context=ssl.create_default_context()))
             with opener.open(request, timeout=20) as response:
-                value = json.load(response)
+                payload = response.read(8 * 1024 * 1024 + 1)
+                if len(payload) > 8 * 1024 * 1024:
+                    refuse("canonical GitHub metadata response is oversized")
+                value = parse_object_bytes(payload, "canonical GitHub metadata response")
+        except urllib.error.HTTPError as error:
+            if allow_not_found and error.code == 404:
+                return None
+            refuse("canonical GitHub metadata verification failed")
         except (OSError, urllib.error.URLError, json.JSONDecodeError):
             refuse("canonical GitHub metadata verification failed")
         if not isinstance(value, dict):
             refuse("canonical GitHub metadata response differs")
         return value
 
-    def pull_request(self, number: int) -> dict[str, Any]:
-        return self._get(f"pulls/{number}")
-
     def main_head(self) -> str:
         value = self._get("git/ref/heads/main")
         target = value.get("object")
-        if (
-            value.get("ref") != MAIN_REF or not isinstance(target, dict)
-            or target.get("type") != "commit" or not isinstance(target.get("sha"), str)
-            or not COMMIT.fullmatch(target["sha"])
-        ):
+        if (value.get("ref") != MAIN_REF or not isinstance(target, dict) or target.get("type") != "commit"
+                or not isinstance(target.get("sha"), str) or not COMMIT.fullmatch(target["sha"])):
             refuse("canonical GitHub main reference differs")
         return target["sha"]
 
     def commit_tree(self, commit: str) -> str:
         if not COMMIT.fullmatch(commit):
             refuse("canonical GitHub commit identity differs")
-        value = self._get(f"git/commits/{commit}")
-        tree = value.get("tree")
+        tree = self._get(f"git/commits/{commit}").get("tree")
         if not isinstance(tree, dict) or not isinstance(tree.get("sha"), str) or not COMMIT.fullmatch(tree["sha"]):
             refuse("canonical GitHub commit tree differs")
         return tree["sha"]
 
+    def pull_request(self, number: int) -> dict[str, Any]:
+        return self._get(f"pulls/{number}")
+
+    def branch_protection(self) -> dict[str, Any]:
+        return self._get("branches/main/protection")
+
+    def repository_settings(self) -> dict[str, Any]:
+        value = self._get("")
+        assert isinstance(value, dict)
+        return value
+
+    def required_signatures_enabled(self) -> bool:
+        value = self._get("branches/main/protection/required_signatures", allow_not_found=True)
+        if value is None:
+            # GitHub's fixed endpoint returns 404 when signatures are disabled.  The
+            # enclosing check already proved this public branch's protection readable.
+            return False
+        if set(value) - {"url", "enabled"} or type(value.get("enabled")) is not bool:
+            refuse("protected main signature-policy response differs")
+        return value["enabled"]
+
     def workflow_runs(self, head_sha: str) -> list[dict[str, Any]]:
-        value = self._get(
-            f"actions/workflows/{WORKFLOW_ID}/runs",
-            {"event": "pull_request", "head_sha": head_sha, "status": "completed", "per_page": "100"},
-        )
-        runs = value.get("workflow_runs")
-        if not isinstance(runs, list) or not all(isinstance(run, dict) for run in runs):
-            refuse("canonical GitHub workflow response differs")
+        runs: list[dict[str, Any]] = []
+        reported_total: int | None = None
+        for page in range(1, 11):
+            value = self._get(f"actions/workflows/{WORKFLOW_ID}/runs", {
+                "event": "pull_request", "head_sha": head_sha, "per_page": "100", "page": str(page),
+            })
+            total = value.get("total_count")
+            page_runs = value.get("workflow_runs")
+            if type(total) is not int or total < 0 or not isinstance(page_runs, list) or not all(
+                    isinstance(run, dict) for run in page_runs):
+                refuse("canonical GitHub workflow response differs")
+            if reported_total is None:
+                reported_total = total
+            elif total != reported_total:
+                refuse("canonical GitHub workflow pagination changed during verification")
+            runs.extend(page_runs)
+            if len(page_runs) < 100:
+                break
+        else:
+            refuse("canonical GitHub workflow response is truncated")
+        if reported_total is None or len(runs) < reported_total:
+            refuse("canonical GitHub workflow response is truncated")
         return runs
 
 
-def validate_binding(binding: dict[str, Any], operation_id: str, stage: str) -> None:
-    if stage not in STAGES or binding.get("authorization_stage") != stage:
-        refuse("authorization stage differs")
-    if set(binding) != binding_keys(stage):
-        refuse("local reviewed binding schema differs")
-    if binding.get("operation_id") != operation_id or not DIGEST.fullmatch(operation_id):
-        refuse("operation identity differs")
-    if binding.get("node") not in {"01", "02", "03"} or binding.get("direction") not in {"resize", "rollback"}:
-        refuse("operation target differs")
-    if any(
-        not isinstance(binding.get(key), str) or not DIGEST.fullmatch(binding[key])
-        for key in digest_bindings(stage)
+def _empty(value: object) -> bool:
+    return value in (None, False) or value == [] or value == {}
+
+
+def _empty_actor_allowance(value: object) -> bool:
+    if _empty(value):
+        return True
+    return (isinstance(value, dict) and set(value) <= {"users", "teams", "apps"}
+            and all(value.get(key, []) == [] for key in ("users", "teams", "apps")))
+
+
+def verify_governance(github: GitHubView) -> None:
+    protection = github.branch_protection()
+    checks = protection.get("required_status_checks")
+    admins = protection.get("enforce_admins")
+    reviews = protection.get("required_pull_request_reviews")
+    if not isinstance(checks, dict) or checks.get("strict") is not True:
+        refuse("protected main strict status policy differs")
+    contexts = checks.get("contexts")
+    required = checks.get("checks")
+    if contexts != [WORKFLOW_CONTEXT] or required != [{"context": WORKFLOW_CONTEXT, "app_id": WORKFLOW_APP_ID}]:
+        refuse("protected main app-bound status policy differs")
+    if not isinstance(admins, dict) or admins.get("enabled") is not True:
+        refuse("protected main does not enforce policy for administrators")
+    if not isinstance(reviews, dict) or reviews.get("required_approving_review_count") != 0:
+        refuse("protected main pull-request policy differs")
+    if not _empty_actor_allowance(reviews.get("bypass_pull_request_allowances")):
+        refuse("protected main pull-request bypass differs")
+    for key, label, expected in (
+        ("allow_force_pushes", "force-push", False), ("allow_deletions", "deletion", False),
+        ("required_linear_history", "linear-history", True),
     ):
-        refuse("reviewed binding digest differs")
-    for key in STAGE_BINDING_KEYS[stage] & {"prepare_authorization_commit", "apply_authorization_commit"}:
+        setting = protection.get(key)
+        if not isinstance(setting, dict) or setting.get("enabled") is not expected:
+            refuse(f"protected main {label} policy differs")
+    if not _empty(protection.get("restrictions")):
+        refuse("protected main actor restrictions differ")
+    if github.required_signatures_enabled() is not False:
+        refuse("protected main signature-policy residual differs")
+    repository = github.repository_settings()
+    if (repository.get("full_name") != REPOSITORY or repository.get("default_branch") != "main"
+            or repository.get("allow_squash_merge") is not True
+            or repository.get("allow_merge_commit") is not False
+            or repository.get("allow_rebase_merge") is not False):
+        refuse("canonical repository squash-only policy differs")
+
+
+def validate_binding(binding: dict[str, Any], operation_id: str) -> None:
+    if set(binding) != AUTHORIZATION_KEYS:
+        refuse("local reviewed transaction binding schema differs")
+    fixed = {
+        "schema_version": 1, "phase": 6, "status": "GITHUB_PROTECTED_MAIN_AUTHORIZED",
+        "authorization_mode": "TRANSACTION", "repository": REPOSITORY, "workflow_id": WORKFLOW_ID,
+        "operation_id": operation_id, "security_approved": True, "reliability_approved": True,
+        "journal_state": "AUTHORIZED",
+        "approved_resource_expiry_utc": APPROVED_EXPIRY, "approved_cost_ceiling_usd": APPROVED_COST,
+        "raw_values_recorded": False,
+    }
+    if any(binding.get(key) != value for key, value in fixed.items()):
+        refuse("reviewed transaction identity or approval differs")
+    if not DIGEST.fullmatch(operation_id) or binding.get("node") not in {"01", "02", "03"} or binding.get("direction") not in {"resize", "rollback"}:
+        refuse("reviewed transaction target differs")
+    if any(not isinstance(binding.get(key), str) or not DIGEST.fullmatch(binding[key]) for key in DIGEST_KEYS):
+        refuse("reviewed transaction digest differs")
+    for key in ("source_parent_commit", "source_tree_oid"):
         if not isinstance(binding.get(key), str) or not COMMIT.fullmatch(binding[key]):
-            refuse("prior authorization commit binding differs")
-    expected_journal_state = "APPLIED" if stage == "RECOVER" else "PREPARED"
-    if (
-        type(binding.get("state_serial")) is not int or binding["state_serial"] < 0
-        or type(binding.get("journal_generation")) is not int or binding["journal_generation"] < 1
-        or binding.get("journal_state") != expected_journal_state
-        or binding.get("raw_values_recorded") is not False
-    ):
-        refuse("reviewed state/journal boundary differs")
-    if stage == "RECOVER" and (
-        type(binding.get("applied_state_serial")) is not int
-        or binding["applied_state_serial"] <= binding["state_serial"]
-    ):
-        refuse("applied state serial binding differs")
+            refuse("reviewed source commit/tree differs")
+    if type(binding.get("pr_number")) is not int or binding["pr_number"] < 1:
+        refuse("reviewed PR identity differs")
+    if type(binding.get("state_serial")) is not int or binding["state_serial"] < 0:
+        refuse("reviewed state serial differs")
+    if type(binding.get("journal_generation")) is not int or binding["journal_generation"] < 1:
+        refuse("reviewed journal generation differs")
+    approvals = [binding[key] for key in ("user_approval_sha256", "security_review_sha256", "reliability_review_sha256")]
+    if len(set(approvals)) != 3 or binding["operation_nonce"] in approvals:
+        refuse("user and independent review evidence is not distinct")
+    if binding["operation_nonce"] in {binding[key] for key in DIGEST_KEYS - {"operation_nonce"}}:
+        refuse("operation nonce is not independent from reviewed evidence")
 
 
-def verify_authorization(
-    *, repository: RepositoryView, github: GitHubView, operation_id: str,
-    stage: str, binding: dict[str, Any], now: dt.datetime,
-) -> dict[str, Any]:
-    validate_binding(binding, operation_id, stage)
-    stage_name = stage.lower()
-    relative = f"config/phase6-authorizations/{operation_id}-{stage_name}.json"
+def verify_authorization(*, repository: RepositoryView, github: GitHubView, operation_id: str,
+                         binding: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
+    validate_binding(binding, operation_id)
+    relative = f"config/phase6-authorizations/{operation_id}-transaction.json"
     artifact_path = repository.root / pathlib.PurePosixPath(relative)
     if repository.origin() != ORIGIN or not repository.clean():
         refuse("authorization requires the exact canonical origin and clean worktree")
@@ -401,128 +497,90 @@ def verify_authorization(
     artifact_bytes = repository.tracked_blob(head, relative)
     if artifact_path.is_symlink() or not artifact_path.is_file() or artifact_path.read_bytes() != artifact_bytes:
         refuse("worktree authorization is not the exact regular tracked blob")
-    artifact = parse_object_bytes(artifact_bytes, "tracked operation authorization")
-    if set(artifact) != authorization_keys(stage):
-        refuse("tracked operation authorization schema differs")
-    fixed = {
-        "schema_version": 1, "phase": 6, "status": "GITHUB_PROTECTED_MAIN_AUTHORIZED",
-        "repository": REPOSITORY, "workflow_id": WORKFLOW_ID, "operation_id": operation_id,
-        "authorization_stage": stage,
-        "journal_state": "APPLIED" if stage == "RECOVER" else "PREPARED",
-        "raw_values_recorded": False,
-    }
-    if any(artifact.get(key) != value for key, value in fixed.items()):
-        refuse("tracked operation authorization identity differs")
-    if any(artifact.get(key) != value for key, value in binding.items()):
-        refuse("tracked authorization differs from the local reviewed binding")
-    for key in ("source_tree_manifest_sha256", "operation_nonce"):
-        if not isinstance(artifact.get(key), str) or not DIGEST.fullmatch(artifact[key]):
-            refuse("tracked source-tree or nonce digest differs")
-    for key in ("source_parent_commit", "source_tree_oid"):
-        if not isinstance(artifact.get(key), str) or not COMMIT.fullmatch(artifact[key]):
-            refuse("tracked source commit/tree identity differs")
-    nonce = artifact["operation_nonce"]
-    digest_values = {artifact[key] for key in digest_bindings(stage)} | {artifact["source_tree_manifest_sha256"]}
-    if nonce in digest_values:
-        refuse("operation nonce is not independently generated")
-    for candidate in sorted(artifact_path.parent.glob("[0-9a-f]" * 64 + "-*.json")):
-        if candidate != artifact_path:
-            candidate_relative = candidate.relative_to(repository.root).as_posix()
-            if candidate.is_symlink() or not candidate.is_file():
-                refuse("prior tracked operation authorization is not a regular file")
-            other_bytes = repository.tracked_blob(head, candidate_relative)
-            if candidate.read_bytes() != other_bytes:
-                refuse("prior tracked operation authorization differs from its tracked blob")
-            other = parse_object_bytes(other_bytes, "prior tracked operation authorization")
-            if other.get("operation_nonce") == nonce:
-                refuse("operation nonce was already used by another tracked authorization")
-    issued = parse_timestamp(artifact.get("issued_at"), "authorization issued_at")
-    expires = parse_timestamp(artifact.get("expires_at"), "authorization expires_at")
-    utc_now = now.astimezone(dt.timezone.utc)
-    if issued > utc_now + dt.timedelta(seconds=30) or expires <= utc_now or expires - issued > dt.timedelta(hours=1):
-        refuse("tracked authorization is stale, future-dated, or exceeds one hour")
+    artifact = parse_object_bytes(artifact_bytes, "tracked transaction authorization")
+    validate_binding(artifact, operation_id)
+    if artifact != binding:
+        refuse("tracked authorization differs from the local reviewed transaction binding")
 
     parent = artifact["source_parent_commit"]
     if repository.parents(head) != [parent]:
         refuse("authorization commit is not a one-parent squash commit over the bound source")
-    if repository.changed_paths(parent, head) != [relative]:
-        refuse("authorization commit changed files beyond the exact operation artifact")
+    if repository.changed_entries(parent, head) != [("A", relative)] or repository.path_exists(parent, relative):
+        refuse("authorization must be one newly added artifact absent from its parent")
     if repository.tree_oid(parent) != artifact["source_tree_oid"]:
         refuse("authorization source tree object differs")
     if repository.tree_manifest_sha256(parent) != artifact["source_tree_manifest_sha256"]:
         refuse("authorization source tree manifest differs")
-    prior_stage = {"APPLY": "prepare", "RECOVER": "apply"}.get(stage)
-    if prior_stage is not None:
-        commit_key = f"{prior_stage}_authorization_commit"
-        digest_key = f"{prior_stage}_authorization_sha256"
-        if artifact[commit_key] != parent:
-            refuse("staged authorization does not directly follow its bound prior authorization")
-        prior_relative = f"config/phase6-authorizations/{operation_id}-{prior_stage}.json"
-        prior_bytes = repository.tracked_blob(parent, prior_relative)
-        if hashlib.sha256(prior_bytes).hexdigest() != artifact[digest_key]:
-            refuse("prior staged authorization digest differs from the bound parent blob")
-        prior = parse_object_bytes(prior_bytes, "prior staged authorization")
-        if (
-            prior.get("operation_id") != operation_id
-            or prior.get("authorization_stage") != prior_stage.upper()
-            or prior.get("node") != artifact["node"] or prior.get("direction") != artifact["direction"]
-        ):
-            refuse("prior staged authorization identity differs")
+
+    nonce = artifact["operation_nonce"]
+    authorization_prefix = "config/phase6-authorizations"
+    for tracked in repository.tracked_paths(head, authorization_prefix):
+        name = pathlib.PurePosixPath(tracked).name
+        if tracked == relative or not name.endswith(".json") or name == "github-web-flow-key.provenance.json":
+            continue
+        other = parse_object_bytes(repository.tracked_blob(head, tracked), "prior tracked transaction authorization")
+        if other.get("operation_nonce") == nonce:
+            refuse("operation nonce was already used in the immutable authorization tree")
+
+    issued = parse_timestamp(artifact.get("issued_at"), "authorization issued_at")
+    start_by = parse_timestamp(artifact.get("start_by"), "authorization start_by")
+    if now.tzinfo is None:
+        refuse("verification clock is not UTC-aware")
+    utc_now = now.astimezone(dt.timezone.utc)
+    if not issued < start_by or start_by > issued + dt.timedelta(hours=1):
+        refuse("authorization start window differs")
+    if issued > utc_now + dt.timedelta(seconds=30) or utc_now >= start_by:
+        refuse("authorization is future-dated or its start window has closed")
+
+    verify_governance(github)
     if repository.signature_fingerprint(head) != WEB_FLOW_FINGERPRINT:
         refuse("authorization commit signer differs from pinned GitHub web-flow")
     committer, email, subject = repository.commit_metadata(head)
     subject_match = re.search(r"\(#([1-9][0-9]*)\)$", subject)
-    if committer != "GitHub" or email != "noreply@github.com" or subject_match is None:
-        refuse("authorization commit is not an exact GitHub web-flow squash merge")
-    pr_number = artifact.get("pr_number")
-    if type(pr_number) is not int or pr_number < 1 or int(subject_match.group(1)) != pr_number:
-        refuse("authorization PR identity differs from the signed squash subject")
+    pr_number = artifact["pr_number"]
+    if committer != "GitHub" or email != "noreply@github.com" or subject_match is None or int(subject_match.group(1)) != pr_number:
+        refuse("authorization commit is not the exact GitHub web-flow squash merge")
 
     pr = github.pull_request(pr_number)
-    base, pr_head = pr.get("base"), pr.get("head")
-    if not isinstance(base, dict) or not isinstance(pr_head, dict):
+    base, pr_head, merged_by = pr.get("base"), pr.get("head"), pr.get("merged_by")
+    if not isinstance(base, dict) or not isinstance(pr_head, dict) or not isinstance(merged_by, dict):
         refuse("authorization PR metadata differs")
     base_repo, head_repo = base.get("repo"), pr_head.get("repo")
-    if (
-        pr.get("number") != pr_number or pr.get("state") != "closed" or pr.get("merged") is not True
-        or pr.get("merge_commit_sha") != head or base.get("ref") != "main" or base.get("sha") != parent
-        or not isinstance(base_repo, dict) or base_repo.get("full_name") != REPOSITORY
-        or not isinstance(head_repo, dict) or head_repo.get("full_name") != REPOSITORY
-        or not isinstance(pr_head.get("sha"), str) or not COMMIT.fullmatch(pr_head["sha"])
-    ):
-        refuse("authorization PR is not the exact canonical merged source")
+    if (pr.get("number") != pr_number or pr.get("state") != "closed" or pr.get("merged") is not True
+            or pr.get("merge_commit_sha") != head or base.get("ref") != "main" or base.get("sha") != parent
+            or not isinstance(base_repo, dict) or base_repo.get("full_name") != REPOSITORY
+            or not isinstance(head_repo, dict) or head_repo.get("full_name") != REPOSITORY
+            or merged_by.get("login") != TRUSTED_MERGER or merged_by.get("type") != "User"
+            or not isinstance(pr_head.get("sha"), str) or not COMMIT.fullmatch(pr_head["sha"])):
+        refuse("authorization PR is not the exact trusted canonical merged source")
+    merged_at = parse_timestamp(pr.get("merged_at"), "authorization PR merged_at")
+    if merged_at < issued - dt.timedelta(seconds=30) or merged_at >= start_by:
+        refuse("authorization issue/start window does not bind the merge time")
     pr_head_sha = pr_head["sha"]
     if github.commit_tree(pr_head_sha) != repository.tree_oid(head):
         refuse("PR head tree differs from the signed squash authorization tree")
-    matching_runs = [
-        run for run in github.workflow_runs(pr_head_sha)
-        if run.get("workflow_id") == WORKFLOW_ID and run.get("head_sha") == pr_head_sha
-        and run.get("event") == "pull_request" and run.get("status") == "completed"
-        and run.get("path") == WORKFLOW_PATH
-        and isinstance(run.get("head_repository"), dict)
-        and run["head_repository"].get("full_name") == REPOSITORY
-        and isinstance(run.get("pull_requests"), list)
-        and any(isinstance(item, dict) and item.get("number") == pr_number for item in run["pull_requests"])
-    ]
-    if not matching_runs:
-        refuse("exact hosted validation workflow did not run on the PR head")
-    latest = max(
-        matching_runs,
-        key=lambda run: tuple(run.get(key) if isinstance(run.get(key), int) else -1 for key in (
-            "run_number", "run_attempt", "id",
-        )),
-    )
-    if latest.get("conclusion") != "success":
-        refuse("exact hosted validation workflow did not pass on the PR head")
 
-    artifact_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+    matching = [run for run in github.workflow_runs(pr_head_sha)
+                if run.get("workflow_id") == WORKFLOW_ID and run.get("head_sha") == pr_head_sha
+                and run.get("event") == "pull_request" and run.get("path") == WORKFLOW_PATH
+                and isinstance(run.get("head_repository"), dict)
+                and run["head_repository"].get("full_name") == REPOSITORY
+                and isinstance(run.get("pull_requests"), list)
+                and any(isinstance(item, dict) and item.get("number") == pr_number for item in run["pull_requests"])]
+    if not matching:
+        refuse("exact hosted validation workflow did not run on the PR head")
+    latest = max(matching, key=lambda run: tuple(run.get(key) if type(run.get(key)) is int else -1
+                                                 for key in ("run_number", "run_attempt", "id")))
+    if latest.get("status") != "completed" or latest.get("conclusion") != "success":
+        refuse("newest exact hosted validation workflow did not complete successfully")
+
     return {
-        "schema_version": 1, "status": "GITHUB_AUTHORIZATION_VERIFIED_DORMANT",
-        "phase": 6, "authorization_stage": stage, "operation_id": operation_id,
-        "authorization_commit": head,
-        "authorization_sha256": artifact_sha256, "source_parent_commit": parent,
-        "workflow_id": WORKFLOW_ID, "pr_number": pr_number,
-        "web_flow_fingerprint": WEB_FLOW_FINGERPRINT, "raw_values_recorded": False,
+        "schema_version": 1, "status": "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT",
+        "phase": 6, "authorization_mode": "TRANSACTION", "operation_id": operation_id,
+        "authorization_commit": head, "authorization_sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+        "source_parent_commit": parent, "workflow_id": WORKFLOW_ID, "pr_number": pr_number,
+        "web_flow_fingerprint": WEB_FLOW_FINGERPRINT, "requires_reverification_before_use": True,
+        "raw_values_recorded": False,
     }
 
 
@@ -530,15 +588,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", type=pathlib.Path, required=True)
     parser.add_argument("--operation-id", required=True)
-    parser.add_argument("--stage", choices=sorted(STAGES), required=True)
     parser.add_argument("--binding", type=pathlib.Path, required=True)
     args = parser.parse_args()
     try:
-        receipt = verify_authorization(
-            repository=GitRepository(args.repository), github=GitHubAPI(), operation_id=args.operation_id,
-            stage=args.stage, binding=read_object(args.binding, "local reviewed binding"),
-            now=dt.datetime.now(dt.timezone.utc),
-        )
+        receipt = verify_authorization(repository=GitRepository(args.repository), github=GitHubAPI(),
+                                       operation_id=args.operation_id,
+                                       binding=read_object(args.binding, "local reviewed transaction binding"),
+                                       now=dt.datetime.now(dt.timezone.utc))
         print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
         return 0
     except AuthorizationRefused as error:
