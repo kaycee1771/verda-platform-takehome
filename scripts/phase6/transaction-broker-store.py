@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import secrets
 import stat
 import sys
 import tempfile
@@ -102,6 +103,15 @@ def canonical_bytes(value: Any) -> bytes:
 
 def digest_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def write_all(descriptor: int, value: bytes) -> None:
+    view = memoryview(value)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            refuse("durable write made no forward progress")
+        view = view[written:]
 
 
 def utc_text(value: dt.datetime) -> str:
@@ -238,11 +248,13 @@ def _protect_windows_path(path: pathlib.Path) -> None:
 class NamedMutex:
     """OS mutex in production; process lock fallback keeps tests deterministic."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, *, held_parent_fd: int | None = None) -> None:
         self.name = name
         self.handle: Any = None
         self.abandoned = False
         self.directory_handle: int | None = None
+        self.held_parent_fd = held_parent_fd
+        self.owns_parent = held_parent_fd is None
 
     def _accept_wait_result(self, result: int) -> None:
         if result == 0:
@@ -306,13 +318,15 @@ class NamedMutex:
             if (stat.S_ISLNK(root_status.st_mode) or root_status.st_uid != os.getuid()
                     or stat.S_IMODE(root_status.st_mode) != 0o700):
                 refuse("broker lock directory ownership/mode/identity differs")
-            self.directory_handle = os.open(lock_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-                                             | getattr(os, "O_NOFOLLOW", 0))
-            try:
-                fcntl.flock(self.directory_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (OSError, BlockingIOError):
-                os.close(self.directory_handle); self.directory_handle = None
-                refuse("another writer holds the shared protected-state lock parent")
+            self.directory_handle = self.held_parent_fd
+            if self.directory_handle is None:
+                self.directory_handle = os.open(lock_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                                 | getattr(os, "O_NOFOLLOW", 0))
+                try:
+                    fcntl.flock(self.directory_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except (OSError, BlockingIOError):
+                    os.close(self.directory_handle); self.directory_handle = None
+                    refuse("another writer holds the shared protected-state lock parent")
             filename = f"verda-{digest_bytes(self.name.encode())}.lockdir"
             try: os.mkdir(filename, 0o700, dir_fd=self.directory_handle)
             except FileExistsError: pass
@@ -327,17 +341,18 @@ class NamedMutex:
                     or stat.S_IMODE(status.st_mode) != 0o700
                     or (status.st_dev, status.st_ino) != (path_status.st_dev, path_status.st_ino)):
                 os.close(descriptor); refuse("broker mutex lock directory identity differs")
-            self.handle = os.fdopen(descriptor, "rb", buffering=0)
+            self.handle = descriptor
             try:
-                fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(self.handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except (OSError, BlockingIOError):
-                self.handle.close(); self.handle = None
-                os.close(self.directory_handle); self.directory_handle = None
+                os.close(self.handle); self.handle = None
+                if self.owns_parent: os.close(self.directory_handle)
+                self.directory_handle = None
                 refuse("another writer holds the named broker/state mutex")
             path_status = os.stat(filename, dir_fd=self.directory_handle, follow_symlinks=False)
-            held = os.fstat(self.handle.fileno())
+            held = os.fstat(self.handle)
             if (held.st_dev, held.st_ino) != (path_status.st_dev, path_status.st_ino):
-                self.handle.close(); self.handle = None
+                os.close(self.handle); self.handle = None
                 os.close(self.directory_handle); self.directory_handle = None
                 refuse("broker mutex lock path was replaced after flock")
         return self
@@ -348,11 +363,36 @@ class NamedMutex:
             self.kernel32.CloseHandle(self.handle)
         elif self.handle:
             import fcntl
-            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
-            self.handle.close()
+            fcntl.flock(self.handle, fcntl.LOCK_UN)
+            os.close(self.handle)
             if self.directory_handle is not None:
-                fcntl.flock(self.directory_handle, fcntl.LOCK_UN)
-                os.close(self.directory_handle); self.directory_handle = None
+                if self.owns_parent:
+                    fcntl.flock(self.directory_handle, fcntl.LOCK_UN)
+                    os.close(self.directory_handle)
+                self.directory_handle = None
+
+
+class PosixLockParent:
+    """One stable parent-inode fence shared by a composite broker lease."""
+    def __enter__(self) -> int:
+        import fcntl
+        root = pathlib.Path(tempfile.gettempdir()) / f"verda-phase6-locks-{os.getuid()}"
+        root.mkdir(mode=0o700, exist_ok=True)
+        status = root.lstat()
+        if stat.S_ISLNK(status.st_mode) or status.st_uid != os.getuid() or stat.S_IMODE(status.st_mode) != 0o700:
+            refuse("shared lock parent ownership/mode differs")
+        self.fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        try: fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, BlockingIOError):
+            os.close(self.fd); refuse("another writer holds the shared protected-state lock parent")
+        held, current = os.fstat(self.fd), root.lstat()
+        if (held.st_dev, held.st_ino) != (current.st_dev, current.st_ino):
+            os.close(self.fd); refuse("shared lock parent identity changed")
+        return self.fd
+
+    def __exit__(self, *_: Any) -> None:
+        import fcntl
+        fcntl.flock(self.fd, fcntl.LOCK_UN); os.close(self.fd)
 
 
 class DurableBrokerStore:
@@ -418,9 +458,16 @@ class DurableBrokerStore:
 
     @contextlib.contextmanager
     def locked(self) -> Iterator[None]:
-        with NamedMutex(self.operation_mutex) as operation_lock, NamedMutex(self.state_mutex) as state_lock:
-            self.last_lock_abandoned = operation_lock.abandoned or state_lock.abandoned
-            yield
+        if os.name == "nt":
+            with NamedMutex(self.operation_mutex) as operation_lock, NamedMutex(self.state_mutex) as state_lock:
+                self.last_lock_abandoned = operation_lock.abandoned or state_lock.abandoned
+                yield
+        else:
+            with PosixLockParent() as parent_fd:
+                with NamedMutex(self.operation_mutex, held_parent_fd=parent_fd) as operation_lock, \
+                        NamedMutex(self.state_mutex, held_parent_fd=parent_fd) as state_lock:
+                    self.last_lock_abandoned = operation_lock.abandoned or state_lock.abandoned
+                    yield
 
     def _read_json(self, path: pathlib.Path) -> dict[str, Any]:
         before = self._secure(path, regular=True)
@@ -586,7 +633,7 @@ class DurableBrokerStore:
         try:
             if os.name == "nt":
                 _protect_windows_path(temp)
-            os.write(fd, raw)
+            write_all(fd, raw)
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -755,18 +802,30 @@ class ReadOnlyAdmissionAdapter:
                 self.store._secure(self.store.state_path, regular=True)
                 raw = self.store._stable_bytes(self.store.state_path)
                 snapshot_digest = digest_bytes(raw)
-                snapshot = self.store.root / f"state-{snapshot_digest}.read-only.tfstate"
+                snapshot = self.store.root / f"state-{snapshot_digest}-{secrets.token_hex(16)}.read-only.tfstate"
                 fd = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 try:
                     if os.name == "nt": _protect_windows_path(snapshot)
-                    os.write(fd, raw); os.fsync(fd)
+                    write_all(fd, raw); os.fsync(fd)
                 finally:
                     os.close(fd)
+                self.store._secure(snapshot, regular=True)
+                if self.store._stable_bytes(snapshot) != raw:
+                    snapshot.unlink(missing_ok=True)
+                    refuse("protected Terraform snapshot bytes differ")
+                if os.name != "nt":
+                    root_fd = os.open(self.store.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                    try: os.fsync(root_fd)
+                    finally: os.close(root_fd)
                 try:
                     command = command + (str(snapshot),)
                     started = self.clock(); code, stdout, stderr = self.runner(command); ended = self.clock()
                 finally:
                     snapshot.unlink(missing_ok=True)
+                    if os.name != "nt":
+                        root_fd = os.open(self.store.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                        try: os.fsync(root_fd)
+                        finally: os.close(root_fd)
         else:
             started = self.clock(); code, stdout, stderr = self.runner(command); ended = self.clock()
         if code != 0 or stderr.strip():
