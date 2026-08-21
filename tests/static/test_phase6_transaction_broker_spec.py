@@ -139,6 +139,8 @@ class BrokerFixture:
         self.go({
             "event": "APPLY_SUCCEEDED", "phase2_receipt_sha256": self.fake.receipt("phase2"),
             "state_backup_sha256": self.fake.receipt("state-backup"),
+            "pre_apply_backup_sha256": self.fake.receipt("pre-apply-backup"),
+            "post_apply_backup_sha256": self.fake.receipt("post-apply-backup"),
             "state_lineage_sha256": self.authorization["state_lineage_sha256"],
             "state_serial_before": 12, "state_serial_after": 13,
         })
@@ -261,13 +263,15 @@ class TransactionBrokerSpecTests(unittest.TestCase):
         fixture.go({"event": "BEGIN_APPLY", **fixture.fake.gate("pre_apply_two_survivor")})
         event = {"event": "ADOPT_APPLY", "outcome": "COMPLETE", "probe_sha256": digest("probe"),
                  "state_backup_sha256": digest("backup"), "exact_target_state": True,
+                 "pre_apply_backup_sha256": digest("adopt-pre-backup"),
+                 "post_apply_backup_sha256": digest("adopt-post-backup"),
                  "zero_drift": True, "state_lineage_sha256": fixture.authorization["state_lineage_sha256"],
                  "state_serial_after": 13}
         bad = copy.deepcopy(event); bad["zero_drift"] = False
         with self.assertRaises(MODEL.BrokerRefused): fixture.go(bad)
         self.assertEqual(fixture.go(event)["state"], "APPLIED")
 
-    def test_apply_partial_or_unknown_enters_reachable_bounded_rollback(self) -> None:
+    def test_apply_partial_or_unknown_requires_exact_probe_and_stops_manual(self) -> None:
         for outcome in ("PARTIAL", "UNKNOWN"):
             with self.subTest(outcome=outcome):
                 fixture = BrokerFixture(); fixture.prepare()
@@ -275,21 +279,76 @@ class TransactionBrokerSpecTests(unittest.TestCase):
                 event = {"event": "ADOPT_APPLY", "outcome": outcome, "probe_sha256": digest(f"probe-{outcome}"),
                          "state_backup_sha256": digest("backup"), "exact_target_state": False,
                          "zero_drift": False, "state_lineage_sha256": fixture.authorization["state_lineage_sha256"],
-                         "state_serial_after": None}
+                         "state_serial_after": None,
+                         "current_state_receipt_sha256": digest(f"current-{outcome}"),
+                         "current_state_lineage_sha256": fixture.authorization["state_lineage_sha256"],
+                         "current_state_serial": 12}
+                missing = copy.deepcopy(event); del missing["current_state_receipt_sha256"]
+                with self.assertRaises(MODEL.BrokerRefused): fixture.go(missing)
                 required = fixture.go(event)
-                self.assertEqual(required["state"], "ROLLBACK_REQUIRED")
-                fixture.go({"event": "BEGIN_ROLLBACK", **fixture.fake.gate("rollback_two_survivor"),
-                            "inventory_sha256": digest("rollback-inventory"),
-                            "known_hosts_sha256": digest("rollback-known-hosts"),
-                            "state_backup_sha256": required["state_backup_sha256"],
-                            "applied_state_receipt_sha256": required["history"][-1]["receipt_sha256"]})
-                for milestone in MODEL.ROLLBACK_MILESTONES[2:]:
-                    fixture.go({"event": "ROLLBACK_MILESTONE", "milestone": milestone,
-                                "receipt_sha256": digest(f"rollback-{milestone}")})
-                result = fixture.go({"event": "ROLLBACK_SUCCEEDED",
-                                     "rollback_receipt_sha256": digest("rollback-complete"),
-                                     "exact_effects_verified": True})
-                self.assertEqual(result["state"], "ROLLED_BACK")
+                self.assertEqual(required["state"], "FAILED_SAFE")
+                self.assertIs(required["manual_intervention_required"], True)
+
+    def test_forged_completion_and_skipped_replay_are_rejected(self) -> None:
+        fixture = BrokerFixture()
+        forged = copy.deepcopy(fixture.session.journal)
+        forged["state"] = "COMPLETED"
+        forged["history"][-1]["to_state"] = "COMPLETED"
+        forged["history"][-1]["projection_sha256"] = MODEL._projection(forged)
+        forged["history"][-1] = MODEL._seal_entry(forged["history"][-1])
+        with self.assertRaisesRegex(MODEL.BrokerRefused, "noncanonical"):
+            MODEL.validate_journal(forged)
+        skipped = copy.deepcopy(fixture.session.journal)
+        skipped["state"] = "APPLIED"
+        skipped["state_serial_after"] = 13
+        skipped["apply_receipt_sha256"] = digest("forged-apply")
+        skipped["state_backup_sha256"] = digest("forged-backup")
+        skipped["history"][-1]["event"] = "APPLY_SUCCEEDED"
+        skipped["history"][-1]["to_state"] = "APPLIED"
+        skipped["history"][-1]["projection_sha256"] = MODEL._projection(skipped)
+        skipped["history"][-1] = MODEL._seal_entry(skipped["history"][-1])
+        with self.assertRaisesRegex(MODEL.BrokerRefused, "noncanonical"):
+            MODEL.validate_journal(skipped)
+
+    def test_partial_prepare_requires_unprepare_or_retains_manual_stop(self) -> None:
+        fixture = BrokerFixture(); fixture.go({"event": "BEGIN_PREPARE", **fixture.fake.gate("pre_prepare")})
+        event = {"event": "ADOPT_PREPARE_PARTIAL", "probe_sha256": digest("prepare-probe"),
+                 "prepare_milestone": "DRAINED", "unprepare_receipt_sha256": digest("unprepare"),
+                 "unprepare_complete": False}
+        stopped = fixture.go(event)
+        self.assertEqual(stopped["state"], "FAILED_SAFE")
+        self.assertIs(stopped["manual_intervention_required"], True)
+        fixture = BrokerFixture(); fixture.go({"event": "BEGIN_PREPARE", **fixture.fake.gate("pre_prepare")})
+        event["unprepare_complete"] = True
+        restored = fixture.go(event)
+        self.assertEqual(restored["state"], "AUTHORIZED")
+        self.assertEqual(restored["history"][-1]["event"], "UNPREPARE_SUCCEEDED")
+
+    def test_provider_revert_binds_fresh_plan_current_state_and_separate_backups(self) -> None:
+        fixture = BrokerFixture(); fixture.prepare(); fixture.apply()
+        current = fixture.session.journal
+        begin = {"event": "BEGIN_ROLLBACK", **fixture.fake.gate("rollback_two_survivor"),
+                 "inventory_sha256": digest("rollback-inventory"),
+                 "known_hosts_sha256": digest("rollback-known-hosts"),
+                 "state_backup_sha256": current["state_backup_sha256"],
+                 "applied_state_receipt_sha256": current["apply_receipt_sha256"],
+                 "rollback_plan_sha256": digest("rollback-plan-bytes"),
+                 "rollback_plan_semantic_sha256": digest("rollback-plan-semantics"),
+                 "current_state_receipt_sha256": digest("rollback-current-state"),
+                 "current_state_lineage_sha256": current["state_lineage_sha256"],
+                 "current_state_serial": current["state_serial_after"],
+                 "pre_rollback_backup_sha256": digest("pre-rollback-backup")}
+        bad = copy.deepcopy(begin); bad["current_state_serial"] += 1
+        with self.assertRaises(MODEL.BrokerRefused): fixture.go(bad)
+        fixture.go(begin)
+        for milestone in MODEL.ROLLBACK_MILESTONES[2:]:
+            fixture.go({"event": "ROLLBACK_MILESTONE", "milestone": milestone,
+                        "receipt_sha256": digest(f"rollback-{milestone}")})
+        result = fixture.go({"event": "ROLLBACK_SUCCEEDED",
+                             "rollback_receipt_sha256": digest("rollback-complete"),
+                             "post_rollback_backup_sha256": digest("post-rollback-backup"),
+                             "exact_effects_verified": True})
+        self.assertEqual(result["state"], "ROLLED_BACK")
 
     def test_recovery_milestones_are_ordered_and_unsafe_path_rolls_back(self) -> None:
         fixture = BrokerFixture(); fixture.prepare(); fixture.apply(); fixture.begin_recovery()
@@ -307,11 +366,13 @@ class TransactionBrokerSpecTests(unittest.TestCase):
                                      verification_receipt=verifier_receipt(value), measured_hashes=measured(value),
                                      lease=FakeLease(), now=NOW, nonce_source=Nonces())
         fixture = BrokerFixture(); after = dt.datetime(2026, 8, 21, 16, 30, tzinfo=dt.timezone.utc)
-        with self.assertRaisesRegex(MODEL.BrokerRefused, "complete_by"):
-            fixture.go({"event": "BEGIN_PREPARE", **fixture.fake.gate("pre_prepare", after)}, now=after)
+        result = fixture.go({"event": "BEGIN_PREPARE", **fixture.fake.gate("pre_prepare", after)}, now=after)
+        self.assertEqual(result["state"], "FAILED_SAFE")
+        self.assertEqual(result["history"][-1]["event"], "DEADLINE_EXPIRED")
+        fixture = BrokerFixture()
         expiry = dt.datetime(2026, 8, 27, 21, 0, tzinfo=dt.timezone.utc)
-        with self.assertRaisesRegex(MODEL.BrokerRefused, "resource expiry"):
-            fixture.go({"event": "BEGIN_PREPARE", **fixture.fake.gate("pre_prepare", expiry)}, now=expiry)
+        result = fixture.go({"event": "BEGIN_PREPARE", **fixture.fake.gate("pre_prepare", expiry)}, now=expiry)
+        self.assertEqual(result["history"][-1]["event"], "RESOURCE_EXPIRED")
 
     def test_schemas_track_exact_model_and_remain_closed(self) -> None:
         journal_schema = json.loads((ROOT / "schemas/phase6-transaction-journal-v2.schema.json").read_text())
