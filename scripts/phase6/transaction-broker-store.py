@@ -46,6 +46,11 @@ AUTHORIZATION_KEYS = {
     "data_backup_sha256", "provider_facts_sha256", "approved_resource_expiry_utc", "approved_cost_ceiling_usd",
     "issued_at", "start_by", "complete_by", "minimum_recovery_margin_seconds", "raw_values_recorded",
 }
+AUTHORIZATION_SCHEMA_SHA256 = "1b87f889a9bfa3c638f7c637918ee817254beb81c2ca47005d80b9bf044da442"
+VERIFIER_RECEIPT_KEYS = {"schema_version", "status", "phase", "authorization_mode", "operation_id",
+                         "authorization_commit", "authorization_sha256", "authorization_history_sha256",
+                         "source_parent_commit", "workflow_id", "pr_number", "complete_by",
+                         "web_flow_fingerprint", "requires_reverification_before_use", "raw_values_recorded"}
 
 
 class StoreRefused(ValueError):
@@ -66,6 +71,25 @@ class CallableAuthorizationVerifier(SynchronousAuthorizationVerifier):
     def verify(self, authorization_path: pathlib.Path, raw: bytes,
                parsed: dict[str, Any]) -> dict[str, Any]:
         return self.function(authorization_path, raw, parsed)
+
+
+class CheckedInAuthorizationVerifier(SynchronousAuthorizationVerifier):
+    """Concrete adapter to the repository's synchronous protected-main verifier."""
+    def __init__(self, repository: Any, github: Any) -> None:
+        spec = importlib.util.spec_from_file_location("phase6_github_authorization_verifier",
+                                                      HERE / "verify-github-authorization.py")
+        if not spec or not spec.loader:
+            refuse("checked-in authorization verifier is unavailable")
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        self.function, self.repository, self.github = module.verify_authorization, repository, github
+
+    def verify(self, authorization_path: pathlib.Path, raw: bytes,
+               parsed: dict[str, Any]) -> dict[str, Any]:
+        receipt = self.function(repository=self.repository, github=self.github,
+                                operation_id=parsed["operation_id"], binding=parsed)
+        if receipt.get("authorization_sha256") != digest_bytes(raw):
+            refuse("checked-in verifier did not verify the exact held authorization bytes")
+        return receipt
 
 
 def refuse(message: str) -> None:
@@ -162,17 +186,26 @@ def _windows_owner_protected_dacl(path: pathlib.Path) -> bool:
         info = ACL_SIZE_INFORMATION()
         if not advapi.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), 2):
             return False
-        broad = {"S-1-1-0", "S-1-5-11", "S-1-5-32-545"}
+        owner_text = wintypes.LPWSTR()
+        if not advapi.ConvertSidToStringSidW(owner, ctypes.byref(owner_text)): return False
+        try:
+            allowed_writers = {owner_text.value, "S-1-5-18", "S-1-5-32-544"}
+        finally:
+            kernel32.LocalFree(owner_text)
         for index in range(info.AceCount):
             ace = ctypes.c_void_p()
             if not advapi.GetAce(dacl, index, ctypes.byref(ace)): return False
             raw = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))
-            if raw[0] != 0: continue
+            # Only simple allow and deny ACEs are accepted. Object/callback ACEs
+            # have semantics this boundary deliberately refuses to interpret.
+            if raw[0] not in {0, 1}: return False
+            if raw[0] == 1: continue
             mask = ctypes.cast(ace.value + 4, ctypes.POINTER(wintypes.DWORD))[0]
             sid = ctypes.c_void_p(ace.value + 8); text_sid = wintypes.LPWSTR()
             if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(text_sid)): return False
             try:
-                if text_sid.value in broad and mask & (0x40000000 | 0x10000000 | 0x0002 | 0x0004 | 0x0100):
+                if text_sid.value not in allowed_writers and mask & \
+                        (0x40000000 | 0x10000000 | 0x0002 | 0x0004 | 0x0100):
                     return False
             finally:
                 kernel32.LocalFree(text_sid)
@@ -247,10 +280,18 @@ class NamedMutex:
                 refuse("unable to construct protected named-mutex security descriptor")
             security = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), descriptor, False)
             self.kernel32 = kernel32
+            ctypes.set_last_error(0)
             self.handle = kernel32.CreateMutexW(ctypes.byref(security), False, self.name)
+            already_exists = ctypes.get_last_error() == 183
             kernel32.LocalFree(descriptor)
             if not self.handle:
                 refuse("unable to create the named broker/state mutex")
+            if already_exists:
+                # A pre-existing kernel object cannot be trusted until its
+                # owner/DACL has been inspected through the native object ACL
+                # API. Refusal is safer than inheriting an attacker ACL.
+                kernel32.CloseHandle(self.handle); self.handle = None
+                refuse("another writer or untrusted pre-existing named mutex is present")
             result = kernel32.WaitForSingleObject(self.handle, 0)
             try:
                 self._accept_wait_result(result)
@@ -267,15 +308,21 @@ class NamedMutex:
                 refuse("broker lock directory ownership/mode/identity differs")
             self.directory_handle = os.open(lock_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                                              | getattr(os, "O_NOFOLLOW", 0))
-            filename = f"verda-{digest_bytes(self.name.encode())}.lock"
-            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(filename, flags, 0o600, dir_fd=self.directory_handle)
+            filename = f"verda-{digest_bytes(self.name.encode())}.lockdir"
+            try: os.mkdir(filename, 0o700, dir_fd=self.directory_handle)
+            except FileExistsError: pass
+            lock_path = lock_root / filename
+            sentinel = lock_path / ".boundary"
+            sentinel.touch(mode=0o600, exist_ok=True)
+            descriptor = os.open(filename, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                 | getattr(os, "O_NOFOLLOW", 0), dir_fd=self.directory_handle)
             status = os.fstat(descriptor)
             path_status = os.stat(filename, dir_fd=self.directory_handle, follow_symlinks=False)
-            if (not stat.S_ISREG(status.st_mode) or status.st_nlink != 1
+            if (not stat.S_ISDIR(status.st_mode) or status.st_uid != os.getuid()
+                    or stat.S_IMODE(status.st_mode) != 0o700
                     or (status.st_dev, status.st_ino) != (path_status.st_dev, path_status.st_ino)):
-                os.close(descriptor); refuse("broker mutex lock file identity differs")
-            self.handle = os.fdopen(descriptor, "a+b", buffering=0)
+                os.close(descriptor); refuse("broker mutex lock directory identity differs")
+            self.handle = os.fdopen(descriptor, "rb", buffering=0)
             try:
                 fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except (OSError, BlockingIOError):
@@ -527,6 +574,8 @@ class DurableBrokerStore:
         raw = canonical_bytes(value) + b"\n"
         fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
+            if os.name == "nt":
+                _protect_windows_path(temp)
             os.write(fd, raw)
             os.fsync(fd)
         finally:
@@ -619,6 +668,15 @@ class DurableBrokerStore:
             authorization = json.loads(authorization_raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             refuse("held authorization artifact bytes are invalid")
+        schema_path = HERE.parents[1] / "schemas" / "phase6-github-authorization.schema.json"
+        schema_raw = self._stable_bytes(schema_path)
+        if digest_bytes(schema_raw) != AUTHORIZATION_SCHEMA_SHA256:
+            refuse("authorization schema hash differs from compiled admission boundary")
+        try:
+            from jsonschema import Draft202012Validator
+            Draft202012Validator(json.loads(schema_raw)).validate(authorization)
+        except Exception as error:
+            refuse(f"held authorization artifact fails Draft 2020-12 schema: {type(error).__name__}")
         if (not isinstance(authorization, dict) or set(authorization) != AUTHORIZATION_KEYS
                 or authorization.get("schema_version") != 1 or authorization.get("phase") != 6
                 or authorization.get("status") != "GITHUB_PROTECTED_MAIN_AUTHORIZED"
@@ -633,7 +691,8 @@ class DurableBrokerStore:
                 or any(not DIGEST.fullmatch(authorization.get(field, "")) for field in mapping.values())):
             refuse("admission artifact/hash/verifier boundary differs")
         receipt = self.verifier.verify(authorization_path, authorization_raw, authorization)
-        if (not isinstance(receipt, dict) or receipt.get("status") != "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT"
+        if (not isinstance(receipt, dict) or set(receipt) != VERIFIER_RECEIPT_KEYS
+                or receipt.get("status") != "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT"
                 or receipt.get("requires_reverification_before_use") is not True
                 or receipt.get("operation_id") != self.operation_id
                 or receipt.get("authorization_sha256") != digest_bytes(authorization_raw)
@@ -669,18 +728,17 @@ class DurableBrokerStore:
 
 
 class ReadOnlyAdmissionAdapter:
-    def __init__(self, runner: Callable[[tuple[str, ...]], tuple[int, str, str]], clock: Callable[[], dt.datetime],
-                 reviewed_state_path: pathlib.Path | None = None) -> None:
-        self.runner, self.clock, self.reviewed_state_path = runner, clock, reviewed_state_path
+    def __init__(self, store: DurableBrokerStore,
+                 runner: Callable[[tuple[str, ...]], tuple[int, str, str]], clock: Callable[[], dt.datetime]) -> None:
+        self.store, self.runner, self.clock = store, runner, clock
 
     def collect(self, kind: str) -> dict[str, Any]:
         if kind not in READ_ONLY_COMMANDS:
             refuse("read-only adapter command is not fixed/allowed")
         command = READ_ONLY_COMMANDS[kind]
         if kind == "terraform-state":
-            if self.reviewed_state_path is None or not self.reviewed_state_path.is_absolute():
-                refuse("Terraform collector lacks exact reviewed state path")
-            command = command + (str(self.reviewed_state_path),)
+            self.store._secure(self.store.state_path, regular=True)
+            command = command + (str(self.store.state_path),)
         started = self.clock()
         code, stdout, stderr = self.runner(command)
         ended = self.clock()

@@ -146,10 +146,16 @@ public static class VerdaPhase2PosixLock {
         $lockDigest = [Convert]::ToHexString(
             [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($mutexName))
         ).ToLowerInvariant()
-        $lockPath = Join-Path $lockRoot "verda-$lockDigest.lock"
-        # Linux: O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC. The store uses the same
-        # secured directory, filename derivation, O_NOFOLLOW, and flock(2).
-        $fd = [VerdaPhase2PosixLock]::open($lockPath, (2 -bor 64 -bor 131072 -bor 524288), 384)
+        $lockPath = Join-Path $lockRoot "verda-$lockDigest.lockdir"
+        [IO.Directory]::CreateDirectory($lockPath) | Out-Null
+        [IO.File]::SetUnixFileMode($lockPath, [IO.UnixFileMode]::UserRead -bor
+            [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute)
+        $sentinel = Join-Path $lockPath '.boundary'
+        if (-not (Test-Path -LiteralPath $sentinel)) { [IO.File]::WriteAllBytes($sentinel, [byte[]]@()) }
+        [IO.File]::SetUnixFileMode($sentinel, [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite)
+        # Linux: flock the stable, owner-only directory inode itself. Its
+        # nonempty sentinel prevents unlink/recreate from splitting contenders.
+        $fd = [VerdaPhase2PosixLock]::open($lockPath, (0 -bor 65536 -bor 131072 -bor 524288), 448)
         if ($fd -lt 0) { throw 'Unable to open the OS-exclusive protected-state lock without following links.' }
         if ([VerdaPhase2PosixLock]::flock($fd, 6) -ne 0) {
             [void][VerdaPhase2PosixLock]::close($fd)

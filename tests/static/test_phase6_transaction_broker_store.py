@@ -8,6 +8,7 @@ import datetime as dt
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -51,6 +52,12 @@ class DurableBrokerStoreTests(unittest.TestCase):
     def genesis(self, store, journal):
         return store.cas(journal, expected_generation=0, expected_lease_epoch=0,
                          expected_cas_nonce=None, expected_head_sha256=None)
+
+    def adapter_store(self, root: pathlib.Path):
+        store = self.store(root)
+        store.state_path.parent.mkdir(parents=True, exist_ok=True)
+        store.state_path.write_text("{}", encoding="utf-8")
+        return store
 
     def admission(self, root: pathlib.Path):
         mapping = {"broker": "broker_sha256", "policy": "transaction_policy_sha256",
@@ -98,6 +105,19 @@ class DurableBrokerStoreTests(unittest.TestCase):
         self.assertIn('$mutexName = "Local\\VerdaPhase2State-$stateDigest"', phase2)
         self.assertIn('"verda-phase6-locks-$uid"', phase2)
         self.assertIn("VerdaPhase2PosixLock]::flock", phase2)
+
+    @unittest.skipIf(os.name == "nt", "POSIX directory-inode lock contract")
+    def test_posix_lock_boundary_is_nonempty_directory_inode(self) -> None:
+        name = "Local\\VerdaPhase2State-" + digest("shared-state")
+        with STORE.NamedMutex(name):
+            lockdir = pathlib.Path(tempfile.gettempdir()) / f"verda-phase6-locks-{os.getuid()}" / \
+                f"verda-{STORE.digest_bytes(name.encode())}.lockdir"
+            self.assertTrue((lockdir / ".boundary").is_file())
+            with self.assertRaises(OSError):
+                lockdir.rmdir()
+            with self.assertRaisesRegex(STORE.StoreRefused, "another writer"):
+                with STORE.NamedMutex(name):
+                    pass
 
     def test_windows_security_and_handle_apis_are_explicitly_typed(self) -> None:
         source = STORE_PATH.read_text(encoding="utf-8")
@@ -243,8 +263,10 @@ class DurableBrokerStoreTests(unittest.TestCase):
         def runner(command: tuple[str, ...]):
             calls.append(command); return 0, json.dumps({"items": [{"metadata": {"name": "sensitive-host"},
                 "status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}), ""
-        adapter = STORE.ReadOnlyAdmissionAdapter(runner, lambda: NOW)
-        receipt = adapter.collect("cluster-members")
+        with tempfile.TemporaryDirectory() as folder:
+            store = self.adapter_store(pathlib.Path(folder))
+            adapter = STORE.ReadOnlyAdmissionAdapter(store, runner, lambda: NOW)
+            receipt = adapter.collect("cluster-members")
         self.assertEqual(set(receipt), {"kind", "command_sha256", "started_at", "ended_at", "duration_ms",
                                         "freshness_seconds", "aggregate", "raw_values_recorded"})
         self.assertEqual(receipt["aggregate"], {"member_count": 1, "ready_count": 1})
@@ -254,27 +276,30 @@ class DurableBrokerStoreTests(unittest.TestCase):
 
     def test_slow_read_only_collector_is_refused(self) -> None:
         times = iter((NOW, NOW + dt.timedelta(seconds=11)))
-        adapter = STORE.ReadOnlyAdmissionAdapter(lambda _cmd: (0, '{"items":[]}', ""), lambda: next(times))
-        with self.assertRaisesRegex(STORE.StoreRefused, "slow/stale"):
-            adapter.collect("cluster-members")
+        with tempfile.TemporaryDirectory() as folder:
+            adapter = STORE.ReadOnlyAdmissionAdapter(self.adapter_store(pathlib.Path(folder)),
+                lambda _cmd: (0, '{"items":[]}', ""), lambda: next(times))
+            with self.assertRaisesRegex(STORE.StoreRefused, "slow/stale"):
+                adapter.collect("cluster-members")
 
     def test_real_kubernetes_ready_shape_and_reviewed_terraform_path(self) -> None:
-        malformed = STORE.ReadOnlyAdmissionAdapter(lambda _cmd: (0, '{"items":[{"status":{"conditions":[]}}]}', ""),
-                                                   lambda: NOW)
-        with self.assertRaisesRegex(STORE.StoreRefused, "Ready condition"):
-            malformed.collect("cluster-members")
-        calls = []
-        state_path = (ROOT / ".local" / "reviewed.tfstate").resolve()
-        adapter = STORE.ReadOnlyAdmissionAdapter(
-            lambda command: (calls.append(command) or (0, '{"values":{"root_module":{"resources":[]}}}', "")),
-            lambda: NOW, reviewed_state_path=state_path)
-        receipt = adapter.collect("terraform-state")
-        self.assertEqual(calls[0][-1], str(state_path))
-        self.assertEqual(receipt["aggregate"], {"resource_count": 0})
-        provider = STORE.ReadOnlyAdmissionAdapter(
-            lambda _command: (0, '{"instances":[{"status":"running","instance_type":"CPU.8V.32G"},'
-                                '{"status":"stopped","instance_type":"CPU.8V.32G"}]}', ""), lambda: NOW)
-        aggregate = provider.collect("provider-inventory")["aggregate"]
+        with tempfile.TemporaryDirectory() as folder:
+            store = self.adapter_store(pathlib.Path(folder))
+            malformed = STORE.ReadOnlyAdmissionAdapter(store,
+                lambda _cmd: (0, '{"items":[{"status":{"conditions":[]}}]}', ""), lambda: NOW)
+            with self.assertRaisesRegex(STORE.StoreRefused, "Ready condition"):
+                malformed.collect("cluster-members")
+            calls = []
+            adapter = STORE.ReadOnlyAdmissionAdapter(store,
+                lambda command: (calls.append(command) or (0, '{"values":{"root_module":{"resources":[]}}}', "")),
+                lambda: NOW)
+            receipt = adapter.collect("terraform-state")
+            self.assertEqual(calls[0][-1], str(store.state_path))
+            self.assertEqual(receipt["aggregate"], {"resource_count": 0})
+            provider = STORE.ReadOnlyAdmissionAdapter(store,
+                lambda _command: (0, '{"instances":[{"status":"running","instance_type":"CPU.8V.32G"},'
+                                    '{"status":"stopped","instance_type":"CPU.8V.32G"}]}', ""), lambda: NOW)
+            aggregate = provider.collect("provider-inventory")["aggregate"]
         self.assertEqual(aggregate["status_counts"], {"running": 1, "stopped": 1, "other": 0})
         self.assertEqual(aggregate["instance_type_counts"], {"CPU.8V.32G": 2})
 
@@ -290,7 +315,9 @@ class DurableBrokerStoreTests(unittest.TestCase):
                                             "authorization_history_sha256": digest("history"),
                                             "source_parent_commit": auth["source_parent_commit"],
                                             "workflow_id": auth["workflow_id"], "pr_number": auth["pr_number"],
-                                            "complete_by": auth["complete_by"]}
+                                            "complete_by": auth["complete_by"], "schema_version": 1, "phase": 6,
+                                            "authorization_mode": "TRANSACTION", "web_flow_fingerprint": digest("web"),
+                                            "raw_values_recorded": False}
             store = self.store(root, verifier=verifier)
             receipt = store.verify_admission(authorization_path=authorization_path, artifacts=artifacts)
             self.assertEqual(len(calls), 1)
@@ -318,7 +345,9 @@ class DurableBrokerStoreTests(unittest.TestCase):
                                      "authorization_history_sha256": digest("history"),
                                      "source_parent_commit": auth["source_parent_commit"],
                                      "workflow_id": auth["workflow_id"], "pr_number": auth["pr_number"],
-                                     "complete_by": auth["complete_by"]}
+                                     "complete_by": auth["complete_by"], "schema_version": 1, "phase": 6,
+                                     "authorization_mode": "TRANSACTION", "web_flow_fingerprint": digest("web"),
+                                     "raw_values_recorded": False}
             store = self.store(root, security_probe=swapping_probe, verifier=verifier)
             with self.assertRaisesRegex(STORE.StoreRefused, "identity changed"):
                 store.verify_admission(authorization_path=authorization_path, artifacts=artifacts)
