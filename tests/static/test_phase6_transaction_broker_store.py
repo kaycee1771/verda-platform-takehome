@@ -25,6 +25,10 @@ BROKER_TEST_PATH = ROOT / "tests/static/test_phase6_transaction_broker_spec.py"
 BROKER_SPEC = importlib.util.spec_from_file_location("phase6_broker_fixtures", BROKER_TEST_PATH)
 assert BROKER_SPEC and BROKER_SPEC.loader
 FIXTURES = importlib.util.module_from_spec(BROKER_SPEC); BROKER_SPEC.loader.exec_module(FIXTURES)
+AUTH_TEST_PATH = ROOT / "tests/static/test_phase6_github_authorization.py"
+AUTH_SPEC = importlib.util.spec_from_file_location("phase6_auth_fixtures", AUTH_TEST_PATH)
+assert AUTH_SPEC and AUTH_SPEC.loader
+AUTH_FIXTURES = importlib.util.module_from_spec(AUTH_SPEC); AUTH_SPEC.loader.exec_module(AUTH_FIXTURES)
 NOW = FIXTURES.NOW
 
 
@@ -58,16 +62,19 @@ class DurableBrokerStoreTests(unittest.TestCase):
                    "collector": "collector_sha256", "provider_facts": "provider_facts_sha256",
                    "journal": "journal_sha256"}
         artifact_root = root / "artifacts"; artifact_root.mkdir()
-        artifacts = {}; authorization = {"operation_id": FIXTURES.OPERATION,
-                                         "state_lineage_sha256": digest("lineage"), "state_serial": 12}
+        artifacts = {}; authorization = AUTH_FIXTURES.artifact()
         for name, field in mapping.items():
             path = artifact_root / name; path.write_text(name, encoding="utf-8"); artifacts[name] = path
             authorization[field] = hashlib.sha256(name.encode()).hexdigest()
-        state = {"state_lineage_sha256": digest("lineage"), "state_serial": 12, "raw_values_recorded": False}
+        state = {"state_lineage_sha256": authorization["state_lineage_sha256"], "state_serial": 12,
+                 "canonical_state_path": str((root / "terraform" / "management.tfstate").resolve(strict=False)),
+                 "raw_values_recorded": False}
         state_path = artifact_root / "state-receipt.json"
         state_path.write_text(json.dumps(state, sort_keys=True, separators=(",", ":")), encoding="utf-8")
         artifacts["state_receipt"] = state_path
-        return artifacts, authorization
+        authorization_path = artifact_root / "authorization.json"
+        authorization_path.write_text("  " + json.dumps(authorization, sort_keys=True) + "\n", encoding="utf-8")
+        return artifacts, authorization, authorization_path
 
     def test_direct_entrypoint_refuses_and_has_no_effect_bodies(self) -> None:
         result = subprocess.run([sys.executable, str(STORE_PATH)], cwd=ROOT, capture_output=True, text=True)
@@ -192,6 +199,17 @@ class DurableBrokerStoreTests(unittest.TestCase):
                 self.assertFalse((root / "phase6-resize-control" /
                                   f"broker-{FIXTURES.OPERATION}.envelope-v2.tmp").exists())
 
+    def test_orphan_temp_must_be_exact_genesis(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder); store = self.store(root); store.initialize()
+            fixture = FIXTURES.BrokerFixture(); fixture.go({"event": "BEGIN_PREPARE", **fixture.fake.gate("pre_prepare")})
+            envelope = {"schema_version": 2, "operation_id": FIXTURES.OPERATION,
+                        "journal": fixture.session.journal,
+                        "nonces": [entry["cas_nonce"] for entry in fixture.session.journal["history"]]}
+            store.temp_path.write_text(json.dumps(envelope), encoding="utf-8")
+            with self.assertRaisesRegex(STORE.StoreRefused, "START_SPEC genesis"):
+                store.load()
+
     def test_torn_write_reparse_alias_and_hardlink_are_refused(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = pathlib.Path(folder); store = self.store(root); store.initialize()
@@ -240,27 +258,38 @@ class DurableBrokerStoreTests(unittest.TestCase):
         receipt = adapter.collect("terraform-state")
         self.assertEqual(calls[0][-1], str(state_path))
         self.assertEqual(receipt["aggregate"], {"resource_count": 0})
+        provider = STORE.ReadOnlyAdmissionAdapter(
+            lambda _command: (0, '{"instances":[{"status":"running","instance_type":"CPU.8V.32G"},'
+                                '{"status":"stopped","instance_type":"CPU.8V.32G"}]}', ""), lambda: NOW)
+        aggregate = provider.collect("provider-inventory")["aggregate"]
+        self.assertEqual(aggregate["status_counts"], {"running": 1, "stopped": 1, "other": 0})
+        self.assertEqual(aggregate["instance_type_counts"], {"CPU.8V.32G": 2})
 
     def test_admission_hashes_every_bound_artifact_and_calls_verifier_synchronously(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
-            root = pathlib.Path(folder); artifacts, authorization = self.admission(root)
+            root = pathlib.Path(folder); artifacts, authorization, authorization_path = self.admission(root)
             calls = []
-            def verifier(auth):
-                calls.append(auth); return {"status": "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT",
+            def verifier(path, raw, auth):
+                calls.append((path, raw, auth)); return {"status": "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT",
                                             "requires_reverification_before_use": True, "operation_id": FIXTURES.OPERATION,
-                                            "authorization_sha256": STORE.digest_bytes(STORE.canonical_bytes(auth)),
+                                            "authorization_sha256": STORE.digest_bytes(raw),
                                             "authorization_commit": "a" * 40,
-                                            "authorization_history_sha256": digest("history")}
+                                            "authorization_history_sha256": digest("history"),
+                                            "source_parent_commit": auth["source_parent_commit"],
+                                            "workflow_id": auth["workflow_id"], "pr_number": auth["pr_number"],
+                                            "complete_by": auth["complete_by"]}
             store = self.store(root, verifier=verifier)
-            receipt = store.verify_admission(authorization=authorization, artifacts=artifacts)
+            receipt = store.verify_admission(authorization_path=authorization_path, artifacts=artifacts)
             self.assertEqual(len(calls), 1)
+            self.assertTrue(calls[0][1].startswith(b"  {") and calls[0][1].endswith(b"\n"))
             authorization["plan_sha256"] = digest("wrong")
+            authorization_path.write_text("  " + json.dumps(authorization, sort_keys=True) + "\n", encoding="utf-8")
             with self.assertRaisesRegex(STORE.StoreRefused, "plan hash"):
-                store.verify_admission(authorization=authorization, artifacts=artifacts)
+                store.verify_admission(authorization_path=authorization_path, artifacts=artifacts)
 
     def test_admission_artifact_identity_swap_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
-            root = pathlib.Path(folder); artifacts, authorization = self.admission(root)
+            root = pathlib.Path(folder); artifacts, authorization, authorization_path = self.admission(root)
             calls = 0
             def swapping_probe(path):
                 nonlocal calls
@@ -269,14 +298,17 @@ class DurableBrokerStoreTests(unittest.TestCase):
                     calls += 1
                     facts["identity"] += calls
                 return facts
-            verifier = lambda auth: {"status": "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT",
+            verifier = lambda _path, raw, auth: {"status": "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT",
                                      "requires_reverification_before_use": True, "operation_id": FIXTURES.OPERATION,
-                                     "authorization_sha256": STORE.digest_bytes(STORE.canonical_bytes(auth)),
+                                     "authorization_sha256": STORE.digest_bytes(raw),
                                      "authorization_commit": "a" * 40,
-                                     "authorization_history_sha256": digest("history")}
+                                     "authorization_history_sha256": digest("history"),
+                                     "source_parent_commit": auth["source_parent_commit"],
+                                     "workflow_id": auth["workflow_id"], "pr_number": auth["pr_number"],
+                                     "complete_by": auth["complete_by"]}
             store = self.store(root, security_probe=swapping_probe, verifier=verifier)
             with self.assertRaisesRegex(STORE.StoreRefused, "identity changed"):
-                store.verify_admission(authorization=authorization, artifacts=artifacts)
+                store.verify_admission(authorization_path=authorization_path, artifacts=artifacts)
 
 
 if __name__ == "__main__":

@@ -88,6 +88,23 @@ def _windows_owner_protected_dacl(path: pathlib.Path) -> bool:
                                              ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
                                              ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
                                              ctypes.POINTER(ctypes.c_void_p))
+    advapi.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi.GetSecurityDescriptorControl.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.argtypes = (); kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi.OpenProcessToken.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE))
+    advapi.OpenProcessToken.restype = wintypes.BOOL
+    advapi.GetTokenInformation.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                           wintypes.DWORD, ctypes.POINTER(wintypes.DWORD))
+    advapi.GetTokenInformation.restype = wintypes.BOOL
+    advapi.EqualSid.argtypes = (ctypes.c_void_p, ctypes.c_void_p); advapi.EqualSid.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,); kernel32.CloseHandle.restype = wintypes.BOOL
+    advapi.GetAclInformation.argtypes = (ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.c_int)
+    advapi.GetAclInformation.restype = wintypes.BOOL
+    advapi.GetAce.argtypes = (ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p))
+    advapi.GetAce.restype = wintypes.BOOL
+    advapi.ConvertSidToStringSidW.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR))
+    advapi.ConvertSidToStringSidW.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = (ctypes.c_void_p,); kernel32.LocalFree.restype = ctypes.c_void_p
     if advapi.GetNamedSecurityInfoW(str(path), 1, 0x1 | 0x4, ctypes.byref(owner), None,
                                     ctypes.byref(dacl), None, ctypes.byref(descriptor)) != 0:
         return False
@@ -144,6 +161,7 @@ class NamedMutex:
         self.name = name
         self.handle: Any = None
         self.abandoned = False
+        self.directory_handle: int | None = None
 
     def _accept_wait_result(self, result: int) -> None:
         if result == 0:
@@ -179,18 +197,35 @@ class NamedMutex:
                 raise
         else:
             import fcntl
-            lock_path = pathlib.Path(tempfile.gettempdir()) / f"verda-{digest_bytes(self.name.encode())}.lock"
+            lock_root = pathlib.Path(tempfile.gettempdir()) / f"verda-phase6-locks-{os.getuid()}"
+            lock_root.mkdir(mode=0o700, exist_ok=True)
+            root_status = lock_root.lstat()
+            if (stat.S_ISLNK(root_status.st_mode) or root_status.st_uid != os.getuid()
+                    or stat.S_IMODE(root_status.st_mode) != 0o700):
+                refuse("broker lock directory ownership/mode/identity differs")
+            self.directory_handle = os.open(lock_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                             | getattr(os, "O_NOFOLLOW", 0))
+            filename = f"verda-{digest_bytes(self.name.encode())}.lock"
             flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(lock_path, flags, 0o600)
+            descriptor = os.open(filename, flags, 0o600, dir_fd=self.directory_handle)
             status = os.fstat(descriptor)
-            if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
+            path_status = os.stat(filename, dir_fd=self.directory_handle, follow_symlinks=False)
+            if (not stat.S_ISREG(status.st_mode) or status.st_nlink != 1
+                    or (status.st_dev, status.st_ino) != (path_status.st_dev, path_status.st_ino)):
                 os.close(descriptor); refuse("broker mutex lock file identity differs")
             self.handle = os.fdopen(descriptor, "a+b", buffering=0)
             try:
                 fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except (OSError, BlockingIOError):
                 self.handle.close(); self.handle = None
+                os.close(self.directory_handle); self.directory_handle = None
                 refuse("another writer holds the named broker/state mutex")
+            path_status = os.stat(filename, dir_fd=self.directory_handle, follow_symlinks=False)
+            held = os.fstat(self.handle.fileno())
+            if (held.st_dev, held.st_ino) != (path_status.st_dev, path_status.st_ino):
+                self.handle.close(); self.handle = None
+                os.close(self.directory_handle); self.directory_handle = None
+                refuse("broker mutex lock path was replaced after flock")
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -201,6 +236,8 @@ class NamedMutex:
             import fcntl
             fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
             self.handle.close()
+            if self.directory_handle is not None:
+                os.close(self.directory_handle); self.directory_handle = None
 
 
 class DurableBrokerStore:
@@ -302,6 +339,15 @@ class DurableBrokerStore:
         kernel32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
                                          wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
         kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.GetFinalPathNameByHandleW.argtypes = (wintypes.HANDLE, wintypes.LPWSTR,
+                                                       wintypes.DWORD, wintypes.DWORD)
+        kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+        kernel32.GetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+        kernel32.ReadFile.argtypes = (wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                                      ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p)
+        kernel32.ReadFile.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,); kernel32.CloseHandle.restype = wintypes.BOOL
         handle = kernel32.CreateFileW(str(path), 0x80000000, 0x1, None, 3, 0x00200000, None)
         if handle == wintypes.HANDLE(-1).value:
             refuse("unable to open protected artifact without following reparse points")
@@ -377,6 +423,11 @@ class DurableBrokerStore:
             else:
                 refuse("staged recovery envelope skips current generation")
         else:
+            staged_journal = staged["journal"]
+            if (staged_journal["generation"] != 1 or staged_journal["lease_epoch"] < 1
+                    or len(staged_journal["history"]) != 1
+                    or staged_journal["history"][0]["event"] != "START_SPEC"):
+                refuse("orphan staged envelope is not exact START_SPEC genesis")
             chosen = staged
         self._replace(self.temp_path, self.envelope_path) if chosen is staged else self.temp_path.unlink()
         if os.name != "nt":
@@ -479,7 +530,7 @@ class DurableBrokerStore:
                  expected_head_sha256=current["history"][-1]["entry_sha256"])
         return adopted
 
-    def verify_admission(self, *, authorization: dict[str, Any], artifacts: dict[str, pathlib.Path]) -> dict[str, Any]:
+    def verify_admission(self, *, authorization_path: pathlib.Path, artifacts: dict[str, pathlib.Path]) -> dict[str, Any]:
         mapping = {"broker": "broker_sha256", "policy": "transaction_policy_sha256",
                    "rollback_policy": "rollback_policy_sha256", "contract": "contract_sha256",
                    "tool_lock": "tool_lock_sha256", "security_review": "security_review_sha256",
@@ -489,17 +540,29 @@ class DurableBrokerStore:
                    "cost": "cost_sha256", "capacity": "capacity_sha256", "collector": "collector_sha256",
                    "provider_facts": "provider_facts_sha256", "journal": "journal_sha256"}
         required = set(mapping) | {"state_receipt"}
+        authorization_raw = self._stable_bytes(authorization_path)
+        try:
+            authorization = json.loads(authorization_raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            refuse("held authorization artifact bytes are invalid")
+        schema = json.loads((HERE.parents[1] / "schemas" / "phase6-github-authorization.schema.json").read_text(encoding="utf-8"))
+        if not isinstance(authorization, dict) or set(authorization) != set(schema["required"]):
+            refuse("held authorization artifact schema differs")
         if (set(artifacts) != required or self.verifier is None
                 or authorization.get("operation_id") != self.operation_id
                 or any(not DIGEST.fullmatch(authorization.get(field, "")) for field in mapping.values())):
             refuse("admission artifact/hash/verifier boundary differs")
-        receipt = self.verifier(authorization)
+        receipt = self.verifier(authorization_path, authorization_raw, authorization)
         if (not isinstance(receipt, dict) or receipt.get("status") != "GITHUB_TRANSACTION_AUTHORIZATION_VERIFIED_DORMANT"
                 or receipt.get("requires_reverification_before_use") is not True
                 or receipt.get("operation_id") != self.operation_id
-                or receipt.get("authorization_sha256") != digest_bytes(canonical_bytes(authorization))
-                or not isinstance(receipt.get("authorization_commit"), str)
-                or not isinstance(receipt.get("authorization_history_sha256"), str)):
+                or receipt.get("authorization_sha256") != digest_bytes(authorization_raw)
+                or not MODEL.COMMIT.fullmatch(receipt.get("authorization_commit", ""))
+                or not DIGEST.fullmatch(receipt.get("authorization_history_sha256", ""))
+                or receipt.get("source_parent_commit") != authorization.get("source_parent_commit")
+                or receipt.get("workflow_id") != authorization.get("workflow_id")
+                or receipt.get("pr_number") != authorization.get("pr_number")
+                or receipt.get("complete_by") != authorization.get("complete_by")):
             refuse("direct synchronous authorization verifier receipt differs")
         measured: dict[str, str] = {}
         for name in sorted(mapping):
@@ -512,9 +575,11 @@ class DurableBrokerStore:
             if measured[name] != authorization[mapping[name]]:
                 refuse(f"admission {name} hash differs")
         state_receipt = self._read_json(artifacts["state_receipt"])
-        if (set(state_receipt) != {"state_lineage_sha256", "state_serial", "raw_values_recorded"}
+        if (set(state_receipt) != {"state_lineage_sha256", "state_serial", "canonical_state_path",
+                                  "raw_values_recorded"}
                 or state_receipt["state_lineage_sha256"] != authorization.get("state_lineage_sha256")
                 or state_receipt["state_serial"] != authorization.get("state_serial")
+                or pathlib.Path(state_receipt["canonical_state_path"]).resolve(strict=False) != self.state_path
                 or state_receipt["raw_values_recorded"] is not False):
             refuse("admission state receipt differs from authorization")
         measured["state_receipt"] = digest_bytes(canonical_bytes(state_receipt))
@@ -566,13 +631,27 @@ class ReadOnlyAdmissionAdapter:
         elif kind == "provider-inventory":
             items = parsed.get("instances")
             if not isinstance(items, list): refuse("provider inventory aggregate schema differs")
-            aggregate = {"instance_count": len(items)}
+            statuses = {"running": 0, "stopped": 0, "other": 0}; types: dict[str, int] = {}
+            for item in items:
+                if (not isinstance(item, dict) or not isinstance(item.get("status"), str)
+                        or not isinstance(item.get("instance_type"), str)):
+                    refuse("provider inventory instance aggregate fields differ")
+                status = item["status"].lower()
+                statuses[status if status in {"running", "stopped"} else "other"] += 1
+                types[item["instance_type"]] = types.get(item["instance_type"], 0) + 1
+            aggregate = {"instance_count": len(items), "status_counts": statuses,
+                         "instance_type_counts": dict(sorted(types.items()))}
         else:
             values = parsed.get("values")
             if not isinstance(values, dict): refuse("Terraform state aggregate schema differs")
-            resources = values.get("root_module", {}).get("resources", [])
-            if not isinstance(resources, list): refuse("Terraform resource aggregate schema differs")
-            aggregate = {"resource_count": len(resources)}
+            def count_module(module: object) -> int:
+                if not isinstance(module, dict): refuse("Terraform module aggregate schema differs")
+                resources, children = module.get("resources", []), module.get("child_modules", [])
+                if not isinstance(resources, list) or not all(isinstance(item, dict) for item in resources) \
+                        or not isinstance(children, list):
+                    refuse("Terraform resource/child module aggregate schema differs")
+                return len(resources) + sum(count_module(child) for child in children)
+            aggregate = {"resource_count": count_module(values.get("root_module"))}
         sanitized = {"kind": kind, "command_sha256": digest_bytes(canonical_bytes(command)),
                      "started_at": utc_text(started), "ended_at": utc_text(ended),
                      "duration_ms": int(duration * 1000), "freshness_seconds": 10,
