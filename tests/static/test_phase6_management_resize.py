@@ -595,6 +595,13 @@ class RecoverySourceTests(unittest.TestCase):
         for playbook_name in ("prepare-management-node-resize.yml", "recover-resized-management-node.yml"):
             plays = yaml.safe_load((ROOT / "infra" / "ansible" / "playbooks" / playbook_name).read_text())
             self.assertIn("Verify the controller-issued", plays[0]["tasks"][0]["name"])
+            for play in plays[1:]:
+                self.assertIn("pre_tasks", play, play["name"])
+                self.assertIn("Verify the controller-issued", play["pre_tasks"][0]["name"])
+                for role in play.get("roles", []):
+                    self.assertEqual(role.get("when"), "phase6_step_authorized.rc == 0", play["name"])
+                for task in play.get("tasks", []):
+                    self.assertEqual(task.get("when"), "phase6_step_authorized.rc == 0", task["name"])
 
     def test_authorization_verifier_refuses_the_checked_in_inert_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

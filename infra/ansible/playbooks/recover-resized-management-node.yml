@@ -12,7 +12,8 @@
       verda-mgmt-server-02: verda-mgmt-server-03
       verda-mgmt-server-03: verda-mgmt-server-02
   tasks:
-    - name: Verify the controller-issued used-once recovery authorization
+    - &phase6_recovery_authorization_gate
+      name: Verify the controller-issued used-once recovery authorization
       ansible.builtin.command:
         argv:
           - python
@@ -36,6 +37,9 @@
           - --mode
           - recover
       changed_when: false
+      delegate_to: localhost
+      become: false
+      register: phase6_step_authorized
 
     - name: Refuse an unexpected target or surviving join peer
       ansible.builtin.assert:
@@ -54,8 +58,11 @@
   hosts: "{{ phase6_resize_target }}"
   gather_facts: false
   any_errors_fatal: true
+  pre_tasks:
+    - *phase6_recovery_authorization_gate
   roles:
     - role: access_bootstrap
+      when: phase6_step_authorized.rc == 0
 
 - name: Rebuild and verify the replacement host without touching peer storage
   hosts: "{{ phase6_resize_target }}"
@@ -63,10 +70,15 @@
   become: true
   gather_facts: true
   any_errors_fatal: true
+  pre_tasks:
+    - *phase6_recovery_authorization_gate
   roles:
     - role: common
+      when: phase6_step_authorized.rc == 0
     - role: hardening
+      when: phase6_step_authorized.rc == 0
     - role: storage_device
+      when: phase6_step_authorized.rc == 0
 
 - name: Read or generate every node-local WireGuard public identity
   hosts: management_servers
@@ -76,9 +88,12 @@
   become: true
   gather_facts: true
   any_errors_fatal: true
+  pre_tasks:
+    - *phase6_recovery_authorization_gate
   roles:
     - role: wireguard
       wireguard_identity_only: true
+      when: phase6_step_authorized.rc == 0
 
 - name: Converge the changed endpoint and public key on all three WireGuard peers
   hosts: management_servers
@@ -88,10 +103,14 @@
   become: true
   gather_facts: true
   any_errors_fatal: true
+  pre_tasks:
+    - *phase6_recovery_authorization_gate
   roles:
     - role: wireguard
       wireguard_identity_only: false
+      when: phase6_step_authorized.rc == 0
     - role: firewall
+      when: phase6_step_authorized.rc == 0
 
 - name: Remove exactly the stale etcd and Kubernetes identity from a surviving peer
   hosts: "{{ phase6_join_peer }}"
@@ -99,6 +118,8 @@
   become: true
   gather_facts: false
   any_errors_fatal: true
+  pre_tasks:
+    - *phase6_recovery_authorization_gate
   tasks:
     - name: Install the controller-issued recovery authorization
       ansible.builtin.copy:
@@ -108,6 +129,7 @@
         group: root
         mode: "0600"
       no_log: true
+      when: phase6_step_authorized.rc == 0
 
     - name: Install the hash-bound active contract and operation journal
       ansible.builtin.copy:
@@ -122,6 +144,7 @@
         - src: /run/config/phase6-operation-journal.json
           dest: /run/verda-phase6-operation-journal.json
       no_log: true
+      when: phase6_step_authorized.rc == 0
 
     - name: Install the bounded stale-member removal helper
       ansible.builtin.copy:
@@ -130,6 +153,7 @@
         owner: root
         group: root
         mode: "0700"
+      when: phase6_step_authorized.rc == 0
 
     - name: Remove only the selected stale member after the protected snapshot gate
       ansible.builtin.command:
@@ -146,6 +170,7 @@
       register: phase6_stale_member_removal
       changed_when: true
       no_log: true
+      when: phase6_step_authorized.rc == 0
 
 - name: Prepare the replacement to join the surviving cluster, including node 01
   hosts: "{{ phase6_resize_target }}"
@@ -157,8 +182,11 @@
     phase4_action: prepare
     phase4_join_existing_cluster: true
     phase4_join_server_address: "{{ phase3_wireguard_addresses[phase6_join_peer] }}"
+  pre_tasks:
+    - *phase6_recovery_authorization_gate
   roles:
     - role: rke2_server
+      when: phase6_step_authorized.rc == 0
 
 - name: Start and verify the replacement as an existing-cluster server
   hosts: "{{ phase6_resize_target }}"
@@ -170,8 +198,11 @@
     phase4_action: start
     phase4_join_existing_cluster: true
     phase4_join_server_address: "{{ phase3_wireguard_addresses[phase6_join_peer] }}"
+  pre_tasks:
+    - *phase6_recovery_authorization_gate
   roles:
     - role: rke2_server
+      when: phase6_step_authorized.rc == 0
 
 - name: Restore Longhorn scheduling and prove the replacement rebuild boundary
   hosts: "{{ phase6_join_peer }}"
@@ -179,6 +210,8 @@
   become: true
   gather_facts: false
   any_errors_fatal: true
+  pre_tasks:
+    - *phase6_recovery_authorization_gate
   tasks:
     - name: Install the bounded Phase 6 storage gate helper
       ansible.builtin.copy:
@@ -187,6 +220,7 @@
         owner: root
         group: root
         mode: "0700"
+      when: phase6_step_authorized.rc == 0
 
     - name: Re-enable the replacement and wait for Ready storage rebuild
       ansible.builtin.command:
@@ -202,3 +236,4 @@
           - "{{ phase6_direction }}"
       changed_when: true
       no_log: true
+      when: phase6_step_authorized.rc == 0

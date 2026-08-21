@@ -8,7 +8,8 @@
       verda-mgmt-server-02: [verda-mgmt-server-01, verda-mgmt-server-03]
       verda-mgmt-server-03: [verda-mgmt-server-01, verda-mgmt-server-02]
   tasks:
-    - name: Verify the controller-issued used-once operation authorization
+    - &phase6_prepare_authorization_gate
+      name: Verify the controller-issued used-once operation authorization
       ansible.builtin.command:
         argv:
           - python
@@ -32,6 +33,9 @@
           - --mode
           - prepare
       changed_when: false
+      delegate_to: localhost
+      become: false
+      register: phase6_step_authorized
 
     - name: Refuse an unexpected target or survivor
       ansible.builtin.assert:
@@ -47,6 +51,8 @@
   become: true
   gather_facts: false
   any_errors_fatal: true
+  pre_tasks:
+    - *phase6_prepare_authorization_gate
   tasks:
     - name: Install the controller-issued operation authorization
       ansible.builtin.copy:
@@ -56,6 +62,7 @@
         group: root
         mode: "0600"
       no_log: true
+      when: phase6_step_authorized.rc == 0
 
     - name: Install the hash-bound active contract and operation journal
       ansible.builtin.copy:
@@ -70,6 +77,7 @@
         - src: /run/config/phase6-operation-journal.json
           dest: /run/verda-phase6-operation-journal.json
       no_log: true
+      when: phase6_step_authorized.rc == 0
 
     - name: Install the bounded prepare helper
       ansible.builtin.copy:
@@ -78,6 +86,7 @@
         owner: root
         group: root
         mode: "0700"
+      when: phase6_step_authorized.rc == 0
 
     - name: Cordon drain evacuate and prove the two-survivor boundary
       ansible.builtin.command:
@@ -94,6 +103,7 @@
       register: phase6_prepare_result
       changed_when: true
       no_log: true
+      when: phase6_step_authorized.rc == 0
 
 - name: Stop RKE2 and cleanly unmount the evacuated replacement target
   hosts: "{{ phase6_resize_target }}"
@@ -101,20 +111,25 @@
   become: true
   gather_facts: false
   any_errors_fatal: true
+  pre_tasks:
+    - *phase6_prepare_authorization_gate
   tasks:
     - name: Stop the selected RKE2 server
       ansible.builtin.systemd:
         name: rke2-server
         state: stopped
+      when: phase6_step_authorized.rc == 0
 
     - name: Flush pending writes
       ansible.builtin.command: sync
       changed_when: false
+      when: phase6_step_authorized.rc == 0
 
     - name: Unmount the evacuated Longhorn data filesystem
       ansible.posix.mount:
         path: /var/lib/longhorn
         state: unmounted
+      when: phase6_step_authorized.rc == 0
 
     - name: Prove RKE2 is inactive and Longhorn storage is detached from the filesystem
       ansible.builtin.shell: |
@@ -124,6 +139,7 @@
       args:
         executable: /bin/bash
       changed_when: false
+      when: phase6_step_authorized.rc == 0
 
 - name: Re-prove two-survivor readiness and etcd quorum after quiesce
   hosts: "{{ phase6_prepare_survivor }}"
@@ -131,6 +147,8 @@
   become: true
   gather_facts: false
   any_errors_fatal: true
+  pre_tasks:
+    - *phase6_prepare_authorization_gate
   tasks:
     - name: Run the bounded post-quiesce survivor gate
       ansible.builtin.command:
@@ -146,3 +164,4 @@
           - "{{ phase6_direction }}"
       changed_when: false
       no_log: true
+      when: phase6_step_authorized.rc == 0
