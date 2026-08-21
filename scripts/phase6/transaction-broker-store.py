@@ -190,6 +190,10 @@ def _windows_owner_protected_dacl(path: pathlib.Path, *, require_current_owner: 
             current_sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]
             if require_current_owner and not advapi.EqualSid(owner, current_sid):
                 return False
+            current_text = wintypes.LPWSTR()
+            if not advapi.ConvertSidToStringSidW(current_sid, ctypes.byref(current_text)): return False
+            try: current_text_value = current_text.value
+            finally: kernel32.LocalFree(current_text)
         finally:
             kernel32.CloseHandle(token)
         class ACL_SIZE_INFORMATION(ctypes.Structure):
@@ -201,7 +205,11 @@ def _windows_owner_protected_dacl(path: pathlib.Path, *, require_current_owner: 
         owner_text = wintypes.LPWSTR()
         if not advapi.ConvertSidToStringSidW(owner, ctypes.byref(owner_text)): return False
         try:
-            allowed_writers = {owner_text.value, "S-1-3-4", "S-1-5-18", "S-1-5-32-544"}
+            if not require_current_owner and owner_text.value not in {
+                    current_text_value, "S-1-5-18", "S-1-5-32-544",
+                    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"}:
+                return False
+            allowed_writers = {owner_text.value, current_text_value, "S-1-3-4", "S-1-5-18", "S-1-5-32-544"}
         finally:
             kernel32.LocalFree(owner_text)
         for index in range(info.AceCount):
@@ -225,8 +233,7 @@ def _windows_owner_protected_dacl(path: pathlib.Path, *, require_current_owner: 
             if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(text_sid)): return False
             try:
                 write_mask = (0x40000000 | 0x10000000 | 0x0002 | 0x0004 | 0x0100) if require_protected \
-                    else (0x40000000 | 0x10000000 | 0x00010000 | 0x00040000 | 0x00080000
-                          | 0x0002 | 0x0004 | 0x0010 | 0x0040 | 0x0100)
+                    else (0x40000000 | 0x10000000 | 0x00010000 | 0x00040000 | 0x00080000 | 0x0040)
                 if text_sid.value not in allowed_writers and mask & write_mask:
                     return False
             finally:
@@ -486,6 +493,7 @@ class DurableBrokerStore:
                  verifier: SynchronousAuthorizationVerifier |
                  Callable[[pathlib.Path, bytes, dict[str, Any]], dict[str, Any]] | None = None,
                  allow_test_verifier: bool = False,
+                 allow_test_security_probe: bool = False,
                  state_path: pathlib.Path | None = None,
                  crash_hook: Callable[[str], None] = lambda _stage: None) -> None:
         if os.name != "nt":
@@ -502,6 +510,8 @@ class DurableBrokerStore:
         self.temp_path = self.root / f"broker-{operation_id}.envelope-v2.tmp"
         self.clock, self.security_probe = clock, security_probe
         self.custom_security_probe = security_probe is not default_security_probe
+        if self.custom_security_probe and not allow_test_security_probe:
+            refuse("custom security probe is test-only")
         self.verifier = CallableAuthorizationVerifier(verifier) if callable(verifier) else verifier
         self.allow_test_verifier = allow_test_verifier
         if isinstance(self.verifier, CallableAuthorizationVerifier) and not allow_test_verifier:
@@ -589,13 +599,22 @@ class DurableBrokerStore:
                     or manifest["state"] != "PLANNED"
                     or manifest["raw_values_recorded"] is not False):
                 refuse("stale Terraform snapshot manifest differs")
-            if digest_bytes(self._stable_bytes(candidate)) != manifest["snapshot_sha256"]:
-                refuse("stale Terraform snapshot digest differs from manifest")
+            candidate_raw = self._stable_bytes(candidate)
+            if digest_bytes(candidate_raw) != manifest["snapshot_sha256"]:
+                if candidate_raw:
+                    refuse("stale Terraform snapshot digest differs from manifest")
+                self._delete_windows_write_through(candidate, original_name=original)
+                self._delete_windows_write_through(marker, original_name=marker_name)
+                continue
             self._delete_windows_write_through(candidate, original_name=original)
             self._delete_windows_write_through(marker, original_name=marker_name)
         for marker_name, marker in manifests.items():
             original = marker_name.removesuffix(".manifest.json")
             if not grammar.fullmatch(original): refuse("orphan Terraform snapshot manifest differs")
+            marker_raw = self._stable_bytes(marker)
+            if not marker_raw:
+                self._delete_windows_write_through(marker, original_name=marker_name)
+                continue
             manifest = self._read_json(marker)
             if (manifest.get("schema_version") != 1 or manifest.get("operation_id") != self.operation_id
                     or manifest.get("snapshot_name") != original or manifest.get("state") != "PLANNED"):

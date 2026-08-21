@@ -52,6 +52,7 @@ class DurableBrokerStoreTests(unittest.TestCase):
             kwargs["allow_test_verifier"] = True
         return STORE.DurableBrokerStore(operation_id=operation, base=root,
                                         clock=lambda: NOW, security_probe=kwargs.pop("security_probe", secure_probe),
+                                        allow_test_security_probe=True,
                                         **kwargs)
 
     def genesis(self, store, journal):
@@ -145,12 +146,13 @@ class DurableBrokerStoreTests(unittest.TestCase):
             self.assertEqual(len(outcomes), 1)
             self.assertIn("another writer", outcomes[0])
 
-    def test_windows_default_security_probe_refuses_untrusted_system_ancestor(self) -> None:
+    def test_windows_default_security_probe_allows_real_initialize_and_genesis(self) -> None:
         base = pathlib.Path(os.environ["LOCALAPPDATA"]) / f"VerdaStoreProbe-{uuid.uuid4().hex}"
         try:
             store = STORE.DurableBrokerStore(operation_id=FIXTURES.OPERATION, base=base, clock=lambda: NOW)
-            with self.assertRaisesRegex(STORE.StoreRefused, "system ancestor"):
-                store.initialize()
+            fixture = FIXTURES.BrokerFixture()
+            receipt = self.genesis(store, fixture.journal)
+            self.assertEqual(receipt["generation"], 1)
         finally:
             shutil.rmtree(base, ignore_errors=True)
 
@@ -358,17 +360,10 @@ class DurableBrokerStoreTests(unittest.TestCase):
                 runner = lambda _command: (0, '{"values":{"root_module":{"resources":[]}}}', "")
                 with self.assertRaises(RuntimeError):
                     STORE.ReadOnlyAdmissionAdapter(store, runner, lambda: NOW).collect("terraform-state")
-                try:
-                    STORE.ReadOnlyAdmissionAdapter(store, runner, lambda: NOW).collect("terraform-state")
-                except STORE.StoreRefused:
-                    pass
+                STORE.ReadOnlyAdmissionAdapter(store, runner, lambda: NOW).collect("terraform-state")
                 if store.root.exists():
                     names = {item.name for item in store.root.iterdir() if item.name.startswith("state-")}
-                    for name in names:
-                        if ".read-only.tfstate" in name and ".manifest.json" not in name:
-                            original = name.removesuffix(".deleting")
-                            self.assertTrue(original + ".manifest.json" in names
-                                            or original + ".manifest.json.deleting" in names)
+                    self.assertEqual(names, set())
 
     def test_admission_hashes_every_bound_artifact_and_calls_verifier_synchronously(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
