@@ -336,8 +336,24 @@ class TransactionVerifierTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository, github, value = self.fixture(directory)
             github.runs[0]["run_attempt"] = True
-            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "run/attempt"):
+            with self.assertRaisesRegex(AUTH.AuthorizationRefused, "malformed or non-exact"):
                 self.verify(repository, github, value)
+
+    def test_newer_malformed_workflow_run_cannot_be_filtered_before_ranking(self):
+        mutations = {
+            "path": None, "workflow_id": 1, "head_sha": "1" * 40, "event": "push",
+            "head_repository": None, "pull_requests": [], "status": None,
+            "run_number": True, "run_attempt": 0, "conclusion": "bogus",
+        }
+        for key, bad in mutations.items():
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as directory:
+                repository, github, value = self.fixture(directory)
+                newer = copy.deepcopy(github.runs[0])
+                newer.update(id=2, run_number=2)
+                newer[key] = bad
+                github.runs.append(newer)
+                with self.assertRaisesRegex(AUTH.AuthorizationRefused, "malformed or non-exact"):
+                    self.verify(repository, github, value)
 
     def test_workflow_pagination_uses_all_statuses_and_refuses_truncation(self):
         api = AUTH.GitHubAPI()

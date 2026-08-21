@@ -579,22 +579,27 @@ def authorization_times(artifact: dict[str, Any], *, now: dt.datetime | None = N
 
 
 def select_workflow(github: GitHubView, head_sha: str, pr_number: int) -> tuple[int, int, int]:
-    exact: list[dict[str, Any]] = []
-    for run in github.workflow_runs(head_sha):
-        matches = (run.get("workflow_id") == WORKFLOW_ID and run.get("head_sha") == head_sha
-                   and run.get("event") == "pull_request" and run.get("path") == WORKFLOW_PATH
-                   and isinstance(run.get("head_repository"), dict)
-                   and run["head_repository"].get("full_name") == REPOSITORY
-                   and isinstance(run.get("pull_requests"), list)
-                   and any(isinstance(item, dict) and item.get("number") == pr_number
-                           for item in run["pull_requests"]))
-        if not matches:
-            continue
-        if any(type(run.get(key)) is not int or run[key] < 1 for key in ("run_number", "run_attempt", "id")):
-            refuse("exact hosted workflow run/attempt identity differs")
-        exact.append(run)
+    exact = github.workflow_runs(head_sha)
     if not exact:
         refuse("exact hosted validation workflow did not run on the PR head")
+    statuses = {"queued", "in_progress", "completed", "requested", "waiting", "pending"}
+    conclusions = {"action_required", "cancelled", "failure", "neutral", "skipped", "stale",
+                   "startup_failure", "success", "timed_out"}
+    for run in exact:
+        pulls = run.get("pull_requests")
+        if (run.get("workflow_id") != WORKFLOW_ID or run.get("head_sha") != head_sha
+                or run.get("event") != "pull_request" or run.get("path") != WORKFLOW_PATH
+                or not isinstance(run.get("head_repository"), dict)
+                or run["head_repository"].get("full_name") != REPOSITORY
+                or not isinstance(pulls, list) or not pulls
+                or not all(isinstance(item, dict) and type(item.get("number")) is int for item in pulls)
+                or not any(item["number"] == pr_number for item in pulls)
+                or any(type(run.get(key)) is not int or run[key] < 1
+                       for key in ("run_number", "run_attempt", "id"))
+                or run.get("status") not in statuses
+                or (run["status"] == "completed" and run.get("conclusion") not in conclusions)
+                or (run["status"] != "completed" and run.get("conclusion") is not None)):
+            refuse("hosted workflow query returned a malformed or non-exact run")
     latest = max(exact, key=lambda run: (run["run_number"], run["run_attempt"], run["id"]))
     if latest.get("status") != "completed" or latest.get("conclusion") != "success":
         refuse("newest exact hosted validation workflow did not complete successfully")
