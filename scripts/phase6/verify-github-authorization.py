@@ -35,7 +35,7 @@ WORKFLOW_APP_ID = 15368
 TRUSTED_MERGER = "kaycee1771"
 WEB_FLOW_FINGERPRINT = "968479A1AFF927E37D1A566BB5690EEEBB952194"
 WEB_FLOW_KEY_ID = "B5690EEEBB952194"
-WEB_FLOW_KEY_SHA256 = "40ce89d21fb075092d256f9fbf62a1c19299d3282cb913d3e61d08235d0c491a"
+WEB_FLOW_PUBLIC_KEY_DIGEST = "40ce89d21fb075092d256f9fbf62a1c19299d3282cb913d3e61d08235d0c491a"
 WINDOWS_GIT_SHA256 = "c954fcc8e65a38450895ca65d308ecaee63f044d16494b5385faa5e036a3facb"
 WINDOWS_GIT_VERSION = "git version 2.50.1.windows.1"
 WINDOWS_GPG_SHA256 = "22356f7af9f43c98339a51cee22ab9930688b699f71c5f964b0b07dfa0bc0d73"
@@ -288,12 +288,12 @@ class GitRepository:
         directory = self.root / "config" / "phase6-authorizations"
         key = directory / "github-web-flow.gpg.asc"
         provenance = read_object(directory / "github-web-flow-key.provenance.json", "web-flow key provenance")
-        if key.is_symlink() or not key.is_file() or sha256_file(key) != WEB_FLOW_KEY_SHA256:
+        if key.is_symlink() or not key.is_file() or sha256_file(key) != WEB_FLOW_PUBLIC_KEY_DIGEST:
             refuse("vendored web-flow key digest differs")
         if provenance != {
             "schema_version": 1, "source": "https://api.github.com/users/web-flow/gpg_keys",
             "raw_endpoint": "https://github.com/web-flow.gpg", "api_record_id": 3040729,
-            "retrieval_date_utc": "2026-08-21", "armored_sha256": WEB_FLOW_KEY_SHA256,
+            "retrieval_date_utc": "2026-08-21", "armored_sha256": WEB_FLOW_PUBLIC_KEY_DIGEST,
             "accepted_primary_fingerprint": WEB_FLOW_FINGERPRINT, "accepted_key_id": WEB_FLOW_KEY_ID,
             "accepted_uid": "GitHub <noreply@github.com>", "raw_values_recorded": False,
         }:

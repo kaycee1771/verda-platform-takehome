@@ -419,7 +419,7 @@ class TransactionVerifierTests(unittest.TestCase):
     def test_pinned_key_provenance_and_schema_match_source_contract(self):
         provenance = json.loads((ROOT / "config/phase6-authorizations/github-web-flow-key.provenance.json").read_text())
         key = (ROOT / "config/phase6-authorizations/github-web-flow.gpg.asc").read_bytes()
-        self.assertEqual(hashlib.sha256(key).hexdigest(), AUTH.WEB_FLOW_KEY_SHA256)
+        self.assertEqual(hashlib.sha256(key).hexdigest(), AUTH.WEB_FLOW_PUBLIC_KEY_DIGEST)
         self.assertEqual(provenance["accepted_primary_fingerprint"], AUTH.WEB_FLOW_FINGERPRINT)
         schema = json.loads((ROOT / "schemas/phase6-github-authorization.schema.json").read_text())
         self.assertEqual(set(schema["required"]), AUTH.AUTHORIZATION_KEYS)
