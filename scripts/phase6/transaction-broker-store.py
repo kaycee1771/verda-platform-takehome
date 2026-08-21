@@ -140,7 +140,8 @@ def default_security_probe(path: pathlib.Path) -> dict[str, Any]:
             "owner_only": owner_only}
 
 
-def _windows_owner_protected_dacl(path: pathlib.Path) -> bool:
+def _windows_owner_protected_dacl(path: pathlib.Path, *, require_current_owner: bool = True,
+                                  require_protected: bool = True) -> bool:
     """Require current-user ownership, protected DACL, and no broad write ACE."""
     import ctypes
     from ctypes import wintypes
@@ -175,7 +176,7 @@ def _windows_owner_protected_dacl(path: pathlib.Path) -> bool:
         advapi.GetSecurityDescriptorControl.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.WORD),
                                                         ctypes.POINTER(wintypes.DWORD))
         if not advapi.GetSecurityDescriptorControl(descriptor, ctypes.byref(control), ctypes.byref(revision)) \
-                or not control.value & 0x1000 or not dacl.value:
+                or (require_protected and not control.value & 0x1000) or not dacl.value:
             return False
         token = wintypes.HANDLE()
         if not advapi.OpenProcessToken(kernel32.GetCurrentProcess(), 0x8, ctypes.byref(token)):
@@ -187,7 +188,7 @@ def _windows_owner_protected_dacl(path: pathlib.Path) -> bool:
             if not advapi.GetTokenInformation(token, 1, buffer, needed, ctypes.byref(needed)):
                 return False
             current_sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]
-            if not advapi.EqualSid(owner, current_sid):
+            if require_current_owner and not advapi.EqualSid(owner, current_sid):
                 return False
         finally:
             kernel32.CloseHandle(token)
@@ -200,7 +201,7 @@ def _windows_owner_protected_dacl(path: pathlib.Path) -> bool:
         owner_text = wintypes.LPWSTR()
         if not advapi.ConvertSidToStringSidW(owner, ctypes.byref(owner_text)): return False
         try:
-            allowed_writers = {owner_text.value, "S-1-5-18", "S-1-5-32-544"}
+            allowed_writers = {owner_text.value, "S-1-3-4", "S-1-5-18", "S-1-5-32-544"}
         finally:
             kernel32.LocalFree(owner_text)
         for index in range(info.AceCount):
@@ -209,14 +210,23 @@ def _windows_owner_protected_dacl(path: pathlib.Path) -> bool:
             raw = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))
             # Only simple allow and deny ACEs are accepted. Object/callback ACEs
             # have semantics this boundary deliberately refuses to interpret.
-            if raw[0] not in {0, 1}: return False
-            if raw[0] == 1: continue
+            if raw[0] not in {0, 1, 5, 6}:
+                if require_protected: return False
+                continue
+            if raw[0] in {1, 6}: continue
+            if raw[1] & 0x8:  # INHERIT_ONLY_ACE does not grant access to this held ancestor.
+                continue
             mask = ctypes.cast(ace.value + 4, ctypes.POINTER(wintypes.DWORD))[0]
-            sid = ctypes.c_void_p(ace.value + 8); text_sid = wintypes.LPWSTR()
+            sid_offset = 8
+            if raw[0] == 5:
+                object_flags = ctypes.cast(ace.value + 8, ctypes.POINTER(wintypes.DWORD))[0]
+                sid_offset = 12 + (16 if object_flags & 0x1 else 0) + (16 if object_flags & 0x2 else 0)
+            sid = ctypes.c_void_p(ace.value + sid_offset); text_sid = wintypes.LPWSTR()
             if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(text_sid)): return False
             try:
-                if text_sid.value not in allowed_writers and mask & \
-                        (0x40000000 | 0x10000000 | 0x0002 | 0x0004 | 0x0100):
+                write_mask = (0x40000000 | 0x10000000 | 0x0002 | 0x0004 | 0x0100) if require_protected \
+                    else (0x40000000 | 0x10000000 | 0x00010000 | 0x00040000 | 0x00080000 | 0x0040)
+                if text_sid.value not in allowed_writers and mask & write_mask:
                     return False
             finally:
                 kernel32.LocalFree(text_sid)
@@ -404,6 +414,8 @@ class DurableBrokerStore:
                  allow_test_verifier: bool = False,
                  state_path: pathlib.Path | None = None,
                  crash_hook: Callable[[str], None] = lambda _stage: None) -> None:
+        if os.name != "nt":
+            refuse("protected Phase 6 broker store is Windows-only")
         if not DIGEST.fullmatch(operation_id):
             refuse("store operation identity differs")
         canonical_base = (base or default_base())
@@ -415,6 +427,7 @@ class DurableBrokerStore:
         self.envelope_path = self.root / f"broker-{operation_id}.envelope-v2.json"
         self.temp_path = self.root / f"broker-{operation_id}.envelope-v2.tmp"
         self.clock, self.security_probe = clock, security_probe
+        self.custom_security_probe = security_probe is not default_security_probe
         self.verifier = CallableAuthorizationVerifier(verifier) if callable(verifier) else verifier
         self.allow_test_verifier = allow_test_verifier
         if isinstance(self.verifier, CallableAuthorizationVerifier) and not allow_test_verifier:
@@ -440,8 +453,15 @@ class DurableBrokerStore:
                 facts = self.security_probe(cursor)
                 if facts.get("reparse"):
                     refuse("broker path traverses a symlink/junction/reparse point")
-                if not facts.get("owner_only", False):
-                    refuse("broker path ACL is not owner-only")
+                within_base = cursor == self.base or self.base in cursor.parents
+                if within_base:
+                    if not facts.get("owner_only", False):
+                        refuse("broker path ACL is not owner-only")
+                elif os.name == "nt" and cursor != pathlib.Path.home() \
+                        and not (self.custom_security_probe and facts.get("owner_only", False)) \
+                        and not _windows_owner_protected_dacl(
+                        cursor, require_current_owner=False, require_protected=False):
+                    refuse("broker system ancestor permits an untrusted writer")
                 if regular and cursor == absolute and facts.get("nlink") != 1:
                     refuse("broker protected file has aliases/hardlinks")
             cursor = cursor.parent
@@ -564,7 +584,11 @@ class DurableBrokerStore:
                 for held in ancestor_handles: kernel32.CloseHandle(held)
                 refuse("unable to hold protected artifact ancestor directory")
             facts = self.security_probe(ancestor)
-            if facts.get("reparse") or not facts.get("owner_only", False):
+            within_base = ancestor == self.base or self.base in ancestor.parents
+            trusted = facts.get("owner_only", False) if within_base or self.custom_security_probe else \
+                (ancestor == pathlib.Path.home() or _windows_owner_protected_dacl(
+                    ancestor, require_current_owner=False, require_protected=False))
+            if facts.get("reparse") or not trusted:
                 kernel32.CloseHandle(directory_handle)
                 for held in ancestor_handles: kernel32.CloseHandle(held)
                 refuse("protected artifact ancestor DACL/owner differs while held")

@@ -11,10 +11,12 @@ import json
 import os
 import pathlib
 import subprocess
+import shutil
 import sys
 import tempfile
 import threading
 import unittest
+import uuid
 
 
 ROOT = pathlib.Path(__file__).parents[2]
@@ -130,6 +132,16 @@ class DurableBrokerStoreTests(unittest.TestCase):
                        "ReadFile.argtypes", "MoveFileExW.argtypes"):
             self.assertIn(marker, source)
         self.assertIn("D:P(A;;GA;;;OW)(A;;GA;;;SY)(A;;GA;;;BA)", source)
+
+    def test_windows_default_security_probe_accepts_protected_base(self) -> None:
+        base = pathlib.Path(os.environ["LOCALAPPDATA"]) / f"VerdaStoreProbe-{uuid.uuid4().hex}"
+        try:
+            store = STORE.DurableBrokerStore(operation_id=FIXTURES.OPERATION, base=base, clock=lambda: NOW)
+            store.initialize()
+            self.assertTrue(STORE.default_security_probe(base)["owner_only"])
+            self.assertTrue(STORE.default_security_probe(store.root)["owner_only"])
+        finally:
+            shutil.rmtree(base, ignore_errors=True)
 
     def test_atomic_cas_load_nonce_replay_and_stale_epoch(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -363,13 +375,8 @@ class NonWindowsStoreRefusalTests(unittest.TestCase):
     def test_store_refuses_before_creating_or_reading_paths(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             base = pathlib.Path(folder) / "must-not-exist"
-            store = STORE.DurableBrokerStore(operation_id=FIXTURES.OPERATION, base=base, clock=lambda: NOW)
             with self.assertRaisesRegex(STORE.StoreRefused, "Windows-only"):
-                store.initialize()
-            self.assertFalse(base.exists())
-            with self.assertRaisesRegex(STORE.StoreRefused, "Windows-only"):
-                with store.locked():
-                    pass
+                STORE.DurableBrokerStore(operation_id=FIXTURES.OPERATION, base=base, clock=lambda: NOW)
             self.assertFalse(base.exists())
 
 
