@@ -1016,8 +1016,10 @@ def assert_plan(
         refuse("saved plan is incomplete or was created with targeting")
     if plan.get("applyable") is not True or plan.get("errored") is not False:
         refuse("saved plan is not complete, applyable, and error-free")
-    if plan.get("resource_drift") != []:
-        refuse("saved plan resource-drift section is absent or non-empty")
+    # Terraform 1.15.8 omits resource_drift when refresh found no drift.
+    # Any present, non-empty drift remains a hard refusal.
+    if plan.get("resource_drift", []) != []:
+        refuse("saved plan resource-drift section is non-empty")
     for marker in ("target_addrs", "targets", "targeting", "incomplete"):
         if marker in plan and plan[marker] not in (None, False, [], {}):
             refuse("saved plan contains a targeting or incomplete-plan marker")

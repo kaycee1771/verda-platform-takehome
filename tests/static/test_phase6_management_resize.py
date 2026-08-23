@@ -184,6 +184,10 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(resized["target_instance_type"], "CPU.8V.32G")
         self.assertEqual(rolled_back["target_instance_type"], "CPU.4V.16G")
 
+        omitted_empty_drift = plan()
+        omitted_empty_drift.pop("resource_drift")
+        RESIZE.assert_plan(omitted_empty_drift, active_contract(), "03", "resize", NOW)
+
     def test_extra_change_is_rejected(self) -> None:
         candidate = plan()
         candidate["resource_changes"].append(copy.deepcopy(candidate["resource_changes"][0]))
