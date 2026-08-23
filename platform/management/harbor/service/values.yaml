@@ -5,7 +5,7 @@
 gates:
   stagingCertificateVerified: true
   sealedSecretsReady: true
-  postgresqlReady: false
+  postgresqlReady: true
   capacityAdmitted: true
   imageDigestsLocked: true
 
@@ -16,7 +16,7 @@ certificate:
   productionSecretName: tls-harbor-ingress
 
 harbor:
-  enabled: false
+  enabled: true
   fullnameOverride: harbor
   externalURL: https://harbor.95-133-252-214.nip.io
   imagePullPolicy: IfNotPresent
