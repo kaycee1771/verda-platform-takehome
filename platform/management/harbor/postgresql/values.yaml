@@ -1,8 +1,8 @@
 ---
-enabled: false
+enabled: true
 gates:
-  sealedCredentialsReady: false
-  imageDigestLocked: false
+  sealedCredentialsReady: true
+  imageDigestLocked: true
 
 image:
   repository: docker.io/library/postgres

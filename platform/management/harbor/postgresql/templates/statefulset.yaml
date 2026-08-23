@@ -46,7 +46,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
             privileged: false
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: true
             runAsNonRoot: true
             runAsUser: 999
           env:
@@ -79,6 +79,11 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: run, emptyDir: {sizeLimit: 16Mi}}
+        - {name: tmp, emptyDir: {sizeLimit: 64Mi}}
   volumeClaimTemplates:
     - metadata:
         name: data
