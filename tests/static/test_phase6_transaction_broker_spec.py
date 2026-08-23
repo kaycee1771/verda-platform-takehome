@@ -133,18 +133,6 @@ class BrokerFixture:
 
     def go(self, event: dict, now: dt.datetime = NOW) -> dict:
         current = self.session.journal
-        event = dict(event)
-        if "receipt_observed_at" in event and now == NOW:
-            now = dt.datetime.fromisoformat(event["receipt_observed_at"].replace("Z", "+00:00"))
-        if event.get("event", "").startswith("BEGIN_"):
-            event.setdefault("fencing_token", digest(f"fence-{current['generation']}"))
-            event.setdefault("admission_sha256", digest(f"admission-{current['generation']}"))
-            event.setdefault("pending_admission_verified_at", now.strftime("%Y-%m-%dT%H:%M:%SZ"))
-        elif current["state"] in {"PREPARING", "APPLYING", "RECOVERING", "POSTFLIGHT", "ROLLING_BACK"} \
-                and event.get("event") not in {"RECOVERY_MILESTONE", "ROLLBACK_MILESTONE", "ADOPT_LEASE"}:
-            event.setdefault("fencing_token", current["pending_fencing_token"])
-            event.setdefault("admission_sha256", current["pending_admission_sha256"])
-            event.setdefault("receipt_observed_at", now.strftime("%Y-%m-%dT%H:%M:%SZ"))
         return self.session.transition(expected_generation=current["generation"],
                                        expected_nonce=current["cas_nonce"], boundary=boundary(current, now),
                                        event=event, now=now)
@@ -276,13 +264,10 @@ class TransactionBrokerSpecTests(unittest.TestCase):
         self.assertEqual(adopted["history"][-1]["event"], "ADOPT_LEASE")
         resumed = MODEL.BrokerModelSession(policy=POLICY, journal=adopted, lease=replacement,
                                            nonce_source=fixture.nonces)
-        adopted_fence = {"fencing_token": adopted["pending_fencing_token"],
-                         "admission_sha256": adopted["pending_admission_sha256"],
-                         "receipt_observed_at": NOW.strftime("%Y-%m-%dT%H:%M:%SZ")}
         retried = resumed.transition(
             expected_generation=adopted["generation"], expected_nonce=adopted["cas_nonce"],
             boundary=boundary(adopted), event={"event": "ADOPT_PREPARE_NOT_STARTED",
-                                               "probe_sha256": digest("prepare-probe"), **adopted_fence}, now=NOW)
+                                               "probe_sha256": digest("prepare-probe")}, now=NOW)
         self.assertEqual(retried["state"], "AUTHORIZED")
 
     def test_apply_adoption_not_started_allows_exact_retry_only(self) -> None:

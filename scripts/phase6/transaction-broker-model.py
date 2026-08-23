@@ -55,10 +55,7 @@ JOURNAL_KEYS = {
     "authorization_sha256", "authorization_history_sha256", "verifier_receipt_sha256", "broker_sha256", "policy_sha256",
     "rollback_policy_sha256", "integrated_commit", "node", "direction", "plan_sha256",
     "plan_semantic_sha256", "state_lineage_sha256", "state_serial_before", "state_serial_after",
-    "generation", "cas_nonce", "lease_id", "lease_epoch", "pending_fencing_token", "pending_admission_sha256",
-    "pending_admission_verified_at", "last_receipt_observed_at",
-    "state", "recovery_milestone", "rollback_origin_state", "rollback_origin_fencing_token",
-    "rollback_origin_admission_sha256", "rollback_origin_admission_verified_at",
+    "generation", "cas_nonce", "lease_id", "lease_epoch", "state", "recovery_milestone",
     "rollback_milestone", "prepare_receipt_sha256", "apply_receipt_sha256",
     "state_backup_sha256", "recovery_receipt_sha256", "postflight_sha256",
     "rollback_receipt_sha256", "latest_gate_sha256", "failure_class", "rollback_required",
@@ -66,8 +63,6 @@ JOURNAL_KEYS = {
     "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
     "pre_rollback_backup_sha256", "post_rollback_backup_sha256",
     "reconciled_state_serial", "reconciled_state_backup", "reconciled_current_state_receipt_sha256",
-    "reconciled_rollback_state_serial", "reconciled_rollback_state_backup",
-    "reconciled_rollback_current_state_receipt_sha256",
     "start_by", "complete_by", "resource_expiry_utc", "minimum_recovery_margin_seconds",
     "started_at", "updated_at", "history", "manual_intervention_required", "raw_values_recorded",
 }
@@ -75,8 +70,7 @@ HISTORY_KEYS = {"generation", "from_state", "to_state", "event", "receipt_sha256
                 "lease_epoch", "event_payload", "previous_entry_sha256", "projection", "projection_sha256", "entry_sha256"}
 BACKUP_KEYS = {"receipt_sha256", "backup_identity_sha256", "state_lineage_sha256", "state_serial", "verified_at"}
 BACKUP_FIELDS = {"state_backup_sha256", "pre_apply_backup_sha256", "post_apply_backup_sha256",
-                 "pre_rollback_backup_sha256", "post_rollback_backup_sha256", "reconciled_state_backup",
-                 "reconciled_rollback_state_backup"}
+                 "pre_rollback_backup_sha256", "post_rollback_backup_sha256", "reconciled_state_backup"}
 EFFECT_RECEIPT_KEYS = {"operation_id", "lease_id", "lease_epoch", "action", "observed_at",
                        "gate_kind", "gate_sha256", "gate_fresh", "exact_effect_verified",
                        "probe_outcome", "zero_drift", "capacity_verified", "state_lineage_sha256",
@@ -86,45 +80,27 @@ EFFECT_RECEIPT_KEYS = {"operation_id", "lease_id", "lease_epoch", "action", "obs
 
 EVENT_SPEC: dict[str, dict[str, Any]] = {
         "START_SPEC": set(), "ADOPT_LEASE": {"lease_id"},
-        "BEGIN_PREPARE": {"latest_gate_sha256", "pending_fencing_token", "pending_admission_sha256", "pending_admission_verified_at"},
+        "BEGIN_PREPARE": {"latest_gate_sha256"},
         "PREPARE_SUCCEEDED": {"prepare_receipt_sha256"},
         "ADOPT_PREPARE_COMPLETE": {"prepare_receipt_sha256"},
-        "BEGIN_APPLY": {"latest_gate_sha256", "pending_fencing_token", "pending_admission_sha256", "pending_admission_verified_at"},
+        "BEGIN_APPLY": {"latest_gate_sha256"},
         "APPLY_SUCCEEDED": {"apply_receipt_sha256", "state_backup_sha256", "pre_apply_backup_sha256",
                             "post_apply_backup_sha256", "state_serial_after"},
         "ADOPT_APPLY_COMPLETE": {"apply_receipt_sha256", "state_backup_sha256", "pre_apply_backup_sha256",
                                  "post_apply_backup_sha256", "state_serial_after"},
-        "BEGIN_RECOVERY": {"latest_gate_sha256", "pending_fencing_token", "pending_admission_sha256", "pending_admission_verified_at"},
+        "BEGIN_RECOVERY": {"latest_gate_sha256"},
         "RECOVERY_SUCCEEDED": {"recovery_receipt_sha256"},
         "ADOPT_RECOVERY_COMPLETE": {"recovery_receipt_sha256"},
-        "ADOPT_RECOVERY_NOT_STARTED": set(),
-        "ADOPT_RECOVERY_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
-        "ADOPT_RECOVERY_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required"},
-        "BEGIN_POSTFLIGHT": {"latest_gate_sha256", "pending_fencing_token", "pending_admission_sha256", "pending_admission_verified_at"},
+        "BEGIN_POSTFLIGHT": {"latest_gate_sha256"},
         "POSTFLIGHT_SUCCEEDED": {"postflight_sha256", "rollback_required"},
         "ADOPT_POSTFLIGHT_COMPLETE": {"postflight_sha256", "rollback_required"},
-        "ADOPT_POSTFLIGHT_NOT_STARTED": set(),
-        "ADOPT_POSTFLIGHT_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
-        "ADOPT_POSTFLIGHT_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required"},
         "FAIL_RECOVERY_UNSAFE": {"failure_class", "rollback_required"},
         "FAIL_POSTFLIGHT_UNSAFE": {"failure_class", "rollback_required"},
-        "BEGIN_ROLLBACK": {"latest_gate_sha256", "pending_fencing_token", "pending_admission_sha256", "pending_admission_verified_at",
-                           "rollback_milestone", "rollback_origin_state", "rollback_origin_fencing_token",
-                           "rollback_origin_admission_sha256", "rollback_origin_admission_verified_at", "rollback_plan_sha256",
+        "BEGIN_ROLLBACK": {"latest_gate_sha256", "rollback_milestone", "rollback_plan_sha256",
                            "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
                            "pre_rollback_backup_sha256"},
         "ROLLBACK_SUCCEEDED": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
         "ADOPT_ROLLBACK_COMPLETE": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
-        "ADOPT_ROLLBACK_NOT_STARTED": {"rollback_milestone", "rollback_origin_state", "rollback_origin_fencing_token",
-                                        "rollback_origin_admission_sha256", "rollback_origin_admission_verified_at", "rollback_plan_sha256",
-                                        "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
-                                        "pre_rollback_backup_sha256"},
-        "ADOPT_ROLLBACK_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required",
-                                    "reconciled_rollback_state_serial", "reconciled_rollback_state_backup",
-                                    "reconciled_rollback_current_state_receipt_sha256"},
-        "ADOPT_ROLLBACK_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required",
-                                    "reconciled_rollback_state_serial", "reconciled_rollback_state_backup",
-                                    "reconciled_rollback_current_state_receipt_sha256"},
         "FAIL_ROLLBACK_UNSAFE": {"failure_class", "rollback_required", "manual_intervention_required"},
         "DEADLINE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
         "RESOURCE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
@@ -145,12 +121,6 @@ EVENT_CONSTANT_UPDATES = {
     "FAIL_RECOVERY_UNSAFE": {"failure_class": "RECOVERY_UNSAFE", "rollback_required": True},
     "FAIL_POSTFLIGHT_UNSAFE": {"failure_class": "POSTFLIGHT_UNSAFE", "rollback_required": True},
     "BEGIN_ROLLBACK": {"rollback_milestone": "ROLLBACK_ADMITTED"},
-    "ADOPT_ROLLBACK_NOT_STARTED": {"rollback_milestone": "NONE", "rollback_origin_state": None,
-                                     "rollback_origin_fencing_token": None, "rollback_origin_admission_sha256": None,
-                                     "rollback_origin_admission_verified_at": None,
-                                     "rollback_plan_sha256": None, "rollback_plan_semantic_sha256": None,
-                                     "rollback_current_state_receipt_sha256": None,
-                                     "pre_rollback_backup_sha256": None},
     "FAIL_ROLLBACK_UNSAFE": {"failure_class": "ROLLBACK_UNSAFE", "rollback_required": False,
                              "manual_intervention_required": True},
     "DEADLINE_EXPIRED": {"failure_class": "POLICY_REFUSAL", "rollback_required": False,
@@ -167,18 +137,6 @@ EVENT_CONSTANT_UPDATES = {
                             "manual_intervention_required": True},
     "ADOPT_APPLY_UNKNOWN": {"failure_class": "APPLY_UNKNOWN", "rollback_required": False,
                             "manual_intervention_required": True},
-    "ADOPT_RECOVERY_PARTIAL": {"failure_class": "RECOVERY_PARTIAL", "rollback_required": False,
-                                "manual_intervention_required": True},
-    "ADOPT_RECOVERY_UNKNOWN": {"failure_class": "RECOVERY_UNKNOWN", "rollback_required": False,
-                                "manual_intervention_required": True},
-    "ADOPT_POSTFLIGHT_PARTIAL": {"failure_class": "POSTFLIGHT_PARTIAL", "rollback_required": False,
-                                  "manual_intervention_required": True},
-    "ADOPT_POSTFLIGHT_UNKNOWN": {"failure_class": "POSTFLIGHT_UNKNOWN", "rollback_required": False,
-                                  "manual_intervention_required": True},
-    "ADOPT_ROLLBACK_PARTIAL": {"failure_class": "ROLLBACK_PARTIAL", "rollback_required": False,
-                                "manual_intervention_required": True},
-    "ADOPT_ROLLBACK_UNKNOWN": {"failure_class": "ROLLBACK_UNKNOWN", "rollback_required": False,
-                                "manual_intervention_required": True},
     "ROLLBACK_SUCCEEDED": {"rollback_required": False},
     "ADOPT_ROLLBACK_COMPLETE": {"rollback_required": False},
 }
@@ -208,18 +166,12 @@ def _event_spec(event: str, from_state: str | None, to_state: str) -> dict[str, 
         event == "BEGIN_ROLLBACK" and to_state == "ROLLING_BACK"
         and from_state in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
     ) or (
-        event == "ADOPT_ROLLBACK_NOT_STARTED" and from_state == "ROLLING_BACK"
-        and to_state in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
-    ) or (
         event in {"DEADLINE_EXPIRED", "RESOURCE_EXPIRED"}
         and from_state not in {"COMPLETED", "ROLLED_BACK", "FAILED_SAFE"} and to_state == "FAILED_SAFE"
     )
     if event_tuple not in LEGAL_EVENTS and not legal_dynamic:
         refuse("transaction replay event edge differs from EVENT_SPEC")
-    fields = set(fields)
-    if from_state in {"PREPARING", "APPLYING", "RECOVERING", "POSTFLIGHT", "ROLLING_BACK"} and to_state != from_state:
-        fields |= {"pending_fencing_token", "pending_admission_sha256", "pending_admission_verified_at", "last_receipt_observed_at"}
-    return {"fields": fields, "constants": EVENT_CONSTANT_UPDATES.get(event, {})}
+    return {"fields": set(fields), "constants": EVENT_CONSTANT_UPDATES.get(event, {})}
 
 
 def _allowed_event_fields(event: str, from_state: str | None, to_state: str) -> set[str]:
@@ -227,15 +179,7 @@ def _allowed_event_fields(event: str, from_state: str | None, to_state: str) -> 
 
 
 def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payload: dict[str, Any]) -> None:
-    if value is None and payload.get("rollback_milestone") == "NONE" and key in {
-            "rollback_origin_state", "rollback_plan_sha256", "rollback_plan_semantic_sha256",
-            "rollback_current_state_receipt_sha256", "pre_rollback_backup_sha256",
-            "rollback_origin_fencing_token", "rollback_origin_admission_sha256"}:
-        return
-    if key in {"pending_fencing_token", "pending_admission_sha256", "rollback_origin_fencing_token",
-               "rollback_origin_admission_sha256"}:
-        if value is not None: _digest(value, f"event.{key}")
-    elif key in BACKUP_FIELDS:
+    if key in BACKUP_FIELDS:
         receipt = exact_keys(value, BACKUP_KEYS, f"event.{key}")
         for digest_key in ("receipt_sha256", "backup_identity_sha256", "state_lineage_sha256"):
             _digest(receipt[digest_key], f"event.{key}.{digest_key}")
@@ -248,7 +192,6 @@ def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payl
             "pre_rollback_backup_sha256": projection.get("state_serial_after"),
             "post_rollback_backup_sha256": projection["state_serial_before"],
             "reconciled_state_backup": payload.get("reconciled_state_serial"),
-            "reconciled_rollback_state_backup": payload.get("reconciled_rollback_state_serial"),
         }[key]
         if receipt["state_serial"] != expected_serial:
             refuse(f"event.{key} serial relation differs")
@@ -261,21 +204,16 @@ def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payl
     elif key == "state_serial_after":
         if type(value) is not int or value <= projection["state_serial_before"]:
             refuse("event state serial did not advance")
-    elif key in {"reconciled_state_serial", "reconciled_rollback_state_serial"}:
+    elif key == "reconciled_state_serial":
         if type(value) is not int or value < projection["state_serial_before"]:
             refuse("event reconciled state serial differs")
-    elif key == "failure_class" and value not in {"APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_PARTIAL",
-                                                    "RECOVERY_UNKNOWN", "POSTFLIGHT_PARTIAL", "POSTFLIGHT_UNKNOWN",
-                                                    "ROLLBACK_PARTIAL", "ROLLBACK_UNKNOWN", "RECOVERY_UNSAFE",
+    elif key == "failure_class" and value not in {"APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE",
                                                     "POSTFLIGHT_UNSAFE", "ROLLBACK_UNSAFE", "POLICY_REFUSAL"}:
         refuse("event failure class differs")
     elif key == "recovery_milestone" and value not in RECOVERY_MILESTONES:
         refuse("event recovery milestone differs")
     elif key == "rollback_milestone" and value not in ROLLBACK_MILESTONES:
         refuse("event rollback milestone differs")
-    elif key == "rollback_origin_state" and value is not None and value not in {
-            "APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}:
-        refuse("event rollback origin state differs")
 
 
 def _effect_receipt(*, projection: dict[str, Any], action: str, evidence: str,
@@ -347,21 +285,13 @@ LEGAL_EVENTS = {
     ("APPLIED", "BEGIN_RECOVERY", "RECOVERING"),
     ("RECOVERING", "RECOVERY_SUCCEEDED", "RECOVERED"),
     ("RECOVERING", "ADOPT_RECOVERY_COMPLETE", "RECOVERED"),
-    ("RECOVERING", "ADOPT_RECOVERY_NOT_STARTED", "APPLIED"),
-    ("RECOVERING", "ADOPT_RECOVERY_PARTIAL", "FAILED_SAFE"),
-    ("RECOVERING", "ADOPT_RECOVERY_UNKNOWN", "FAILED_SAFE"),
     ("RECOVERED", "BEGIN_POSTFLIGHT", "POSTFLIGHT"),
     ("POSTFLIGHT", "POSTFLIGHT_SUCCEEDED", "COMPLETED"),
     ("POSTFLIGHT", "ADOPT_POSTFLIGHT_COMPLETE", "COMPLETED"),
-    ("POSTFLIGHT", "ADOPT_POSTFLIGHT_NOT_STARTED", "RECOVERED"),
-    ("POSTFLIGHT", "ADOPT_POSTFLIGHT_PARTIAL", "FAILED_SAFE"),
-    ("POSTFLIGHT", "ADOPT_POSTFLIGHT_UNKNOWN", "FAILED_SAFE"),
     ("RECOVERING", "FAIL_RECOVERY_UNSAFE", "ROLLBACK_REQUIRED"),
     ("POSTFLIGHT", "FAIL_POSTFLIGHT_UNSAFE", "ROLLBACK_REQUIRED"),
     ("ROLLING_BACK", "ROLLBACK_SUCCEEDED", "ROLLED_BACK"),
     ("ROLLING_BACK", "ADOPT_ROLLBACK_COMPLETE", "ROLLED_BACK"),
-    ("ROLLING_BACK", "ADOPT_ROLLBACK_PARTIAL", "FAILED_SAFE"),
-    ("ROLLING_BACK", "ADOPT_ROLLBACK_UNKNOWN", "FAILED_SAFE"),
     ("ROLLING_BACK", "FAIL_ROLLBACK_UNSAFE", "FAILED_SAFE"),
 }
 
@@ -514,8 +444,6 @@ def utc_text(now: dt.datetime) -> str:
 
 def validate_policy(policy: dict[str, Any]) -> None:
     exact_keys(policy, POLICY_KEYS, "transaction broker policy")
-    for key in ("schema_version", "phase", "journal_schema_version", "maximum_start_window_seconds"):
-        if type(policy[key]) is not int: refuse(f"transaction broker policy {key} type differs")
     fixed = {
         "schema_version": 1, "phase": 6, "status": "DORMANT_TRANSACTION_BROKER_SPEC",
         "execution_enabled": False, "production_adapter_present": False,
@@ -573,8 +501,6 @@ def validate_policy(policy: dict[str, Any]) -> None:
 
 def validate_rollback_policy(policy: dict[str, Any]) -> None:
     exact_keys(policy, ROLLBACK_POLICY_KEYS, "transaction rollback policy")
-    for key in ("schema_version", "phase", "maximum_concurrent_replacements"):
-        if type(policy[key]) is not int: refuse(f"transaction rollback policy {key} type differs")
     if policy != {
         "schema_version": 1, "phase": 6, "status": "DORMANT_TRANSACTION_ROLLBACK_SPEC",
         "execution_enabled": False,
@@ -622,23 +548,12 @@ def _backup(value: object, label: str, *, lineage: str, serial: int, now: dt.dat
 
 def validate_journal(journal: dict[str, Any]) -> None:
     exact_keys(journal, JOURNAL_KEYS, "transaction journal v2")
-    if (type(journal["schema_version"]) is not int or journal["schema_version"] != 2
-            or type(journal["phase"]) is not int or journal["phase"] != 6
-            or type(journal["state"]) is not str or journal["state"] not in STATES):
+    if journal["schema_version"] != 2 or journal["phase"] != 6 or journal["state"] not in STATES:
         refuse("transaction journal identity or state differs")
     for key in ("operation_id", "operation_nonce", "authorization_sha256", "authorization_history_sha256",
                 "verifier_receipt_sha256", "broker_sha256", "policy_sha256", "rollback_policy_sha256", "plan_sha256",
                 "plan_semantic_sha256", "state_lineage_sha256", "cas_nonce", "lease_id"):
         _digest(journal[key], f"journal.{key}")
-    for key in ("pending_fencing_token", "pending_admission_sha256", "rollback_origin_fencing_token",
-                "rollback_origin_admission_sha256"):
-        if journal[key] is not None: _digest(journal[key], f"journal.{key}")
-    for key in ("pending_admission_verified_at", "last_receipt_observed_at", "rollback_origin_admission_verified_at"):
-        if journal[key] is not None: timestamp(journal[key], f"journal.{key}")
-    pending = journal["state"] in {"PREPARING", "APPLYING", "RECOVERING", "POSTFLIGHT", "ROLLING_BACK"}
-    if pending != (journal["pending_fencing_token"] is not None and journal["pending_admission_sha256"] is not None
-                   and journal["pending_admission_verified_at"] is not None):
-        refuse("transaction journal pending fence/admission relation differs")
     for key in ("authorization_commit", "integrated_commit"):
         _commit(journal[key], f"journal.{key}")
     if journal["node"] not in {"01", "02", "03"} or journal["direction"] not in {"resize", "rollback"}:
@@ -654,26 +569,11 @@ def validate_journal(journal: dict[str, Any]) -> None:
         refuse("transaction journal lease fencing token differs")
     if journal["recovery_milestone"] not in RECOVERY_MILESTONES or journal["rollback_milestone"] not in ROLLBACK_MILESTONES:
         refuse("transaction journal milestone differs")
-    origins={"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
-    if journal["rollback_origin_state"] is not None and journal["rollback_origin_state"] not in origins:
-        refuse("transaction journal rollback origin differs")
-    if journal["state"] == "ROLLING_BACK" and journal["rollback_origin_state"] not in origins:
-        refuse("rolling-back journal lacks exact origin")
-    if journal["state"] not in {"ROLLING_BACK", "ROLLED_BACK", "FAILED_SAFE"} and journal["rollback_origin_state"] is not None:
-        refuse("transaction journal retains rollback origin outside rollback provenance")
-    if journal["state"] == "ROLLED_BACK" and journal["rollback_origin_state"] not in origins:
-        refuse("rolled-back journal lacks exact rollback origin")
-    origin_pending = journal["rollback_origin_state"] in {"RECOVERING", "POSTFLIGHT"}
-    if origin_pending != (journal["rollback_origin_fencing_token"] is not None
-                          and journal["rollback_origin_admission_sha256"] is not None
-                          and journal["rollback_origin_admission_verified_at"] is not None):
-        refuse("rollback pending-origin fence/admission relation differs")
     nullable = ("prepare_receipt_sha256", "apply_receipt_sha256",
                 "recovery_receipt_sha256", "postflight_sha256", "rollback_receipt_sha256",
                 "latest_gate_sha256",
                 "rollback_plan_sha256", "rollback_plan_semantic_sha256",
-                "rollback_current_state_receipt_sha256", "reconciled_current_state_receipt_sha256",
-                "reconciled_rollback_current_state_receipt_sha256")
+                "rollback_current_state_receipt_sha256", "reconciled_current_state_receipt_sha256")
     for key in nullable:
         if journal[key] is not None:
             _digest(journal[key], f"journal.{key}")
@@ -693,7 +593,6 @@ def validate_journal(journal: dict[str, Any]) -> None:
         "pre_rollback_backup_sha256": after,
         "post_rollback_backup_sha256": journal["state_serial_before"],
         "reconciled_state_backup": journal["reconciled_state_serial"],
-        "reconciled_rollback_state_backup": journal["reconciled_rollback_state_serial"],
     }
     identities: list[str] = []
     for key, expected_serial in expected_backup_serials.items():
@@ -708,12 +607,7 @@ def validate_journal(journal: dict[str, Any]) -> None:
     if reconciled_serial is not None and (type(reconciled_serial) is not int
                                            or reconciled_serial < journal["state_serial_before"]):
         refuse("transaction journal reconciled state serial differs")
-    rollback_reconciled_serial = journal["reconciled_rollback_state_serial"]
-    if rollback_reconciled_serial is not None and (type(rollback_reconciled_serial) is not int or rollback_reconciled_serial < 0):
-        refuse("transaction journal reconciled rollback serial differs")
-    if journal["failure_class"] not in {None, "APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_PARTIAL",
-                                         "RECOVERY_UNKNOWN", "POSTFLIGHT_PARTIAL", "POSTFLIGHT_UNKNOWN",
-                                         "ROLLBACK_PARTIAL", "ROLLBACK_UNKNOWN", "RECOVERY_UNSAFE",
+    if journal["failure_class"] not in {None, "APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE",
                                          "POSTFLIGHT_UNSAFE", "ROLLBACK_UNSAFE", "POLICY_REFUSAL"}:
         refuse("transaction journal failure class differs")
     if (type(journal["rollback_required"]) is not bool
@@ -754,9 +648,6 @@ def validate_journal(journal: dict[str, Any]) -> None:
         ) or (
             entry["event"] == "BEGIN_ROLLBACK" and entry["to_state"] == "ROLLING_BACK"
             and entry["from_state"] in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
-        ) or (
-            entry["event"] == "ADOPT_ROLLBACK_NOT_STARTED" and entry["from_state"] == "ROLLING_BACK"
-            and entry["to_state"] in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
         ) or (
             entry["event"] in {"DEADLINE_EXPIRED", "RESOURCE_EXPIRED"}
             and entry["from_state"] not in {"COMPLETED", "ROLLED_BACK", "FAILED_SAFE"}
@@ -834,10 +725,6 @@ def validate_journal(journal: dict[str, Any]) -> None:
             refuse("uncertain apply FAILED_SAFE journal lacks exact reconciled serial/backup/current-state receipt")
         if journal["failure_class"] == "ROLLBACK_UNSAFE" and journal["rollback_milestone"] == "NONE":
             refuse("unsafe rollback FAILED_SAFE journal lacks rollback progress")
-        if journal["failure_class"] in {"ROLLBACK_PARTIAL", "ROLLBACK_UNKNOWN"} and (
-                rollback_reconciled_serial is None or journal["reconciled_rollback_state_backup"] is None
-                or journal["reconciled_rollback_current_state_receipt_sha256"] is None):
-            refuse("uncertain rollback FAILED_SAFE lacks reconciled serial/backup/current-state receipt")
     if journal["state"] not in {"RECOVERING", "RECOVERED", "POSTFLIGHT", "COMPLETED",
                                  "ROLLBACK_REQUIRED", "ROLLING_BACK", "ROLLED_BACK", "FAILED_SAFE"} \
             and journal["recovery_milestone"] != "NONE":
@@ -925,11 +812,8 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
         "state_lineage_sha256": authorization["state_lineage_sha256"],
         "state_serial_before": authorization["state_serial_before"], "state_serial_after": None,
         "generation": 1, "cas_nonce": nonce, "lease_id": lease.lease_id, "lease_epoch": lease.epoch,
-        "pending_fencing_token": None, "pending_admission_sha256": None,
-        "pending_admission_verified_at": None, "last_receipt_observed_at": None,
-        "state": "AUTHORIZED", "rollback_origin_fencing_token": None, "rollback_origin_admission_sha256": None,
-        "rollback_origin_admission_verified_at": None,
-        "recovery_milestone": "NONE", "rollback_milestone": "NONE", "rollback_origin_state": None,
+        "state": "AUTHORIZED",
+        "recovery_milestone": "NONE", "rollback_milestone": "NONE",
         "prepare_receipt_sha256": None, "apply_receipt_sha256": None, "state_backup_sha256": None,
         "pre_apply_backup_sha256": None, "post_apply_backup_sha256": None,
         "rollback_plan_sha256": None, "rollback_plan_semantic_sha256": None,
@@ -937,8 +821,6 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
         "post_rollback_backup_sha256": None,
         "reconciled_state_serial": None, "reconciled_state_backup": None,
         "reconciled_current_state_receipt_sha256": None,
-        "reconciled_rollback_state_serial": None, "reconciled_rollback_state_backup": None,
-        "reconciled_rollback_current_state_receipt_sha256": None,
         "recovery_receipt_sha256": None, "postflight_sha256": None,
         "rollback_receipt_sha256": None, "latest_gate_sha256": None, "failure_class": None,
         "rollback_required": False, "start_by": authorization["start_by"],
@@ -1073,13 +955,6 @@ class BrokerModelSession:
             refuse("transaction journal target state differs")
         candidate = copy.deepcopy(self.journal)
         previous = candidate["state"]
-        supplied_updates = dict(updates or {})
-        updates: dict[str, Any] = {}
-        if previous in {"PREPARING", "APPLYING", "RECOVERING", "POSTFLIGHT", "ROLLING_BACK"} and to_state != previous:
-            updates.update({"pending_fencing_token": None, "pending_admission_sha256": None,
-                            "pending_admission_verified_at": None,
-                            "last_receipt_observed_at": getattr(self, "_outcome_observed_at", candidate["updated_at"])})
-        updates.update(supplied_updates)
         if updates:
             candidate.update(updates)
         candidate["state"] = to_state
@@ -1118,10 +993,6 @@ class BrokerModelSession:
         current = utc(now)
         expiry = timestamp(self.journal["resource_expiry_utc"], "journal.resource_expiry_utc")
         complete_by = timestamp(self.journal["complete_by"], "journal.complete_by")
-        if name and name.startswith("BEGIN_"):
-            verified = timestamp(event.get("pending_admission_verified_at"), "event.pending_admission_verified_at")
-            if verified > current or (current - verified).total_seconds() > 30:
-                refuse("intent admission evidence is stale or future-dated")
         if state not in {"COMPLETED", "ROLLED_BACK", "FAILED_SAFE"} and current >= expiry:
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name="RESOURCE_EXPIRED", to_state="FAILED_SAFE", now=now,
@@ -1135,31 +1006,14 @@ class BrokerModelSession:
                                  updates={"failure_class": "POLICY_REFUSAL", "rollback_required": False,
                                           "manual_intervention_required": True}, terminalize=True)
 
-        # Every state-leaving outcome is bound to the admission and fencing
-        # facts persisted by its BEGIN event. Deadline terminalization above
-        # remains journal-only and does not depend on a caller receipt.
-        pending_states = {"PREPARING", "APPLYING", "RECOVERING", "POSTFLIGHT", "ROLLING_BACK"}
-        milestone_inputs = {"RECOVERY_MILESTONE", "ROLLBACK_MILESTONE"}
-        if state in pending_states and name not in milestone_inputs and name not in {"ADOPT_LEASE", "BEGIN_ROLLBACK"}:
-            if (event.get("fencing_token") != self.journal["pending_fencing_token"]
-                    or event.get("admission_sha256") != self.journal["pending_admission_sha256"]):
-                refuse("outcome pending fence/admission differs")
-            event = {key: value for key, value in event.items()
-                     if key not in {"fencing_token", "admission_sha256"}}
-            observed = timestamp(event.pop("receipt_observed_at", None), "event.receipt_observed_at")
-            if observed > current or (current - observed).total_seconds() > 30:
-                refuse("outcome receipt evidence is stale or future-dated")
-            self._outcome_observed_at = utc_text(observed)
-
         if name == "BEGIN_PREPARE" and state == "AUTHORIZED":
             if current >= timestamp(self.journal["start_by"], "journal.start_by"):
                 refuse("BEGIN_PREPARE crossed the authorized start_by boundary")
-            exact_keys(event, common | {"gate_kind", "gate_sha256", "gate_captured_at", "fencing_token", "admission_sha256", "pending_admission_verified_at"}, "BEGIN_PREPARE")
+            exact_keys(event, common | {"gate_kind", "gate_sha256", "gate_captured_at"}, "BEGIN_PREPARE")
             gate = _gate(event, self.policy, "pre_prepare", now)
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="PREPARING", now=now, receipt=gate,
-                                 updates={"latest_gate_sha256": gate, "pending_fencing_token": _digest(event["fencing_token"], "intent fence"),
-                                          "pending_admission_sha256": _digest(event["admission_sha256"], "intent admission"), "pending_admission_verified_at":event["pending_admission_verified_at"]})
+                                 updates={"latest_gate_sha256": gate})
         if name in {"PREPARE_SUCCEEDED", "ADOPT_PREPARE_COMPLETE"} and state == "PREPARING":
             exact_keys(event, common | {"prepare_receipt_sha256"}, name)
             receipt = _digest(event["prepare_receipt_sha256"], "prepare receipt")
@@ -1198,12 +1052,11 @@ class BrokerModelSession:
                                  updates={"failure_class": "POLICY_REFUSAL", "rollback_required": False,
                                           "manual_intervention_required": True})
         if name == "BEGIN_APPLY" and state == "PREPARED":
-            exact_keys(event, common | {"gate_kind", "gate_sha256", "gate_captured_at", "fencing_token", "admission_sha256", "pending_admission_verified_at"}, name)
+            exact_keys(event, common | {"gate_kind", "gate_sha256", "gate_captured_at"}, name)
             gate = _gate(event, self.policy, "pre_apply_two_survivor", now)
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="APPLYING", now=now, receipt=gate,
-                                 updates={"latest_gate_sha256": gate, "pending_fencing_token": _digest(event["fencing_token"], "intent fence"),
-                                          "pending_admission_sha256": _digest(event["admission_sha256"], "intent admission"), "pending_admission_verified_at":event["pending_admission_verified_at"]})
+                                 updates={"latest_gate_sha256": gate})
         if name == "APPLY_SUCCEEDED" and state == "APPLYING":
             keys = common | {"phase2_receipt_sha256", "state_backup_sha256", "pre_apply_backup_sha256",
                              "post_apply_backup_sha256", "state_lineage_sha256",
@@ -1304,7 +1157,7 @@ class BrokerModelSession:
                                                              "manual_intervention_required": True})
             refuse("apply adoption outcome differs")
         if name == "BEGIN_RECOVERY" and state == "APPLIED":
-            keys = common | {"gate_kind", "gate_sha256", "gate_captured_at", "fencing_token", "admission_sha256", "pending_admission_verified_at", "inventory_sha256",
+            keys = common | {"gate_kind", "gate_sha256", "gate_captured_at", "inventory_sha256",
                              "known_hosts_sha256", "applied_state_receipt_sha256"}
             exact_keys(event, keys, name)
             gate = _gate(event, self.policy, "pre_recovery_two_survivor", now)
@@ -1315,8 +1168,7 @@ class BrokerModelSession:
             receipt = canonical_digest({key: event[key] for key in sorted(keys - common)})
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="RECOVERING", now=now, receipt=receipt,
-                                 updates={"latest_gate_sha256": gate, "pending_fencing_token": _digest(event["fencing_token"], "intent fence"),
-                                          "pending_admission_sha256": _digest(event["admission_sha256"], "intent admission"), "pending_admission_verified_at":event["pending_admission_verified_at"]})
+                                 updates={"latest_gate_sha256": gate})
         if name == "RECOVERY_MILESTONE" and state == "RECOVERING":
             exact_keys(event, common | {"milestone", "receipt_sha256", "effect_probe_sha256",
                                         "exact_effect_verified"}, name)
@@ -1339,29 +1191,12 @@ class BrokerModelSession:
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="RECOVERED", now=now, receipt=receipt,
                                  updates={"recovery_receipt_sha256": receipt})
-        if name == "ADOPT_RECOVERY_NOT_STARTED" and state == "RECOVERING":
-            exact_keys(event, common | {"probe_sha256", "exact_no_effect"}, name)
-            if event["exact_no_effect"] is not True or self.journal["recovery_milestone"] != "NONE":
-                refuse("recovery NOT_STARTED lacks exact no-effect proof")
-            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
-                                 event_name=name, to_state="APPLIED", now=now,
-                                 receipt=_digest(event["probe_sha256"], "recovery no-effect probe"))
-        if name in {"ADOPT_RECOVERY_PARTIAL", "ADOPT_RECOVERY_UNKNOWN"} and state == "RECOVERING":
-            exact_keys(event, common | {"probe_sha256", "current_state_receipt_sha256"}, name)
-            receipt=canonical_digest({"probe":_digest(event["probe_sha256"], "recovery uncertain probe"),
-                                      "current":_digest(event["current_state_receipt_sha256"], "recovery current state")})
-            outcome=name.rsplit("_",1)[1]
-            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
-                                 event_name=name, to_state="FAILED_SAFE", now=now, receipt=receipt,
-                                 updates={"failure_class":f"RECOVERY_{outcome}","rollback_required":False,
-                                          "manual_intervention_required":True})
         if name == "BEGIN_POSTFLIGHT" and state == "RECOVERED":
-            exact_keys(event, common | {"gate_kind", "gate_sha256", "gate_captured_at", "fencing_token", "admission_sha256", "pending_admission_verified_at"}, name)
+            exact_keys(event, common | {"gate_kind", "gate_sha256", "gate_captured_at"}, name)
             gate = _gate(event, self.policy, "postflight", now)
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="POSTFLIGHT", now=now, receipt=gate,
-                                 updates={"latest_gate_sha256": gate, "pending_fencing_token": _digest(event["fencing_token"], "intent fence"),
-                                          "pending_admission_sha256": _digest(event["admission_sha256"], "intent admission"), "pending_admission_verified_at":event["pending_admission_verified_at"]})
+                                 updates={"latest_gate_sha256": gate})
         if name in {"POSTFLIGHT_SUCCEEDED", "ADOPT_POSTFLIGHT_COMPLETE"} and state == "POSTFLIGHT":
             exact_keys(event, common | {"postflight_sha256", "zero_drift", "capacity_verified"}, name)
             if event["zero_drift"] is not True or event["capacity_verified"] is not True:
@@ -1370,21 +1205,6 @@ class BrokerModelSession:
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="COMPLETED", now=now, receipt=receipt,
                                  updates={"postflight_sha256": receipt, "rollback_required": False})
-        if name == "ADOPT_POSTFLIGHT_NOT_STARTED" and state == "POSTFLIGHT":
-            exact_keys(event, common | {"probe_sha256", "exact_no_effect"}, name)
-            if event["exact_no_effect"] is not True: refuse("postflight NOT_STARTED lacks exact no-effect proof")
-            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
-                                 event_name=name, to_state="RECOVERED", now=now,
-                                 receipt=_digest(event["probe_sha256"], "postflight no-effect probe"))
-        if name in {"ADOPT_POSTFLIGHT_PARTIAL", "ADOPT_POSTFLIGHT_UNKNOWN"} and state == "POSTFLIGHT":
-            exact_keys(event, common | {"probe_sha256", "current_state_receipt_sha256"}, name)
-            outcome=name.rsplit("_",1)[1]
-            receipt=canonical_digest({"probe":_digest(event["probe_sha256"], "postflight uncertain probe"),
-                                      "current":_digest(event["current_state_receipt_sha256"], "postflight current state")})
-            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
-                                 event_name=name, to_state="FAILED_SAFE", now=now, receipt=receipt,
-                                 updates={"failure_class":f"POSTFLIGHT_{outcome}","rollback_required":False,
-                                          "manual_intervention_required":True})
         if name == "FAIL_RECOVERY_UNSAFE" and state == "RECOVERING":
             exact_keys(event, common | {"failure_receipt_sha256"}, name)
             receipt = _digest(event["failure_receipt_sha256"], "unsafe recovery receipt")
@@ -1398,7 +1218,7 @@ class BrokerModelSession:
                                  event_name=name, to_state="ROLLBACK_REQUIRED", now=now, receipt=receipt,
                                  updates={"failure_class": "POSTFLIGHT_UNSAFE", "rollback_required": True})
         if name == "BEGIN_ROLLBACK" and state in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}:
-            keys = common | {"gate_kind", "gate_sha256", "gate_captured_at", "fencing_token", "admission_sha256", "pending_admission_verified_at", "inventory_sha256",
+            keys = common | {"gate_kind", "gate_sha256", "gate_captured_at", "inventory_sha256",
                              "known_hosts_sha256", "applied_state_receipt_sha256", "state_backup_sha256",
                              "rollback_plan_sha256", "rollback_plan_semantic_sha256",
                              "current_state_receipt_sha256", "current_state_lineage_sha256",
@@ -1427,38 +1247,11 @@ class BrokerModelSession:
             receipt = canonical_digest({key: event[key] for key in sorted(keys - common)})
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="ROLLING_BACK", now=now, receipt=receipt,
-                                 updates={"latest_gate_sha256": gate, "pending_fencing_token": _digest(event["fencing_token"], "intent fence"),
-                                          "pending_admission_sha256": _digest(event["admission_sha256"], "intent admission"), "pending_admission_verified_at":event["pending_admission_verified_at"],
-                                          "rollback_milestone": "ROLLBACK_ADMITTED",
-                                          "rollback_origin_state": state,
-                                          "rollback_origin_fencing_token": self.journal["pending_fencing_token"] if state in {"RECOVERING", "POSTFLIGHT"} else None,
-                                          "rollback_origin_admission_sha256": self.journal["pending_admission_sha256"] if state in {"RECOVERING", "POSTFLIGHT"} else None,
-                                          "rollback_origin_admission_verified_at": self.journal["pending_admission_verified_at"] if state in {"RECOVERING", "POSTFLIGHT"} else None,
+                                 updates={"latest_gate_sha256": gate, "rollback_milestone": "ROLLBACK_ADMITTED",
                                           "rollback_plan_sha256": event["rollback_plan_sha256"],
                                           "rollback_plan_semantic_sha256": event["rollback_plan_semantic_sha256"],
                                           "rollback_current_state_receipt_sha256": event["current_state_receipt_sha256"],
                                           "pre_rollback_backup_sha256": pre_rollback})
-        if name == "ADOPT_ROLLBACK_NOT_STARTED" and state == "ROLLING_BACK":
-            exact_keys(event, common | {"probe_sha256", "exact_no_effect"}, name)
-            origin=self.journal["rollback_origin_state"]
-            origin_fence=self.journal["rollback_origin_fencing_token"]
-            origin_admission=self.journal["rollback_origin_admission_sha256"]
-            origin_verified=self.journal["rollback_origin_admission_verified_at"]
-            if (event["exact_no_effect"] is not True or self.journal["rollback_milestone"] != "ROLLBACK_ADMITTED"
-                    or origin not in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}):
-                refuse("rollback NOT_STARTED lacks exact admitted no-effect origin proof")
-            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
-                                 event_name=name, to_state=origin, now=now,
-                                 receipt=_digest(event["probe_sha256"], "rollback no-effect probe"),
-                                 updates={"rollback_milestone":"NONE", "rollback_origin_state":None,
-                                          "pending_fencing_token":origin_fence if origin in {"RECOVERING", "POSTFLIGHT"} else None,
-                                          "pending_admission_sha256":origin_admission if origin in {"RECOVERING", "POSTFLIGHT"} else None,
-                                          "pending_admission_verified_at":origin_verified if origin in {"RECOVERING", "POSTFLIGHT"} else None,
-                                          "rollback_origin_fencing_token":None,"rollback_origin_admission_sha256":None,
-                                          "rollback_origin_admission_verified_at":None,
-                                          "rollback_plan_sha256":None,"rollback_plan_semantic_sha256":None,
-                                          "rollback_current_state_receipt_sha256":None,
-                                          "pre_rollback_backup_sha256":None})
         if name == "ROLLBACK_MILESTONE" and state == "ROLLING_BACK":
             exact_keys(event, common | {"milestone", "receipt_sha256", "effect_probe_sha256",
                                         "exact_effect_verified"}, name)
@@ -1492,26 +1285,6 @@ class BrokerModelSession:
                                  updates={"rollback_receipt_sha256": receipt,
                                           "post_rollback_backup_sha256": post_backup,
                                           "rollback_required": False})
-        if name in {"ADOPT_ROLLBACK_PARTIAL", "ADOPT_ROLLBACK_UNKNOWN"} and state == "ROLLING_BACK":
-            exact_keys(event, common | {"probe_sha256", "current_state_receipt_sha256", "current_state_lineage_sha256",
-                                        "current_state_serial", "reconciled_rollback_state_backup"}, name)
-            outcome=name.rsplit("_",1)[1]
-            if event["current_state_lineage_sha256"] != self.journal["state_lineage_sha256"] or type(event["current_state_serial"]) is not int:
-                refuse("uncertain rollback current-state lineage/serial differs")
-            backup=_backup(event["reconciled_rollback_state_backup"], "reconciled rollback state backup",
-                           lineage=self.journal["state_lineage_sha256"], serial=event["current_state_serial"], now=now)
-            if backup["backup_identity_sha256"] in {self.journal["state_backup_sha256"]["backup_identity_sha256"],
-                                                     self.journal["pre_rollback_backup_sha256"]["backup_identity_sha256"]}:
-                refuse("reconciled rollback backup identity is not distinct")
-            receipt=canonical_digest({"probe":_digest(event["probe_sha256"], "rollback uncertain probe"),
-                                      "current":_digest(event["current_state_receipt_sha256"], "rollback current state")})
-            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
-                                 event_name=name, to_state="FAILED_SAFE", now=now, receipt=receipt,
-                                 updates={"failure_class":f"ROLLBACK_{outcome}","rollback_required":False,
-                                          "manual_intervention_required":True,
-                                          "reconciled_rollback_state_serial":event["current_state_serial"],
-                                          "reconciled_rollback_state_backup":backup,
-                                          "reconciled_rollback_current_state_receipt_sha256":event["current_state_receipt_sha256"]})
         if name == "FAIL_ROLLBACK_UNSAFE" and state == "ROLLING_BACK":
             exact_keys(event, common | {"failure_receipt_sha256"}, name)
             receipt = _digest(event["failure_receipt_sha256"], "unsafe rollback receipt")
