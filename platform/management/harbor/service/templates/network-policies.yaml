@@ -221,7 +221,13 @@ spec:
   ingress:
     - from:
         - podSelector:
-            matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: core}
+            matchLabels:
+              app.kubernetes.io/instance: harbor
+              app.kubernetes.io/name: harbor
+            matchExpressions:
+              - key: component
+                operator: In
+                values: [core, jobservice]
       ports:
         - {protocol: TCP, port: 8080}
 ---
