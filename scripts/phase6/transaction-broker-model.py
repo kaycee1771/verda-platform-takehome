@@ -91,9 +91,15 @@ EVENT_SPEC: dict[str, dict[str, Any]] = {
         "BEGIN_RECOVERY": {"latest_gate_sha256"},
         "RECOVERY_SUCCEEDED": {"recovery_receipt_sha256"},
         "ADOPT_RECOVERY_COMPLETE": {"recovery_receipt_sha256"},
+        "ADOPT_RECOVERY_NOT_STARTED": set(),
+        "ADOPT_RECOVERY_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
+        "ADOPT_RECOVERY_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required"},
         "BEGIN_POSTFLIGHT": {"latest_gate_sha256"},
         "POSTFLIGHT_SUCCEEDED": {"postflight_sha256", "rollback_required"},
         "ADOPT_POSTFLIGHT_COMPLETE": {"postflight_sha256", "rollback_required"},
+        "ADOPT_POSTFLIGHT_NOT_STARTED": set(),
+        "ADOPT_POSTFLIGHT_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
+        "ADOPT_POSTFLIGHT_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required"},
         "FAIL_RECOVERY_UNSAFE": {"failure_class", "rollback_required"},
         "FAIL_POSTFLIGHT_UNSAFE": {"failure_class", "rollback_required"},
         "BEGIN_ROLLBACK": {"latest_gate_sha256", "rollback_milestone", "rollback_plan_sha256",
@@ -101,6 +107,11 @@ EVENT_SPEC: dict[str, dict[str, Any]] = {
                            "pre_rollback_backup_sha256"},
         "ROLLBACK_SUCCEEDED": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
         "ADOPT_ROLLBACK_COMPLETE": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
+        "ADOPT_ROLLBACK_NOT_STARTED": {"rollback_milestone", "rollback_plan_sha256",
+                                        "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
+                                        "pre_rollback_backup_sha256"},
+        "ADOPT_ROLLBACK_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
+        "ADOPT_ROLLBACK_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required"},
         "FAIL_ROLLBACK_UNSAFE": {"failure_class", "rollback_required", "manual_intervention_required"},
         "DEADLINE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
         "RESOURCE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
@@ -137,6 +148,18 @@ EVENT_CONSTANT_UPDATES = {
                             "manual_intervention_required": True},
     "ADOPT_APPLY_UNKNOWN": {"failure_class": "APPLY_UNKNOWN", "rollback_required": False,
                             "manual_intervention_required": True},
+    "ADOPT_RECOVERY_PARTIAL": {"failure_class": "RECOVERY_PARTIAL", "rollback_required": False,
+                                "manual_intervention_required": True},
+    "ADOPT_RECOVERY_UNKNOWN": {"failure_class": "RECOVERY_UNKNOWN", "rollback_required": False,
+                                "manual_intervention_required": True},
+    "ADOPT_POSTFLIGHT_PARTIAL": {"failure_class": "POSTFLIGHT_PARTIAL", "rollback_required": False,
+                                  "manual_intervention_required": True},
+    "ADOPT_POSTFLIGHT_UNKNOWN": {"failure_class": "POSTFLIGHT_UNKNOWN", "rollback_required": False,
+                                  "manual_intervention_required": True},
+    "ADOPT_ROLLBACK_PARTIAL": {"failure_class": "ROLLBACK_PARTIAL", "rollback_required": False,
+                                "manual_intervention_required": True},
+    "ADOPT_ROLLBACK_UNKNOWN": {"failure_class": "ROLLBACK_UNKNOWN", "rollback_required": False,
+                                "manual_intervention_required": True},
     "ROLLBACK_SUCCEEDED": {"rollback_required": False},
     "ADOPT_ROLLBACK_COMPLETE": {"rollback_required": False},
 }
@@ -207,7 +230,9 @@ def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payl
     elif key == "reconciled_state_serial":
         if type(value) is not int or value < projection["state_serial_before"]:
             refuse("event reconciled state serial differs")
-    elif key == "failure_class" and value not in {"APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE",
+    elif key == "failure_class" and value not in {"APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_PARTIAL",
+                                                    "RECOVERY_UNKNOWN", "POSTFLIGHT_PARTIAL", "POSTFLIGHT_UNKNOWN",
+                                                    "ROLLBACK_PARTIAL", "ROLLBACK_UNKNOWN", "RECOVERY_UNSAFE",
                                                     "POSTFLIGHT_UNSAFE", "ROLLBACK_UNSAFE", "POLICY_REFUSAL"}:
         refuse("event failure class differs")
     elif key == "recovery_milestone" and value not in RECOVERY_MILESTONES:
@@ -285,13 +310,21 @@ LEGAL_EVENTS = {
     ("APPLIED", "BEGIN_RECOVERY", "RECOVERING"),
     ("RECOVERING", "RECOVERY_SUCCEEDED", "RECOVERED"),
     ("RECOVERING", "ADOPT_RECOVERY_COMPLETE", "RECOVERED"),
+    ("RECOVERING", "ADOPT_RECOVERY_NOT_STARTED", "APPLIED"),
+    ("RECOVERING", "ADOPT_RECOVERY_PARTIAL", "FAILED_SAFE"),
+    ("RECOVERING", "ADOPT_RECOVERY_UNKNOWN", "FAILED_SAFE"),
     ("RECOVERED", "BEGIN_POSTFLIGHT", "POSTFLIGHT"),
     ("POSTFLIGHT", "POSTFLIGHT_SUCCEEDED", "COMPLETED"),
     ("POSTFLIGHT", "ADOPT_POSTFLIGHT_COMPLETE", "COMPLETED"),
+    ("POSTFLIGHT", "ADOPT_POSTFLIGHT_NOT_STARTED", "RECOVERED"),
+    ("POSTFLIGHT", "ADOPT_POSTFLIGHT_PARTIAL", "FAILED_SAFE"),
+    ("POSTFLIGHT", "ADOPT_POSTFLIGHT_UNKNOWN", "FAILED_SAFE"),
     ("RECOVERING", "FAIL_RECOVERY_UNSAFE", "ROLLBACK_REQUIRED"),
     ("POSTFLIGHT", "FAIL_POSTFLIGHT_UNSAFE", "ROLLBACK_REQUIRED"),
     ("ROLLING_BACK", "ROLLBACK_SUCCEEDED", "ROLLED_BACK"),
     ("ROLLING_BACK", "ADOPT_ROLLBACK_COMPLETE", "ROLLED_BACK"),
+    ("ROLLING_BACK", "ADOPT_ROLLBACK_PARTIAL", "FAILED_SAFE"),
+    ("ROLLING_BACK", "ADOPT_ROLLBACK_UNKNOWN", "FAILED_SAFE"),
     ("ROLLING_BACK", "FAIL_ROLLBACK_UNSAFE", "FAILED_SAFE"),
 }
 
@@ -607,7 +640,9 @@ def validate_journal(journal: dict[str, Any]) -> None:
     if reconciled_serial is not None and (type(reconciled_serial) is not int
                                            or reconciled_serial < journal["state_serial_before"]):
         refuse("transaction journal reconciled state serial differs")
-    if journal["failure_class"] not in {None, "APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_UNSAFE",
+    if journal["failure_class"] not in {None, "APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_PARTIAL",
+                                         "RECOVERY_UNKNOWN", "POSTFLIGHT_PARTIAL", "POSTFLIGHT_UNKNOWN",
+                                         "ROLLBACK_PARTIAL", "ROLLBACK_UNKNOWN", "RECOVERY_UNSAFE",
                                          "POSTFLIGHT_UNSAFE", "ROLLBACK_UNSAFE", "POLICY_REFUSAL"}:
         refuse("transaction journal failure class differs")
     if (type(journal["rollback_required"]) is not bool
@@ -1191,6 +1226,22 @@ class BrokerModelSession:
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="RECOVERED", now=now, receipt=receipt,
                                  updates={"recovery_receipt_sha256": receipt})
+        if name == "ADOPT_RECOVERY_NOT_STARTED" and state == "RECOVERING":
+            exact_keys(event, common | {"probe_sha256", "exact_no_effect"}, name)
+            if event["exact_no_effect"] is not True or self.journal["recovery_milestone"] != "NONE":
+                refuse("recovery NOT_STARTED lacks exact no-effect proof")
+            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
+                                 event_name=name, to_state="APPLIED", now=now,
+                                 receipt=_digest(event["probe_sha256"], "recovery no-effect probe"))
+        if name in {"ADOPT_RECOVERY_PARTIAL", "ADOPT_RECOVERY_UNKNOWN"} and state == "RECOVERING":
+            exact_keys(event, common | {"probe_sha256", "current_state_receipt_sha256"}, name)
+            receipt=canonical_digest({"probe":_digest(event["probe_sha256"], "recovery uncertain probe"),
+                                      "current":_digest(event["current_state_receipt_sha256"], "recovery current state")})
+            outcome=name.rsplit("_",1)[1]
+            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
+                                 event_name=name, to_state="FAILED_SAFE", now=now, receipt=receipt,
+                                 updates={"failure_class":f"RECOVERY_{outcome}","rollback_required":False,
+                                          "manual_intervention_required":True})
         if name == "BEGIN_POSTFLIGHT" and state == "RECOVERED":
             exact_keys(event, common | {"gate_kind", "gate_sha256", "gate_captured_at"}, name)
             gate = _gate(event, self.policy, "postflight", now)
@@ -1205,6 +1256,21 @@ class BrokerModelSession:
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="COMPLETED", now=now, receipt=receipt,
                                  updates={"postflight_sha256": receipt, "rollback_required": False})
+        if name == "ADOPT_POSTFLIGHT_NOT_STARTED" and state == "POSTFLIGHT":
+            exact_keys(event, common | {"probe_sha256", "exact_no_effect"}, name)
+            if event["exact_no_effect"] is not True: refuse("postflight NOT_STARTED lacks exact no-effect proof")
+            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
+                                 event_name=name, to_state="RECOVERED", now=now,
+                                 receipt=_digest(event["probe_sha256"], "postflight no-effect probe"))
+        if name in {"ADOPT_POSTFLIGHT_PARTIAL", "ADOPT_POSTFLIGHT_UNKNOWN"} and state == "POSTFLIGHT":
+            exact_keys(event, common | {"probe_sha256", "current_state_receipt_sha256"}, name)
+            outcome=name.rsplit("_",1)[1]
+            receipt=canonical_digest({"probe":_digest(event["probe_sha256"], "postflight uncertain probe"),
+                                      "current":_digest(event["current_state_receipt_sha256"], "postflight current state")})
+            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
+                                 event_name=name, to_state="FAILED_SAFE", now=now, receipt=receipt,
+                                 updates={"failure_class":f"POSTFLIGHT_{outcome}","rollback_required":False,
+                                          "manual_intervention_required":True})
         if name == "FAIL_RECOVERY_UNSAFE" and state == "RECOVERING":
             exact_keys(event, common | {"failure_receipt_sha256"}, name)
             receipt = _digest(event["failure_receipt_sha256"], "unsafe recovery receipt")
@@ -1285,6 +1351,15 @@ class BrokerModelSession:
                                  updates={"rollback_receipt_sha256": receipt,
                                           "post_rollback_backup_sha256": post_backup,
                                           "rollback_required": False})
+        if name in {"ADOPT_ROLLBACK_PARTIAL", "ADOPT_ROLLBACK_UNKNOWN"} and state == "ROLLING_BACK":
+            exact_keys(event, common | {"probe_sha256", "current_state_receipt_sha256"}, name)
+            outcome=name.rsplit("_",1)[1]
+            receipt=canonical_digest({"probe":_digest(event["probe_sha256"], "rollback uncertain probe"),
+                                      "current":_digest(event["current_state_receipt_sha256"], "rollback current state")})
+            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
+                                 event_name=name, to_state="FAILED_SAFE", now=now, receipt=receipt,
+                                 updates={"failure_class":f"ROLLBACK_{outcome}","rollback_required":False,
+                                          "manual_intervention_required":True})
         if name == "FAIL_ROLLBACK_UNSAFE" and state == "ROLLING_BACK":
             exact_keys(event, common | {"failure_receipt_sha256"}, name)
             receipt = _digest(event["failure_receipt_sha256"], "unsafe rollback receipt")

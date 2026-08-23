@@ -47,4 +47,18 @@ class CanonicalProtocolTests(unittest.TestCase):
   with self.assertRaises(P.ProtocolRefused): P.TransactionProtocol.canonical_outcome(journal=f.session.journal,receipt={})
   r=receipt(f.session.journal,"postflight","COMPLETE",{"postflight_sha256":h("p"),"rollback_required":False,"zero_drift":False})
   with self.assertRaisesRegex(P.ProtocolRefused,"zero drift"): P.TransactionProtocol.canonical_outcome(journal=f.session.journal,receipt=r)
+ def test_canonical_uncertain_adoptions_terminalize_and_no_effect_reverts(self):
+  f=F.BrokerFixture(); f.prepare(); f.apply(); f.begin_recovery()
+  reverted=f.go({"event":"ADOPT_RECOVERY_NOT_STARTED","probe_sha256":h("probe"),"exact_no_effect":True})
+  self.assertEqual(reverted["state"],"APPLIED")
+  for action in ("recovery","postflight"):
+   for outcome in ("PARTIAL","UNKNOWN"):
+    q=F.BrokerFixture(); q.prepare(); q.apply(); q.begin_recovery()
+    if action=="postflight":
+     q.recovery_milestones(); q.go({"event":"RECOVERY_SUCCEEDED","recovery_receipt_sha256":h("recovered"),"exact_effects_verified":True})
+     q.go({"event":"BEGIN_POSTFLIGHT",**q.fake.gate("postflight")})
+    terminal=q.go({"event":f"ADOPT_{action.upper()}_{outcome}","probe_sha256":h("probe"),
+                   "current_state_receipt_sha256":h("current")})
+    self.assertEqual((terminal["state"],terminal["manual_intervention_required"],terminal["rollback_required"]),
+                     ("FAILED_SAFE",True,False))
 if __name__=="__main__": unittest.main()
