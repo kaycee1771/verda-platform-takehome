@@ -61,4 +61,9 @@ class CanonicalProtocolTests(unittest.TestCase):
                    "current_state_receipt_sha256":h("current")})
     self.assertEqual((terminal["state"],terminal["manual_intervention_required"],terminal["rollback_required"]),
                      ("FAILED_SAFE",True,False))
+  q=F.BrokerFixture(); q.prepare(); q.apply(); q.begin_rollback()
+  self.assertEqual(q.session.journal["rollback_origin_state"],"APPLIED")
+  restored=q.go({"event":"ADOPT_ROLLBACK_NOT_STARTED","probe_sha256":h("rollback-none"),"exact_no_effect":True})
+  self.assertEqual((restored["state"],restored["rollback_origin_state"],restored["rollback_milestone"]),
+                   ("APPLIED",None,"NONE"))
 if __name__=="__main__": unittest.main()

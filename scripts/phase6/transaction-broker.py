@@ -76,10 +76,12 @@ class TransactionProtocol:
   if outcome=="COMPLETE" and action in {"postflight","rollback"} and evidence.get("zero_drift") is not True:
    refuse("terminal complete requires zero drift")
   if receipt["mode"] not in {"LIVE","ADOPTION"}: refuse("outcome receipt mode differs")
+  if outcome != "COMPLETE" and receipt["mode"] != "ADOPTION":
+   refuse("non-complete classification requires adoption mode")
   if outcome=="COMPLETE" and receipt["mode"]=="LIVE": name=complete[action]
   elif outcome=="COMPLETE": name=f"ADOPT_{action.upper()}_COMPLETE"
   elif outcome=="NOT_STARTED": name=f"ADOPT_{action.upper()}_NOT_STARTED"
-  elif outcome in {"PARTIAL","UNKNOWN"} and action in {"prepare","apply"}:
+  elif outcome in {"PARTIAL","UNKNOWN"}:
    name=f"ADOPT_{action.upper()}_{outcome}"
   else: refuse("canonical outcome requires a fresh supported adoption transition")
   return {**evidence,"event":name}

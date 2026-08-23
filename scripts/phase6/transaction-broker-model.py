@@ -55,7 +55,7 @@ JOURNAL_KEYS = {
     "authorization_sha256", "authorization_history_sha256", "verifier_receipt_sha256", "broker_sha256", "policy_sha256",
     "rollback_policy_sha256", "integrated_commit", "node", "direction", "plan_sha256",
     "plan_semantic_sha256", "state_lineage_sha256", "state_serial_before", "state_serial_after",
-    "generation", "cas_nonce", "lease_id", "lease_epoch", "state", "recovery_milestone",
+    "generation", "cas_nonce", "lease_id", "lease_epoch", "state", "recovery_milestone", "rollback_origin_state",
     "rollback_milestone", "prepare_receipt_sha256", "apply_receipt_sha256",
     "state_backup_sha256", "recovery_receipt_sha256", "postflight_sha256",
     "rollback_receipt_sha256", "latest_gate_sha256", "failure_class", "rollback_required",
@@ -102,12 +102,12 @@ EVENT_SPEC: dict[str, dict[str, Any]] = {
         "ADOPT_POSTFLIGHT_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required"},
         "FAIL_RECOVERY_UNSAFE": {"failure_class", "rollback_required"},
         "FAIL_POSTFLIGHT_UNSAFE": {"failure_class", "rollback_required"},
-        "BEGIN_ROLLBACK": {"latest_gate_sha256", "rollback_milestone", "rollback_plan_sha256",
+        "BEGIN_ROLLBACK": {"latest_gate_sha256", "rollback_milestone", "rollback_origin_state", "rollback_plan_sha256",
                            "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
                            "pre_rollback_backup_sha256"},
         "ROLLBACK_SUCCEEDED": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
         "ADOPT_ROLLBACK_COMPLETE": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
-        "ADOPT_ROLLBACK_NOT_STARTED": {"rollback_milestone", "rollback_plan_sha256",
+        "ADOPT_ROLLBACK_NOT_STARTED": {"rollback_milestone", "rollback_origin_state", "rollback_plan_sha256",
                                         "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
                                         "pre_rollback_backup_sha256"},
         "ADOPT_ROLLBACK_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
@@ -132,6 +132,10 @@ EVENT_CONSTANT_UPDATES = {
     "FAIL_RECOVERY_UNSAFE": {"failure_class": "RECOVERY_UNSAFE", "rollback_required": True},
     "FAIL_POSTFLIGHT_UNSAFE": {"failure_class": "POSTFLIGHT_UNSAFE", "rollback_required": True},
     "BEGIN_ROLLBACK": {"rollback_milestone": "ROLLBACK_ADMITTED"},
+    "ADOPT_ROLLBACK_NOT_STARTED": {"rollback_milestone": "NONE", "rollback_origin_state": None,
+                                     "rollback_plan_sha256": None, "rollback_plan_semantic_sha256": None,
+                                     "rollback_current_state_receipt_sha256": None,
+                                     "pre_rollback_backup_sha256": None},
     "FAIL_ROLLBACK_UNSAFE": {"failure_class": "ROLLBACK_UNSAFE", "rollback_required": False,
                              "manual_intervention_required": True},
     "DEADLINE_EXPIRED": {"failure_class": "POLICY_REFUSAL", "rollback_required": False,
@@ -189,6 +193,9 @@ def _event_spec(event: str, from_state: str | None, to_state: str) -> dict[str, 
         event == "BEGIN_ROLLBACK" and to_state == "ROLLING_BACK"
         and from_state in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
     ) or (
+        event == "ADOPT_ROLLBACK_NOT_STARTED" and from_state == "ROLLING_BACK"
+        and to_state in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
+    ) or (
         event in {"DEADLINE_EXPIRED", "RESOURCE_EXPIRED"}
         and from_state not in {"COMPLETED", "ROLLED_BACK", "FAILED_SAFE"} and to_state == "FAILED_SAFE"
     )
@@ -202,6 +209,10 @@ def _allowed_event_fields(event: str, from_state: str | None, to_state: str) -> 
 
 
 def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payload: dict[str, Any]) -> None:
+    if value is None and payload.get("rollback_milestone") == "NONE" and key in {
+            "rollback_origin_state", "rollback_plan_sha256", "rollback_plan_semantic_sha256",
+            "rollback_current_state_receipt_sha256", "pre_rollback_backup_sha256"}:
+        return
     if key in BACKUP_FIELDS:
         receipt = exact_keys(value, BACKUP_KEYS, f"event.{key}")
         for digest_key in ("receipt_sha256", "backup_identity_sha256", "state_lineage_sha256"):
@@ -239,6 +250,9 @@ def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payl
         refuse("event recovery milestone differs")
     elif key == "rollback_milestone" and value not in ROLLBACK_MILESTONES:
         refuse("event rollback milestone differs")
+    elif key == "rollback_origin_state" and value is not None and value not in {
+            "APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}:
+        refuse("event rollback origin state differs")
 
 
 def _effect_receipt(*, projection: dict[str, Any], action: str, evidence: str,
@@ -602,6 +616,15 @@ def validate_journal(journal: dict[str, Any]) -> None:
         refuse("transaction journal lease fencing token differs")
     if journal["recovery_milestone"] not in RECOVERY_MILESTONES or journal["rollback_milestone"] not in ROLLBACK_MILESTONES:
         refuse("transaction journal milestone differs")
+    origins={"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
+    if journal["rollback_origin_state"] is not None and journal["rollback_origin_state"] not in origins:
+        refuse("transaction journal rollback origin differs")
+    if journal["state"] == "ROLLING_BACK" and journal["rollback_origin_state"] not in origins:
+        refuse("rolling-back journal lacks exact origin")
+    if journal["state"] not in {"ROLLING_BACK", "ROLLED_BACK", "FAILED_SAFE"} and journal["rollback_origin_state"] is not None:
+        refuse("transaction journal retains rollback origin outside rollback provenance")
+    if journal["state"] == "ROLLED_BACK" and journal["rollback_origin_state"] not in origins:
+        refuse("rolled-back journal lacks exact rollback origin")
     nullable = ("prepare_receipt_sha256", "apply_receipt_sha256",
                 "recovery_receipt_sha256", "postflight_sha256", "rollback_receipt_sha256",
                 "latest_gate_sha256",
@@ -683,6 +706,9 @@ def validate_journal(journal: dict[str, Any]) -> None:
         ) or (
             entry["event"] == "BEGIN_ROLLBACK" and entry["to_state"] == "ROLLING_BACK"
             and entry["from_state"] in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
+        ) or (
+            entry["event"] == "ADOPT_ROLLBACK_NOT_STARTED" and entry["from_state"] == "ROLLING_BACK"
+            and entry["to_state"] in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}
         ) or (
             entry["event"] in {"DEADLINE_EXPIRED", "RESOURCE_EXPIRED"}
             and entry["from_state"] not in {"COMPLETED", "ROLLED_BACK", "FAILED_SAFE"}
@@ -848,7 +874,7 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
         "state_serial_before": authorization["state_serial_before"], "state_serial_after": None,
         "generation": 1, "cas_nonce": nonce, "lease_id": lease.lease_id, "lease_epoch": lease.epoch,
         "state": "AUTHORIZED",
-        "recovery_milestone": "NONE", "rollback_milestone": "NONE",
+        "recovery_milestone": "NONE", "rollback_milestone": "NONE", "rollback_origin_state": None,
         "prepare_receipt_sha256": None, "apply_receipt_sha256": None, "state_backup_sha256": None,
         "pre_apply_backup_sha256": None, "post_apply_backup_sha256": None,
         "rollback_plan_sha256": None, "rollback_plan_semantic_sha256": None,
@@ -1314,10 +1340,24 @@ class BrokerModelSession:
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="ROLLING_BACK", now=now, receipt=receipt,
                                  updates={"latest_gate_sha256": gate, "rollback_milestone": "ROLLBACK_ADMITTED",
+                                          "rollback_origin_state": state,
                                           "rollback_plan_sha256": event["rollback_plan_sha256"],
                                           "rollback_plan_semantic_sha256": event["rollback_plan_semantic_sha256"],
                                           "rollback_current_state_receipt_sha256": event["current_state_receipt_sha256"],
                                           "pre_rollback_backup_sha256": pre_rollback})
+        if name == "ADOPT_ROLLBACK_NOT_STARTED" and state == "ROLLING_BACK":
+            exact_keys(event, common | {"probe_sha256", "exact_no_effect"}, name)
+            origin=self.journal["rollback_origin_state"]
+            if (event["exact_no_effect"] is not True or self.journal["rollback_milestone"] != "ROLLBACK_ADMITTED"
+                    or origin not in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}):
+                refuse("rollback NOT_STARTED lacks exact admitted no-effect origin proof")
+            return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
+                                 event_name=name, to_state=origin, now=now,
+                                 receipt=_digest(event["probe_sha256"], "rollback no-effect probe"),
+                                 updates={"rollback_milestone":"NONE", "rollback_origin_state":None,
+                                          "rollback_plan_sha256":None,"rollback_plan_semantic_sha256":None,
+                                          "rollback_current_state_receipt_sha256":None,
+                                          "pre_rollback_backup_sha256":None})
         if name == "ROLLBACK_MILESTONE" and state == "ROLLING_BACK":
             exact_keys(event, common | {"milestone", "receipt_sha256", "effect_probe_sha256",
                                         "exact_effect_verified"}, name)
