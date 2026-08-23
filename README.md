@@ -1,95 +1,61 @@
-# Verda Platform Engineer Take-Home
+# Verda Cloud Kubernetes Platform
 
-This repository is being built phase by phase as a reproducible, secure-by-design, observable, GitOps-driven Kubernetes platform on Verda Cloud. Every claimed capability must have code, automated verification where practical, rationale, and sanitized live evidence.
+This repository implements a reproducible three-node RKE2 platform on Verda Cloud. Terraform owns the cloud resources, Ansible owns host configuration, and Argo CD owns Kubernetes desired state. Rancher provides cluster management, Harbor and Trivy provide private image storage and scanning, kube-prometheus-stack provides metrics and alerts, and Loki with Grafana Alloy provides centralized logs. One immutable `platform-demo` image is deployed through Git to isolated dev, staging, and production namespaces.
 
-## Current status
+## What is running
 
-**Phases 0–5 — PASS; Phase 6 active.** Verda currently runs exactly three
-on-demand management instances with three instance-owned 80 GiB OS volumes and three protected
-100 GiB data volumes. The Phase 2 closeout proved unique public endpoints, hostname-bound SSH,
-encrypted external Terraform state and backup, guarded lifecycle behavior, reconciled cost, and
-zero drift. Phase 3 added named key-only administration, fail-safe SSH/firewall transitions, a
-three-node WireGuard mesh, guarded UUID-mounted data filesystems, two-pass idempotency, public-port
-denial tests, and three serial reboot proofs. Phase 4 now has three Ready schedulable RKE2
-server/etcd nodes, healthy Cilium/Hubble and service networking, internal Traefik, local plus
-off-cluster snapshots, focused CIS checks on every server, a controlled one-node and primary-endpoint
-failure drill, approved-source firewall verification, a sanitized support bundle, a zero-change
-three-host replay, and a 270-second post-recovery stability window. Independent current-tree
-verification, final local quality, PR validation, and protected-main hosted CI all passed. Phase 5
-now adds an idempotent pinned Argo CD bootstrap, one exact root/eight-child desired-state set,
-cert-manager staging and production certificate paths, authenticated Argo TLS through all three
-protected ingress addresses, and Longhorn on the three dedicated data disks. The critical 4 MiB
-storage fixture survived rescheduling with 3/3 healthy replicas. Anonymous Argo access is denied,
-and the reviewer can read without sync or action permissions. Final local and hosted closeout CI
-pass. Phase 6 is active under its own capacity and acceptance gates; Stage B remains fail closed.
+| Capability | Implementation | Status | Verification |
+|---|---|---|---|
+| Infrastructure | Terraform on Verda | Operational | [evidence](evidence/final/01-infrastructure.md) |
+| Kubernetes | Three-node RKE2/etcd | Operational | [evidence](evidence/final/02-kubernetes-and-etcd.md) |
+| Management | Rancher | Operational | [evidence](evidence/final/03-rancher.md) |
+| GitOps | Argo CD root application | Operational | [evidence](evidence/final/04-argocd.md) |
+| Registry | Harbor with Trivy | Operational | [evidence](evidence/final/05-harbor-and-scan.md) |
+| Metrics | Prometheus, Alertmanager, Grafana | Operational | [evidence](evidence/final/07-prometheus-and-dashboard.md) |
+| Logs | Loki with Alloy | Operational | [evidence](evidence/final/09-loki-log-query.md) |
+| Environments | dev, staging, production | Operational | [evidence](evidence/final/06-environment-digests.md) |
 
-The selected Stage A baseline is three on-demand `CPU.4V.16G` nodes in `FIN-03`, each with an 80 GiB
-root volume and a 100 GiB Longhorn data volume, using Ubuntu 24.04 Minimal. The seven-day envelope
-is $50.51, including a capped $5 unquoted-services allowance and 15% contingency against a verified
-$115.67 starting balance. Kubernetes, endpoint, and object-storage gates are tracked in
-[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+## Implemented architecture
 
-## Delivery architecture
-
-- **Stage A — guaranteed pass path:** one three-node RKE2 management cluster temporarily hosts the platform and `demo-dev`, `demo-staging`, and `demo-prod`.
-- **Stage B — staff-level target:** after Stage A is fully green and credits permit it, a second three-node RKE2 workload cluster receives the three application environments. Rancher, Argo CD, Harbor, and central troubleshooting services remain on the management cluster.
-- Each cluster uses three schedulable RKE2 server nodes with embedded etcd. This controls take-home cost while retaining quorum; production evolution would normally separate control-plane and worker capacity.
-- Cilium/Hubble, Longhorn plus off-cluster Verda object storage, immutable digest promotion, Argo CD, Harbor, Sealed Secrets, Kyverno, Prometheus/Grafana, Loki/Alloy, and layered recovery follow the accepted ADRs.
-
-See [architecture.md](docs/architecture.md), [operations-model.md](docs/operations-model.md), and the [ADR index](docs/adr/README.md).
-
-## Reproducible developer workflow
-
-Prerequisites are Git, GNU Make, PowerShell 7, and a running Docker Linux daemon. Bootstrap is the
-only networked quality step; all validation commands run in the same pinned non-root image with the
-container network disabled and no cloud credential mounts.
-
-```powershell
-make help
-make bootstrap-tools
-make install-hooks
-make validate
-make validate-negative
-make pre-commit
-make secret-scan
-make ci
+```mermaid
+flowchart LR
+  Git[Git repository] --> Argo[Argo CD]
+  Terraform[Terraform] --> Nodes[3 Verda VMs]
+  Ansible[Ansible] --> RKE2[3-node RKE2/etcd]
+  Nodes --> RKE2
+  RKE2 --> Rancher
+  RKE2 --> Harbor[Harbor + Trivy]
+  RKE2 --> Obs[Prometheus + Grafana + Loki + Alloy]
+  Argo --> Dev[demo-dev]
+  Argo --> Staging[demo-staging]
+  Argo --> Prod[demo-prod]
+  Harbor --> Dev
+  Harbor --> Staging
+  Harbor --> Prod
 ```
 
-`make ci` is the local equivalent of the validation job in `.github/workflows/validate.yml`.
-The canonical 18-phase target map is `config/phase-map.json`. It remains active at Phase 5 and
-exposes the explicit completed-phase convergence targets plus `make bootstrap-gitops`. Phase 2 cloud
-mutation, Phase 6 platform expansion, Stage A verification, Stage B, and teardown remain fail closed
-with their owning phase until Phase 5 closeout is merged.
+Delivery is: source -> tests -> build once -> Trivy scan -> Harbor digest -> reviewed Git change -> Argo CD -> dev/staging/prod -> Prometheus metrics and Loki logs.
 
-## Safe Phase 0 discovery
+## Evaluator path
 
-The account command is an allowlisted, read-only probe and requires explicit acknowledgement.
+1. Read [SUMMARY.md](SUMMARY.md) and [docs/architecture.md](docs/architecture.md).
+2. Use the URLs and separately delivered credentials in [ACCESS.md](ACCESS.md).
+3. Run `make validate` from a bootstrapped clone.
+4. Run the protected read-only `make verify` with the supplied kubeconfig.
+5. Review the [curated evidence index](evidence/final/00-index.md).
 
-```powershell
-make phase0-tools
-make phase0-provider-schema
-make phase0-discover-account
-make phase0-validate
-```
+## Repository map
 
-Cloud API credentials are time-bound and process-only. Never place their values in this repository,
-command arguments, logs, Terraform plans, inventory, or evidence. A future live account probe must
-use a separately authorized credential through the documented environment-variable boundary:
+- `infra/`: Terraform and Ansible infrastructure/host ownership.
+- `gitops/`: Argo CD root and Application definitions.
+- `platform/`: management services, policies, storage, and observability.
+- `applications/platform-demo/`: the Go application and Helm chart.
+- `environments/`: namespace foundations and environment policy.
+- `scripts/`: capability-oriented operator commands.
+- `docs/` and `evidence/final/`: design, operations, and sanitized proof.
 
-```powershell
-verda auth login
-```
+## Tradeoffs
 
-Raw schema and account responses are written only to ignored `*.local.json` files. Committed evidence is sanitized and contains no project ID, credential, token, or secret value.
+The take-home uses one shared cluster to stay within the credit and review window. Control-plane and application workloads therefore share failure domains, namespace isolation is weaker than separate clusters, Harbor uses its bundled database rather than an external HA service, and public services depend on address-derived `nip.io` names rather than a managed load balancer. A production evolution would separate management and workload clusters, externalize stateful services, use durable DNS and a health-aware ingress/API endpoint, and adopt an enterprise secret platform.
 
-## Sources of truth
-
-- [Implementation status](IMPLEMENTATION_STATUS.md)
-- [Acceptance matrix](docs/acceptance-matrix.md)
-- [Verda discovery report](docs/reports/verda-discovery.md)
-- [Cost and capacity snapshot](docs/cost.md)
-- [Known limitations](docs/known-limitations.md)
-- [Risk register](docs/risk-register.md)
-- [Version lock](versions.lock.yaml)
-- [AI-use record](docs/ai-usage.md)
-- [Security contract](SECURITY.md)
+See [known limitations](docs/known-limitations.md), [cost](docs/cost.md), and [operations](docs/operations-model.md).

@@ -1,17 +1,17 @@
 ---
 schema_version: 1
-status: not_ready
+status: ready
 mandatory:
   kubernetes: {status: pass, evidence: evidence/final/02-kubernetes-and-etcd.md}
-  rancher: {status: pending, evidence: evidence/final/03-rancher.md}
+  rancher: {status: pass, evidence: evidence/final/03-rancher.md}
   argocd: {status: pass, evidence: evidence/final/04-argocd.md}
-  registry_scanning: {status: pending, evidence: evidence/final/05-harbor-and-scan.md}
-  monitoring_alerts: {status: pending, evidence: evidence/final/07-prometheus-and-dashboard.md}
-  centralized_logs: {status: pending, evidence: evidence/final/09-loki-log-query.md}
-  environments: {status: pending, evidence: evidence/final/06-environment-digests.md}
-  access_instructions: {status: pending, evidence: ACCESS.md}
-  one_page_summary: {status: pending, evidence: SUMMARY.md}
+  registry_scanning: {status: pass, evidence: evidence/final/05-harbor-and-scan.md}
+  monitoring_alerts: {status: pass, evidence: evidence/final/07-prometheus-and-dashboard.md}
+  centralized_logs: {status: pass, evidence: evidence/final/09-loki-log-query.md}
+  environments: {status: pass, evidence: evidence/final/06-environment-digests.md}
+  access_instructions: {status: pass, evidence: ACCESS.md}
+  one_page_summary: {status: pass, evidence: SUMMARY.md}
 optional:
   longhorn: {status: pass, evidence: evidence/final/11-storage-and-snapshots.md}
-  kyverno: {status: pending, evidence: evidence/final/10-network-and-security.md}
-  velero: {status: not_implemented, evidence: docs/known-limitations.md}
+  kyverno: {status: pass, evidence: evidence/final/10-network-and-security.md}
+  velero: {status: partial, evidence: docs/known-limitations.md}
