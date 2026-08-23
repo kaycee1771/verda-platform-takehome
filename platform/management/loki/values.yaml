@@ -136,6 +136,8 @@ gateway:
   replicas: 1
   priorityClassName: platform-important
   verboseLogging: false
+  nginxConfig:
+    resolver: rke2-coredns-rke2-coredns.kube-system.svc.cluster.local
   podSecurityContext:
     fsGroup: 101
     runAsGroup: 101
