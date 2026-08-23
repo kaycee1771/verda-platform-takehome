@@ -39,7 +39,7 @@
         "fullnameOverride": {"type": "string", "const": "rancher"},
         "hostname": {
           "type": "string",
-          "pattern": "^rancher\\.(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})-){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\\.sslip\\.io$"
+          "pattern": "^rancher\\.(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})-){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\\.nip\\.io$"
         },
         "replicas": {"type": "integer", "const": 3},
         "priorityClassName": {"type": "string", "const": "platform-critical"},

@@ -36,13 +36,13 @@ def ingress() -> dict[str, object]:
             "ingressClassName": "traefik",
             "tls": [
                 {
-                    "hosts": ["argocd.95-133-252-214.sslip.io"],
+                    "hosts": ["argocd.95-133-252-214.nip.io"],
                     "secretName": "argocd-ingress-tls",
                 }
             ],
             "rules": [
                 {
-                    "host": "argocd.95-133-252-214.sslip.io",
+                    "host": "argocd.95-133-252-214.nip.io",
                     "http": {
                         "paths": [
                             {

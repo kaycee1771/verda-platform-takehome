@@ -24,7 +24,7 @@ CHART_CACHE = ROOT / ".local" / "chart-cache" / "harbor-1.19.2.tgz"
 EXPECTED_ARCHIVE_SHA256 = (
     "36d8eeb41b4df1aeff18c9af7709110a2fac2194b491d37957822b3359cd5e9a"
 )
-SAFE_HOSTNAME = "harbor.192-0-2-10.sslip.io"
+SAFE_HOSTNAME = "harbor.192-0-2-10.nip.io"
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -489,7 +489,7 @@ esac
             self.assertIn("PASS preflight", result.stdout)
             calls = log.read_text(encoding="utf-8")
             self.assertNotRegex(calls, r"\b(PUT|DELETE|PATCH)\b")
-            self.assertNotIn("POST https://harbor.192-0-2-10.sslip.io/api", calls)
+            self.assertNotIn("POST https://harbor.192-0-2-10.nip.io/api", calls)
 
 
 if __name__ == "__main__":

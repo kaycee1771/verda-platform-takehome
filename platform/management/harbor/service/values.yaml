@@ -18,7 +18,7 @@ certificate:
 harbor:
   enabled: false
   fullnameOverride: harbor
-  externalURL: https://harbor.95-133-252-214.sslip.io
+  externalURL: https://harbor.95-133-252-214.nip.io
   imagePullPolicy: IfNotPresent
   priorityClassName: platform-important
 
@@ -31,7 +31,7 @@ harbor:
         secretName: tls-harbor-ingress
     ingress:
       hosts:
-        core: harbor.95-133-252-214.sslip.io
+        core: harbor.95-133-252-214.nip.io
       controller: default
       className: traefik
       annotations:

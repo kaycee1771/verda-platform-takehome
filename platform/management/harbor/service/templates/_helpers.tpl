@@ -1,9 +1,9 @@
 {{- define "verdaHarbor.hostname" -}}
 {{- $hostname := required "harbor.expose.ingress.hosts.core is required" .Values.harbor.expose.ingress.hosts.core -}}
-{{- if not (regexMatch "^harbor\\.[0-9]{1,3}(-[0-9]{1,3}){3}\\.sslip\\.io$" $hostname) -}}
-{{- fail "Harbor hostname must be harbor.<IPv4-with-dashes>.sslip.io" -}}
+{{- if not (regexMatch "^harbor\\.[0-9]{1,3}(-[0-9]{1,3}){3}\\.nip\\.io$" $hostname) -}}
+{{- fail "Harbor hostname must be harbor.<IPv4-with-dashes>.nip.io" -}}
 {{- end -}}
-{{- $encoded := trimSuffix ".sslip.io" (trimPrefix "harbor." $hostname) -}}
+{{- $encoded := trimSuffix ".nip.io" (trimPrefix "harbor." $hostname) -}}
 {{- range $octet := splitList "-" $encoded -}}
   {{- if or (lt (atoi $octet) 0) (gt (atoi $octet) 255) -}}
     {{- fail "Harbor hostname contains an invalid IPv4 octet" -}}
