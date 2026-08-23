@@ -392,7 +392,6 @@ quality_tools:
 
 tool_delivery:
   quality_image: "verda-platform-quality:phase1-2026-08-16"
-  quality_image_id: "sha256:c7cc28ef4c3817a54926e4bce20068e101cac997e03428177262a7421ef809f8"
   base_image: "python:3.13.11-slim-bookworm@sha256:20080e807bfc404f8450b185cf0fc95d553462673598549613735f70a5b4d5d0"
   go_toolchain:
     version: "1.26.0"
