@@ -23,6 +23,26 @@ def digest(value: Any) -> str: return hashlib.sha256(canonical(value)).hexdigest
 
 class TransactionProtocol:
  @staticmethod
+ def canonical_intent(action: str, evidence: dict[str, Any]) -> dict[str, Any]:
+  names={"prepare":"BEGIN_PREPARE","apply":"BEGIN_APPLY","recover":"BEGIN_RECOVERY",
+         "postflight":"BEGIN_POSTFLIGHT","rollback":"BEGIN_ROLLBACK"}
+  if action not in names or not isinstance(evidence,dict): refuse("canonical intent differs")
+  return {"event":names[action], **evidence}
+
+ @staticmethod
+ def canonical_outcome(action: str, outcome: str, evidence: dict[str, Any]) -> dict[str, Any]:
+  complete={"prepare":"PREPARE_SUCCEEDED","apply":"APPLY_SUCCEEDED","recover":"RECOVERY_SUCCEEDED",
+            "postflight":"POSTFLIGHT_SUCCEEDED","rollback":"ROLLBACK_SUCCEEDED"}
+  if action not in complete or outcome not in ADOPTION or not isinstance(evidence,dict):
+   refuse("canonical outcome differs")
+  if outcome=="COMPLETE": name=complete[action]
+  elif outcome=="NOT_STARTED": name=f"ADOPT_{action.upper()}_NOT_STARTED"
+  elif outcome in {"PARTIAL","UNKNOWN"} and action in {"prepare","apply"}:
+   name=f"ADOPT_{action.upper()}_{outcome}"
+  else: refuse("canonical outcome requires a fresh supported adoption transition")
+  return {"event":name, **evidence}
+
+ @staticmethod
  def intent(*, journal: dict[str, Any], action: str, admission: dict[str, Any], lease_id: str,
             lease_epoch: int, fencing_token: str, cas_nonce: str) -> dict[str, Any]:
   if action not in ACTIONS: refuse("action differs")

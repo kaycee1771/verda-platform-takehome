@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-import hashlib, importlib.util, pathlib, subprocess, sys, unittest
+import hashlib, importlib.util, pathlib, subprocess, sys, tempfile, unittest
 ROOT=pathlib.Path(__file__).parents[2]; PATH=ROOT/"scripts/phase6/transaction-broker.py"
 SPEC=importlib.util.spec_from_file_location("phase6_pure_protocol", PATH); P=importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(P)
+FIXTURE_PATH=ROOT/"tests/static/test_phase6_transaction_broker_spec.py"
+FS=importlib.util.spec_from_file_location("phase6_protocol_fixture",FIXTURE_PATH); F=importlib.util.module_from_spec(FS); FS.loader.exec_module(F)
+STORE_PATH=ROOT/"scripts/phase6/transaction-broker-store.py"
+SS=importlib.util.spec_from_file_location("phase6_protocol_store",STORE_PATH); S=importlib.util.module_from_spec(SS); SS.loader.exec_module(S)
 OP="a"*64
 def h(x): return hashlib.sha256(x.encode()).hexdigest()
 
@@ -31,4 +35,25 @@ class PureProtocolTests(unittest.TestCase):
   with self.assertRaises(P.ProtocolRefused): P.TransactionProtocol.outcome(intent=i,receipt=r,cas_nonce=h("o"))
   self.assertEqual(P.TransactionProtocol.adoption(None),"NOT_STARTED")
   for value in P.ADOPTION: self.assertEqual(P.TransactionProtocol.adoption({"outcome":value}),value)
+ def test_canonical_intent_and_outcome_persist_through_real_store_model(self):
+  with tempfile.TemporaryDirectory() as folder:
+   root=pathlib.Path(folder)
+   def probe(path):
+    st=path.lstat(); return {"reparse":False,"nlink":st.st_nlink,"device":st.st_dev,"identity":st.st_ino,"owner_only":True}
+   store=S.DurableBrokerStore(operation_id=F.OPERATION,base=root,clock=lambda:F.NOW,
+       security_probe=probe,allow_test_security_probe=True)
+   fixture=F.BrokerFixture(); store.cas(fixture.journal,expected_generation=0,expected_lease_epoch=0,
+       expected_cas_nonce=None,expected_head_sha256=None)
+   old=fixture.session.journal
+   fixture.go(P.TransactionProtocol.canonical_intent("prepare",fixture.fake.gate("pre_prepare")))
+   intent=fixture.session.journal; S.MODEL.validate_journal(intent)
+   store.cas(intent,expected_generation=old["generation"],expected_lease_epoch=old["lease_epoch"],
+       expected_cas_nonce=old["cas_nonce"],expected_head_sha256=old["history"][-1]["entry_sha256"])
+   before=fixture.session.journal
+   fixture.go(P.TransactionProtocol.canonical_outcome("prepare","COMPLETE",
+       {"prepare_receipt_sha256":fixture.fake.receipt("prepare")}))
+   outcome=fixture.session.journal; S.MODEL.validate_journal(outcome)
+   store.cas(outcome,expected_generation=before["generation"],expected_lease_epoch=before["lease_epoch"],
+       expected_cas_nonce=before["cas_nonce"],expected_head_sha256=before["history"][-1]["entry_sha256"])
+   self.assertEqual(store.load()["state"],"PREPARED")
 if __name__=="__main__": unittest.main()
