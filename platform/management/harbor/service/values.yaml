@@ -127,7 +127,7 @@ harbor:
     replicas: 1
     priorityClassName: platform-important
     podDisruptionBudget: {enabled: false}
-    existingSecret: harbor-jobservice
+    existingSecret: harbor-jobservice-external
     existingSecretKey: JOBSERVICE_SECRET
     secret: ""
     jobLoggers: [file]
@@ -154,7 +154,7 @@ harbor:
     replicas: 1
     priorityClassName: platform-important
     podDisruptionBudget: {enabled: false}
-    existingSecret: harbor-registry
+    existingSecret: harbor-registry-external
     existingSecretKey: REGISTRY_HTTP_SECRET
     secret: ""
     credentials:
