@@ -305,7 +305,10 @@ class Phase6HarborContractTests(unittest.TestCase):
         self.assertEqual(objects(inert.stdout), [])
 
         rejected = helm_template(
-            SECRETS, "enabled=true", "gates.ciphertextsLocked=true"
+            SECRETS,
+            "enabled=true",
+            "gates.ciphertextsLocked=true",
+            "ciphertexts.adminPassword=not-a-kubeseal-ciphertext",
         )
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("real kubeseal ciphertext", rejected.stderr)
