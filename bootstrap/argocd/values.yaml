@@ -23,6 +23,13 @@ configs:
     statusbadge.enabled: false
     accounts.platform-admin: login
     accounts.reviewer: login
+    resource.exclusions: |
+      - apiGroups:
+          - ext.cattle.io
+        kinds:
+          - Token
+        clusters:
+          - "*"
     resource.customizations.health.argoproj.io_Application: |
       health = {}
       health.status = "Progressing"

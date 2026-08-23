@@ -214,7 +214,7 @@ class Phase6RancherContractTests(unittest.TestCase):
         )
         self.assertEqual(
             rancher_container["resources"]["requests"],
-            {"cpu": "500m", "memory": "1Gi"},
+            {"cpu": "200m", "memory": "1Gi"},
         )
         self.assertIn(
             {"name": "CATTLE_AGENT_TLS_MODE", "value": "strict"},
