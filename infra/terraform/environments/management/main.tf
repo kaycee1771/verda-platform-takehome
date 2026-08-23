@@ -12,8 +12,8 @@ locals {
     }
     "03" = {
       role                = "server"
-      instance_type       = "CPU.4V.16G"
-      resource_expiry_utc = "2026-08-24T21:00:00Z"
+      instance_type       = "CPU.8V.32G"
+      resource_expiry_utc = "2026-08-27T21:00:00Z"
     }
   }
 }
