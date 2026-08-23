@@ -108,6 +108,10 @@ spec:
   egress:
     - to:
         - podSelector:
+            matchLabels: {app.kubernetes.io/instance: harbor-postgresql, app.kubernetes.io/name: harbor-postgresql}
+      ports: [{protocol: TCP, port: 5432}]
+    - to:
+        - podSelector:
             matchLabels: {app.kubernetes.io/instance: harbor, app.kubernetes.io/name: harbor, component: core}
       ports: [{protocol: TCP, port: 8080}]
     - to:
