@@ -604,7 +604,7 @@ class DurableBrokerStore:
             manifest = self._read_json(marker)
             if (set(manifest) != {"schema_version", "operation_id", "snapshot_name", "snapshot_sha256", "state",
                                   "created_at", "raw_values_recorded"}
-                    or manifest["schema_version"] != 1 or manifest["operation_id"] != self.operation_id
+                    or type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1 or manifest["operation_id"] != self.operation_id
                     or manifest["snapshot_name"] != original or manifest["snapshot_sha256"] != match.group(2)
                     or manifest["state"] != "PLANNED"
                     or manifest["raw_values_recorded"] is not False):
@@ -814,7 +814,7 @@ class DurableBrokerStore:
         self._recover()
         envelope = self._read_json(self.envelope_path)
         if set(envelope) != {"schema_version", "operation_id", "journal", "nonces"} \
-                or envelope["schema_version"] != 2 or envelope["operation_id"] != self.operation_id:
+                or type(envelope["schema_version"]) is not int or envelope["schema_version"] != 2 or envelope["operation_id"] != self.operation_id:
             refuse("durable broker envelope differs")
         journal = envelope["journal"]
         MODEL.validate_journal(journal)
@@ -848,7 +848,8 @@ class DurableBrokerStore:
                 refuse("staged recovery envelope skips current generation")
         else:
             staged_journal = staged["journal"]
-            if (staged_journal["generation"] != 1 or staged_journal["lease_epoch"] < 1
+            if (type(staged_journal["generation"]) is not int or type(staged_journal["lease_epoch"]) is not int
+                    or staged_journal["generation"] != 1 or staged_journal["lease_epoch"] < 1
                     or len(staged_journal["history"]) != 1
                     or staged_journal["history"][0]["event"] != "START_SPEC"):
                 refuse("orphan staged envelope is not exact START_SPEC genesis")
@@ -861,7 +862,7 @@ class DurableBrokerStore:
 
     def _validate_envelope(self, value: dict[str, Any], label: str) -> None:
         if (set(value) != {"schema_version", "operation_id", "journal", "nonces"}
-                or value["schema_version"] != 2 or value["operation_id"] != self.operation_id):
+                or type(value["schema_version"]) is not int or value["schema_version"] != 2 or value["operation_id"] != self.operation_id):
             refuse(f"{label} envelope manifest differs")
         MODEL.validate_journal(value["journal"])
         exact_nonces = [entry["cas_nonce"] for entry in value["journal"]["history"]]
@@ -922,6 +923,9 @@ class DurableBrokerStore:
     def cas(self, journal: dict[str, Any], *, expected_generation: int, expected_lease_epoch: int,
             expected_cas_nonce: str | None, expected_head_sha256: str | None) -> dict[str, Any]:
         MODEL.validate_journal(journal)
+        if (type(expected_generation) is not int or type(expected_lease_epoch) is not int
+                or isinstance(expected_generation, bool) or isinstance(expected_lease_epoch, bool)):
+            refuse("store CAS scalar types differ")
         if journal["operation_id"] != self.operation_id:
             refuse("CAS operation differs")
         with self.locked():
@@ -1006,6 +1010,7 @@ class DurableBrokerStore:
         except Exception as error:
             refuse(f"held authorization artifact fails Draft 2020-12 schema: {type(error).__name__}")
         if (not isinstance(authorization, dict) or set(authorization) != AUTHORIZATION_KEYS
+                or type(authorization.get("schema_version")) is not int or type(authorization.get("phase")) is not int
                 or authorization.get("schema_version") != 1 or authorization.get("phase") != 6
                 or authorization.get("status") != "GITHUB_PROTECTED_MAIN_AUTHORIZED"
                 or authorization.get("authorization_mode") != "TRANSACTION"

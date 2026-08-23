@@ -215,6 +215,11 @@ class CanonicalProtocolTests(unittest.TestCase):
     "illegal_mode":lambda r:r.__setitem__("mode","SIDELOAD"),
     "illegal_class":lambda r:r.__setitem__("classification","SKIPPED"),
     "non_bool_fresh":lambda r:r.__setitem__("probe_fresh",1),
+    "bool_schema":lambda r:r.__setitem__("schema_version",True),
+    "bool_epoch":lambda r:r.__setitem__("lease_epoch",True),
+    "bool_serial":lambda r:r.__setitem__("state_serial",True),
+    "false_fresh":lambda r:r.__setitem__("probe_fresh",False),
+    "true_raw":lambda r:r.__setitem__("raw_values_recorded",True),
    }
    for label,mutate in mutations.items():
     with self.subTest(label=label):

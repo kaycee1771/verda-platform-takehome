@@ -514,6 +514,8 @@ def utc_text(now: dt.datetime) -> str:
 
 def validate_policy(policy: dict[str, Any]) -> None:
     exact_keys(policy, POLICY_KEYS, "transaction broker policy")
+    for key in ("schema_version", "phase", "journal_schema_version", "maximum_start_window_seconds"):
+        if type(policy[key]) is not int: refuse(f"transaction broker policy {key} type differs")
     fixed = {
         "schema_version": 1, "phase": 6, "status": "DORMANT_TRANSACTION_BROKER_SPEC",
         "execution_enabled": False, "production_adapter_present": False,
@@ -571,6 +573,8 @@ def validate_policy(policy: dict[str, Any]) -> None:
 
 def validate_rollback_policy(policy: dict[str, Any]) -> None:
     exact_keys(policy, ROLLBACK_POLICY_KEYS, "transaction rollback policy")
+    for key in ("schema_version", "phase", "maximum_concurrent_replacements"):
+        if type(policy[key]) is not int: refuse(f"transaction rollback policy {key} type differs")
     if policy != {
         "schema_version": 1, "phase": 6, "status": "DORMANT_TRANSACTION_ROLLBACK_SPEC",
         "execution_enabled": False,
@@ -618,7 +622,9 @@ def _backup(value: object, label: str, *, lineage: str, serial: int, now: dt.dat
 
 def validate_journal(journal: dict[str, Any]) -> None:
     exact_keys(journal, JOURNAL_KEYS, "transaction journal v2")
-    if journal["schema_version"] != 2 or journal["phase"] != 6 or journal["state"] not in STATES:
+    if (type(journal["schema_version"]) is not int or journal["schema_version"] != 2
+            or type(journal["phase"]) is not int or journal["phase"] != 6
+            or type(journal["state"]) is not str or journal["state"] not in STATES):
         refuse("transaction journal identity or state differs")
     for key in ("operation_id", "operation_nonce", "authorization_sha256", "authorization_history_sha256",
                 "verifier_receipt_sha256", "broker_sha256", "policy_sha256", "rollback_policy_sha256", "plan_sha256",

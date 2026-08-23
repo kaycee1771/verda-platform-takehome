@@ -39,6 +39,8 @@ class TransactionProtocol:
   if action not in names or not isinstance(evidence,dict) or \
      journal.get("state") not in ({allowed} if isinstance(allowed,str) else allowed): refuse("canonical intent state differs")
   if set(admission)!=ADMISSION_KEYS or admission["raw_values_recorded"] is not False: refuse("admission schema differs")
+  if type(admission["lease_epoch"]) is not int or admission["lease_epoch"] < 1 or type(admission["verified_at"]) is not str:
+   refuse("admission scalar types differ")
   for key in ("operation_id","authorization_sha256","authorization_history_sha256","verifier_receipt_sha256",
               "broker_sha256","policy_sha256","rollback_policy_sha256","lease_id","lease_epoch"):
    if admission[key]!=journal[key]: refuse("admission journal/fence differs")
@@ -58,11 +60,16 @@ class TransactionProtocol:
  def canonical_outcome(*, journal: dict[str,Any], receipt: dict[str,Any], trusted_transition_time: str) -> dict[str, Any]:
   complete={"prepare":"PREPARE_SUCCEEDED","apply":"APPLY_SUCCEEDED","recover":"RECOVERY_SUCCEEDED",
             "postflight":"POSTFLIGHT_SUCCEEDED","rollback":"ROLLBACK_SUCCEEDED"}
-  if not isinstance(receipt,dict) or set(receipt)!=RECEIPT_KEYS or receipt.get("schema_version")!=1 \
+  if not isinstance(receipt,dict) or set(receipt)!=RECEIPT_KEYS or type(receipt.get("schema_version")) is not int \
+     or receipt.get("schema_version")!=1 \
      or receipt.get("raw_values_recorded") is not False: refuse("outcome receipt schema differs")
   action=receipt.get("action"); outcome=receipt.get("classification"); evidence=receipt.get("event_evidence")
   if action not in complete or outcome not in ADOPTION or not isinstance(evidence,dict) \
      or journal.get("state")!=PENDING_STATES[action]: refuse("canonical outcome state differs")
+  if (type(action) is not str or type(outcome) is not str or type(receipt["mode"]) is not str
+      or type(receipt["probe_outcome"]) is not str or type(receipt["observed_at"]) is not str
+      or type(receipt["lease_epoch"]) is not int or receipt["lease_epoch"] < 1):
+   refuse("outcome scalar types differ")
   if "event" in evidence: refuse("caller evidence cannot select event")
   for key in ("operation_id","authorization_sha256","authorization_history_sha256","lease_id","lease_epoch",
               "state_lineage_sha256"):
