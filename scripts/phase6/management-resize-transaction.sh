@@ -25,9 +25,12 @@ ssh_public_key="$config_root/ssh/id_ed25519.pub"
 lock_file="$state_root/phase6-resize.lock"
 terraform_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../infra/terraform/environments/management" && pwd -P)"
 repository="$(cd -- "$terraform_root/../../../.." && pwd -P)"
-terraform_bin=/snap/bin/terraform
-[[ -x "$terraform_bin" ]] || terraform_bin=/usr/bin/terraform
-[[ -x "$terraform_bin" ]] || { printf '%s\n' '[FAIL] pinned Linux Terraform binary is absent.' >&2; exit 64; }
+terraform_bin="$HOME/.local/lib/verda-phase6/terraform-1.15.8"
+[[ -x "$terraform_bin" ]] || { printf '%s\n' '[FAIL] pinned Linux Terraform 1.15.8 binary is absent.' >&2; exit 64; }
+[[ "$($terraform_bin version -json | python3 -c 'import json,sys; print(json.load(sys.stdin)["terraform_version"])')" == 1.15.8 ]] || {
+  printf '%s\n' '[FAIL] Linux Terraform binary differs from reviewed 1.15.8.' >&2
+  exit 64
+}
 
 for directory in "$config_root" "$state_root" "$gpg_home"; do
   [[ -d "$directory" && ! -L "$directory" ]] || { printf '%s\n' '[FAIL] protected Linux directory is absent.' >&2; exit 64; }
