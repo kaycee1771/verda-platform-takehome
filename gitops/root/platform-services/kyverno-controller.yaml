@@ -20,4 +20,4 @@ spec:
   destination: {server: https://kubernetes.default.svc, namespace: kyverno}
   syncPolicy:
     automated: {prune: false, selfHeal: true, allowEmpty: false}
-    syncOptions: [ServerSideApply=true, PruneLast=true]
+    syncOptions: [ServerSideApply=true, Replace=true, PruneLast=true]
