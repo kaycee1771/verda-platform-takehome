@@ -37,7 +37,7 @@ creates a public project or an anonymous push path.
 
 ## Availability, persistence, and peak model
 
-This is a capacity-conscious Stage A baseline, not a claim of database HA. Longhorn
+This is a capacity-conscious Platform baseline, not a claim of database HA. Longhorn
 protects blocks against a storage-node loss, but PostgreSQL, Valkey, registry, jobservice,
 and Trivy each have one application replica. A node loss therefore causes bounded
 application downtime while Kubernetes and Longhorn reschedule. Production would use an

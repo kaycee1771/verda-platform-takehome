@@ -27,7 +27,7 @@ class PhaseMapTests(unittest.TestCase):
     def test_only_phase_six_verification_and_safe_prerequisites_are_enabled(self) -> None:
         self.assertEqual(
             set(PHASE_MAP["enabled_phase_targets"]),
-            {"platform-status", "stage-a-verify"},
+            {"platform-status", "platform-verify"},
         )
         self.assertEqual(
             set(PHASE_MAP["enabled_completed_phase_targets"]),
@@ -48,7 +48,7 @@ class PhaseMapTests(unittest.TestCase):
         self.assertEqual(owners["cluster-bootstrap"]["management"], 4)
         self.assertEqual(owners["verify-cluster"]["management"], 4)
         self.assertEqual(owners["bootstrap-gitops"]["default"], 5)
-        self.assertEqual(owners["stage-a-verify"]["default"], 6)
+        self.assertEqual(owners["platform-verify"]["default"], 6)
 
     def test_cluster_specific_owners_are_not_collapsed(self) -> None:
         owners = PHASE_MAP["target_owners"]

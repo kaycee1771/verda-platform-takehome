@@ -7,7 +7,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-3"
   labels:
-    app.kubernetes.io/part-of: stage-a-backup
+    app.kubernetes.io/part-of: platform-backup
 spec:
   # Unpause only after the environment-foundation applications have created
   # the three namespaces and their read-only velero-backup-reader bindings.

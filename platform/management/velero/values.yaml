@@ -191,19 +191,19 @@ metrics:
     autodetect: false
     enabled: true
     additionalLabels:
-      app.kubernetes.io/part-of: stage-a-observability
+      app.kubernetes.io/part-of: platform-observability
       platform.verda-demo.io/monitor: "true"
   nodeAgentPodMonitor:
     autodetect: false
     enabled: true
     additionalLabels:
-      app.kubernetes.io/part-of: stage-a-observability
+      app.kubernetes.io/part-of: platform-observability
       platform.verda-demo.io/monitor: "true"
   prometheusRule:
     autodetect: false
     enabled: true
     additionalLabels:
-      app.kubernetes.io/part-of: stage-a-observability
+      app.kubernetes.io/part-of: platform-observability
     spec:
       - alert: VeleroBackupFailed
         expr: increase(velero_backup_failure_total{schedule!=""}[30m]) > 0

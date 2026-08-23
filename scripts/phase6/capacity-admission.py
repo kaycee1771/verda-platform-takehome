@@ -25,7 +25,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONTRACT = ROOT / "config" / "phase6-capacity-admission.yaml"
+DEFAULT_CONTRACT = ROOT / "config" / "platform-capacity-admission.yaml"
 MAXIMUM_INPUT_BYTES = 16 * 1024 * 1024
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 NUMBER = r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?|\.[0-9]+"

@@ -20,10 +20,10 @@ RUNTIME = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNTIME)
 
 FIXTURE_FILES = (
-    "config/phase6-root-admission.yaml",
-    "config/phase6-capacity-admission.yaml",
+    "config/platform-root-admission.yaml",
+    "config/platform-capacity-admission.yaml",
     "gitops/root/kustomization.yaml",
-    "gitops/root/phase6/kustomization.yaml",
+    "gitops/root/platform-services/kustomization.yaml",
     "platform/management/rancher/values.yaml",
     "platform/management/harbor/secrets/values.yaml",
     "platform/management/harbor/postgresql/values.yaml",
@@ -37,9 +37,9 @@ FIXTURE_FILES = (
     "environments/dev/namespace/registry-credentials.yaml",
     "environments/staging/namespace/registry-credentials.yaml",
     "environments/prod/namespace/registry-credentials.yaml",
-    "applications/stage-a-smoke/values-dev.yaml",
-    "applications/stage-a-smoke/values-staging.yaml",
-    "applications/stage-a-smoke/values-prod.yaml",
+    "applications/platform-demo/values-dev.yaml",
+    "applications/platform-demo/values-staging.yaml",
+    "applications/platform-demo/values-prod.yaml",
 )
 
 
@@ -59,29 +59,29 @@ def copy_fixture(destination: Path) -> None:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relative, target)
-    candidate = destination / "gitops" / "root" / "phase6"
+    candidate = destination / "gitops" / "root" / "platform-services"
     candidate.mkdir(parents=True, exist_ok=True)
-    for source in (ROOT / "gitops" / "root" / "phase6").glob("*.yaml"):
+    for source in (ROOT / "gitops" / "root" / "platform-services").glob("*.yaml"):
         shutil.copy2(source, candidate / source.name)
 
 
 def include_candidate(root: Path) -> None:
     document = read_yaml(root, "gitops/root/kustomization.yaml")
-    document["resources"].append("phase6")
+    document["resources"].append("platform-services")
     write_yaml(root, "gitops/root/kustomization.yaml", document)
 
 
 def fully_admit(root: Path) -> None:
     include_candidate(root)
 
-    ledger = read_yaml(root, "config/phase6-root-admission.yaml")
+    ledger = read_yaml(root, "config/platform-root-admission.yaml")
     ledger["admission_status"] = "admitted"
     for group in ledger["gates"].values():
         for gate in group:
             group[gate] = True
-    write_yaml(root, "config/phase6-root-admission.yaml", ledger)
+    write_yaml(root, "config/platform-root-admission.yaml", ledger)
 
-    capacity = read_yaml(root, "config/phase6-capacity-admission.yaml")
+    capacity = read_yaml(root, "config/platform-capacity-admission.yaml")
     capacity["admission_status"] = "ready"
     for key, value in capacity["baseline"].items():
         if value is None:
@@ -91,7 +91,7 @@ def fully_admit(root: Path) -> None:
         component["expected_document_count"] = 1
         component["expected_workload_count"] = 1
         component["expected_pvc_definition_count"] = 0
-    write_yaml(root, "config/phase6-capacity-admission.yaml", capacity)
+    write_yaml(root, "config/platform-capacity-admission.yaml", capacity)
 
     rancher = read_yaml(root, "platform/management/rancher/values.yaml")
     rancher["gates"] = {key: True for key in rancher["gates"]}
@@ -135,7 +135,7 @@ def fully_admit(root: Path) -> None:
         sealed["spec"]["encryptedData"][".dockerconfigjson"] = "Ag" + "B" * 90
         write_yaml(root, relative, sealed)
 
-        relative = f"applications/stage-a-smoke/values-{environment}.yaml"
+        relative = f"applications/platform-demo/values-{environment}.yaml"
         smoke = read_yaml(root, relative)
         smoke["activation"] = {key: True for key in smoke["activation"]}
         smoke["certificate"]["bootstrapEnabled"] = True
@@ -166,7 +166,7 @@ class Phase6RootAdmissionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("root admission_status must equal admitted", result.stderr)
         root = read_yaml(ROOT, "gitops/root/kustomization.yaml")
-        self.assertNotIn("phase6", [str(item).rstrip("/") for item in root["resources"]])
+        self.assertNotIn("platform-services", [str(item).rstrip("/") for item in root["resources"]])
 
     def test_synthetic_fully_admitted_fixture_passes(self) -> None:
         temporary, root = self.fixture()
@@ -210,14 +210,14 @@ class Phase6RootAdmissionTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         fully_admit(root)
         root_document = read_yaml(root, "gitops/root/kustomization.yaml")
-        root_document["resources"].remove("phase6")
+        root_document["resources"].remove("platform-services")
         write_yaml(root, "gitops/root/kustomization.yaml", root_document)
-        ledger = read_yaml(root, "config/phase6-root-admission.yaml")
+        ledger = read_yaml(root, "config/platform-root-admission.yaml")
         for group_name, group in ledger["gates"].items():
             for gate_name in group:
                 candidate = copy.deepcopy(ledger)
                 candidate["gates"][group_name][gate_name] = False
-                write_yaml(root, "config/phase6-root-admission.yaml", candidate)
+                write_yaml(root, "config/platform-root-admission.yaml", candidate)
                 result = run_checker(root)
                 self.assertEqual(result.returncode, 1, f"{group_name}.{gate_name}")
                 self.assertIn(f"{group_name}.{gate_name} is not satisfied", result.stderr)
@@ -227,7 +227,7 @@ class Phase6RootAdmissionTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         fully_admit(root)
         root_document = read_yaml(root, "gitops/root/kustomization.yaml")
-        root_document["resources"].remove("phase6")
+        root_document["resources"].remove("platform-services")
         write_yaml(root, "gitops/root/kustomization.yaml", root_document)
         loki = read_yaml(root, "platform/management/loki/activation-contract.yaml")
         loki["blocking_gates"]["lifecycle_policy_proven"] = False
@@ -241,7 +241,7 @@ class Phase6RootAdmissionTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         fully_admit(root)
         root_document = read_yaml(root, "gitops/root/kustomization.yaml")
-        root_document["resources"].remove("phase6")
+        root_document["resources"].remove("platform-services")
         write_yaml(root, "gitops/root/kustomization.yaml", root_document)
         values = read_yaml(root, "platform/management/harbor/secrets/values.yaml")
         first = next(iter(values["ciphertexts"]))
@@ -252,14 +252,14 @@ class Phase6RootAdmissionTests(unittest.TestCase):
         self.assertIn("unresolved sentinel", result.stderr)
         self.assertNotIn("REQUIRED_SEALED", result.stderr)
 
-    def test_registry_ciphertext_and_stage_a_digest_sentinels_are_rejected(self) -> None:
+    def test_registry_ciphertext_and_platform_digest_sentinels_are_rejected(self) -> None:
         for relative, mutate in (
             (
                 "environments/dev/namespace/registry-credentials.yaml",
                 lambda doc: doc["spec"]["encryptedData"].update({".dockerconfigjson": "REQUIRED_SEALED_CIPHERTEXT_TEST"}),
             ),
             (
-                "applications/stage-a-smoke/values-dev.yaml",
+                "applications/platform-demo/values-dev.yaml",
                 lambda doc: doc["image"].update({"digest": "sha256:REQUIRED_STAGE_A_SMOKE_IMAGE_DIGEST"}),
             ),
         ):
@@ -268,7 +268,7 @@ class Phase6RootAdmissionTests(unittest.TestCase):
                 self.addCleanup(temporary.cleanup)
                 fully_admit(root)
                 root_document = read_yaml(root, "gitops/root/kustomization.yaml")
-                root_document["resources"].remove("phase6")
+                root_document["resources"].remove("platform-services")
                 write_yaml(root, "gitops/root/kustomization.yaml", root_document)
                 document = read_yaml(root, relative)
                 mutate(document)

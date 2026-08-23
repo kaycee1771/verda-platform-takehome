@@ -12,7 +12,7 @@ to prevent duplicate ownership and destructive lifecycle surprises.
 
 ## Volume strategy
 
-Stage A selects Velero filesystem backup with the Kopia uploader and one
+Platform selects Velero filesystem backup with the Kopia uploader and one
 node-agent per RKE2 node. The selected daily schedule opts its pod volumes into
 filesystem backup and disables volume snapshots. There is deliberately no
 VolumeSnapshotLocation: the AWS plugin supplies S3 object storage, while the

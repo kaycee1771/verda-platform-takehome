@@ -3,7 +3,7 @@
 
 The checker reads only tracked, non-secret desired-state files. It never calls
 the cluster, cloud, network, or Git. Live facts must first be reduced to the
-boolean, sanitized ledger in ``config/phase6-root-admission.yaml``.
+boolean, sanitized ledger in ``config/platform-root-admission.yaml``.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ REQUIRED_GATES = {
         "rancher_production_certificate_ready",
         "harbor_staging_certificate_verified",
         "harbor_production_certificate_ready",
-        "stage_a_certificates_ready",
+        "platform_demo_certificates_ready",
     },
     "storage_s3": {
         "longhorn_runtime_healthy",
@@ -75,7 +75,7 @@ REQUIRED_GATES = {
         "prometheus_targets_ready",
         "grafana_datasources_ready",
     },
-    "stage_a": {
+    "platform": {
         "image_digest_locked",
         "harbor_scan_completed_noncritical",
         "pull_secrets_reconciled",
@@ -128,9 +128,9 @@ EXPECTED_CANDIDATE = {
     "environment-dev.yaml",
     "environment-staging.yaml",
     "environment-prod.yaml",
-    "stage-a-smoke-dev.yaml",
-    "stage-a-smoke-staging.yaml",
-    "stage-a-smoke-prod.yaml",
+    "platform-demo-dev.yaml",
+    "platform-demo-staging.yaml",
+    "platform-demo-prod.yaml",
 }
 
 
@@ -201,24 +201,27 @@ def root_state(root: Path) -> bool:
     if not isinstance(resources, list):
         raise AdmissionError("root resources must be a list")
     normalized = [normalize_resource(item) for item in resources]
-    phase6_entries = [item for item in normalized if item == "phase6" or item.startswith("phase6/")]
-    if len(phase6_entries) > 1:
-        raise AdmissionError("root contains ambiguous Phase 6 entries")
-    included = phase6_entries == ["phase6"]
+    platform_entries = [
+        item for item in normalized
+        if item == "platform-services" or item.startswith("platform-services/")
+    ]
+    if len(platform_entries) > 1:
+        raise AdmissionError("root contains ambiguous platform service entries")
+    included = platform_entries == ["platform-services"]
 
-    candidate = load_yaml(root, "gitops/root/phase6/kustomization.yaml")
+    candidate = load_yaml(root, "gitops/root/platform-services/kustomization.yaml")
     candidate_resources = candidate.get("resources")
     if not isinstance(candidate_resources, list):
-        raise AdmissionError("Phase 6 candidate resources must be a list")
+        raise AdmissionError("platform service candidate resources must be a list")
     normalized_candidate = [normalize_resource(item) for item in candidate_resources]
     if len(normalized_candidate) != len(set(normalized_candidate)):
-        raise AdmissionError("Phase 6 candidate contains duplicate resources")
+        raise AdmissionError("platform service candidate contains duplicate resources")
     if set(normalized_candidate) != EXPECTED_CANDIDATE:
         raise AdmissionError("Phase 6 candidate inventory is incomplete or unexpected")
 
     application_names: set[str] = set()
     for resource in sorted(EXPECTED_CANDIDATE):
-        application = load_yaml(root, f"gitops/root/phase6/{resource}")
+        application = load_yaml(root, f"gitops/root/platform-services/{resource}")
         if application.get("apiVersion") != "argoproj.io/v1alpha1" or application.get("kind") != "Application":
             raise AdmissionError(f"Phase 6 candidate resource is not an Argo CD Application: {resource}")
         metadata = mapping(application.get("metadata"), f"Phase 6 candidate metadata: {resource}")
@@ -236,7 +239,7 @@ def root_state(root: Path) -> bool:
 
 
 def check_ledger(root: Path) -> None:
-    ledger = load_yaml(root, "config/phase6-root-admission.yaml")
+    ledger = load_yaml(root, "config/platform-root-admission.yaml")
     if ledger.get("schema_version") != 1:
         raise AdmissionError("root admission schema_version must equal 1")
     if ledger.get("admission_status") != "admitted":
@@ -253,7 +256,7 @@ def positive_int(value: Any) -> bool:
 
 
 def check_capacity_contract_shape(root: Path) -> None:
-    contract = load_yaml(root, "config/phase6-capacity-admission.yaml")
+    contract = load_yaml(root, "config/platform-capacity-admission.yaml")
     if contract.get("schema_version") != 1 or contract.get("admission_status") != "ready":
         raise AdmissionError("capacity admission contract is not ready")
     baseline = mapping(contract.get("baseline"), "capacity baseline")
@@ -304,13 +307,13 @@ def run_capacity_preflight(root: Path) -> None:
             sys.executable,
             str(root / "scripts/phase6/render-capacity-inputs.py"),
             "--verify-contract",
-            str(root / "config/phase6-capacity-admission.yaml"),
+            str(root / "config/platform-capacity-admission.yaml"),
         ],
         [
             sys.executable,
             str(root / "scripts/phase6/capacity-admission.py"),
             "--contract",
-            str(root / "config/phase6-capacity-admission.yaml"),
+            str(root / "config/platform-capacity-admission.yaml"),
         ],
     )
     for index, command in enumerate(commands):
@@ -359,8 +362,14 @@ def check_component_contracts(root: Path) -> None:
         if contract.get("activation_status") != "ready":
             raise AdmissionError(f"{label} activation contract is not ready")
         all_boolean_gates_ready(contract, label)
-        if label in {"Loki", "Velero"} and mapping(contract.get("object_storage"), f"{label} object storage").get("status") != "live-proven":
-            raise AdmissionError(f"{label} object storage is not live-proven")
+        if label == "Velero" and mapping(
+            contract.get("object_storage"), "Velero object storage"
+        ).get("status") != "live-proven":
+            raise AdmissionError("Velero object storage is not live-proven")
+        if label == "Loki":
+            storage = mapping(contract.get("storage"), "Loki storage")
+            if storage.get("type") != "filesystem":
+                raise AdmissionError("Loki filesystem storage is not selected")
 
     monitoring = load_yaml(root, "platform/management/monitoring/image-lock.yaml")
     if monitoring.get("selection_status") != "verified":
@@ -403,24 +412,24 @@ def check_sealed_environment_credentials(root: Path) -> None:
             raise AdmissionError(f"{environment} registry ciphertext contains an unresolved sentinel")
 
 
-def check_stage_a(root: Path) -> None:
+def check_platform_demo(root: Path) -> None:
     expected_replicas = {"dev": 1, "staging": 1, "prod": 2}
     digests: set[str] = set()
     for environment, replicas in expected_replicas.items():
-        values = load_yaml(root, f"applications/stage-a-smoke/values-{environment}.yaml")
+        values = load_yaml(root, f"applications/platform-demo/values-{environment}.yaml")
         if values.get("environment") != environment or values.get("replicas") != replicas:
-            raise AdmissionError(f"Stage A {environment} identity or replica contract is invalid")
-        activation = mapping(values.get("activation"), f"Stage A {environment} activation")
-        require_true(activation, {"enabled", "imageDigestLocked", "pullSecretReady", "serviceMonitorCRDReady"}, f"Stage A {environment} activation")
-        certificate = mapping(values.get("certificate"), f"Stage A {environment} certificate")
+            raise AdmissionError(f"Platform {environment} identity or replica contract is invalid")
+        activation = mapping(values.get("activation"), f"Platform {environment} activation")
+        require_true(activation, {"enabled", "imageDigestLocked", "pullSecretReady", "serviceMonitorCRDReady"}, f"Platform {environment} activation")
+        certificate = mapping(values.get("certificate"), f"Platform {environment} certificate")
         if certificate.get("bootstrapEnabled") is not True or certificate.get("stagingCertificateVerified") is not True:
-            raise AdmissionError(f"Stage A {environment} certificate gates are not satisfied")
-        digest = mapping(values.get("image"), f"Stage A {environment} image").get("digest")
+            raise AdmissionError(f"Platform {environment} certificate gates are not satisfied")
+        digest = mapping(values.get("image"), f"Platform {environment} image").get("digest")
         if not isinstance(digest, str) or not IMAGE_DIGEST.fullmatch(digest):
-            raise AdmissionError(f"Stage A {environment} image digest contains an unresolved sentinel")
+            raise AdmissionError(f"Platform {environment} image digest contains an unresolved sentinel")
         digests.add(digest)
     if len(digests) != 1:
-        raise AdmissionError("Stage A environments do not select one promoted image digest")
+        raise AdmissionError("Platform environments do not select one promoted image digest")
 
 
 def evaluate(root: Path, capacity_preflight: Any = run_capacity_preflight) -> tuple[bool, str | None]:
@@ -433,7 +442,7 @@ def evaluate(root: Path, capacity_preflight: Any = run_capacity_preflight) -> tu
         check_capacity_contract_shape(root)
         check_component_contracts(root)
         check_sealed_environment_credentials(root)
-        check_stage_a(root)
+        check_platform_demo(root)
         capacity_preflight(root)
     except AdmissionError as exc:
         if included:

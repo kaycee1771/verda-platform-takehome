@@ -1,6 +1,6 @@
 # Phase 6 namespace and priority prerequisites
 
-This Application owns the eight new platform namespaces, three Stage A
+This Application owns the eight new platform namespaces, three Platform
 PriorityClasses, and the `cattle-system` container-default LimitRange. The
 LimitRange is applied after the Namespace and before Rancher; its bounded
 100m/128Mi request and 500m/256Mi limit cover the upstream Rancher pre-upgrade

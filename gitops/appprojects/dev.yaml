@@ -5,7 +5,7 @@ metadata:
   name: dev
   namespace: argocd
 spec:
-  description: Stage A development destination on the management cluster
+  description: Platform development destination on the management cluster
   sourceRepos:
     - https://github.com/kaycee1771/verda-platform-takehome.git
   destinations:

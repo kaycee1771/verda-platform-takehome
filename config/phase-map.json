@@ -31,7 +31,7 @@
     "verify-cluster",
     "bootstrap-gitops"
   ],
-  "enabled_phase_targets": ["platform-status", "stage-a-verify"],
+  "enabled_phase_targets": ["platform-status", "platform-verify"],
   "target_owners": {
     "help": {"default": 1},
     "bootstrap-tools": {"default": 1},
@@ -60,7 +60,7 @@
     "verify-cluster": {"management": 4, "workload": 7},
     "bootstrap-gitops": {"default": 5},
     "platform-status": {"default": 6},
-    "stage-a-verify": {"default": 6},
+    "platform-verify": {"default": 6},
     "register-clusters": {"default": 7},
     "stage-b-verify": {"default": 7},
     "supply-chain-verify": {"default": 8},

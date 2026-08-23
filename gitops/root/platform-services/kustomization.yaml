@@ -1,0 +1,31 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - prerequisites.yaml
+  - sealed-secrets.yaml
+  - kyverno-controller.yaml
+  - rancher.yaml
+  - harbor-secrets.yaml
+  - harbor-postgresql.yaml
+  - harbor-service.yaml
+  - monitoring-controller.yaml
+  - monitoring-resources.yaml
+  - loki.yaml
+  - alloy.yaml
+  - velero-controller.yaml
+  - velero-resources.yaml
+  - sealed-secrets-monitoring.yaml
+  - kyverno-monitoring.yaml
+  - kyverno-policies.yaml
+  - argocd-monitoring.yaml
+  - harbor-monitoring.yaml
+  - longhorn-monitoring.yaml
+  - rancher-monitoring.yaml
+  - traefik-monitoring.yaml
+  - environment-dev.yaml
+  - environment-staging.yaml
+  - environment-prod.yaml
+  - platform-demo-dev.yaml
+  - platform-demo-staging.yaml
+  - platform-demo-prod.yaml

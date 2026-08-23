@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: verda-platform
     platform.verda-demo.io/owner: platform-security
-    platform.verda-demo.io/stage: stage-a
+    platform.verda-demo.io/stage: platform
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted
@@ -21,7 +21,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: verda-platform
     platform.verda-demo.io/owner: platform-security
-    platform.verda-demo.io/stage: stage-a
+    platform.verda-demo.io/stage: platform
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted
@@ -38,7 +38,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: verda-platform
     platform.verda-demo.io/owner: platform-management
-    platform.verda-demo.io/stage: stage-a
+    platform.verda-demo.io/stage: platform
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted
@@ -53,7 +53,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: verda-platform
     platform.verda-demo.io/owner: platform-registry
-    platform.verda-demo.io/stage: stage-a
+    platform.verda-demo.io/stage: platform
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted
@@ -68,7 +68,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: verda-platform
     platform.verda-demo.io/owner: platform-observability
-    platform.verda-demo.io/stage: stage-a
+    platform.verda-demo.io/stage: platform
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted
@@ -83,7 +83,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: verda-platform
     platform.verda-demo.io/owner: platform-observability
-    platform.verda-demo.io/stage: stage-a
+    platform.verda-demo.io/stage: platform
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted
@@ -98,7 +98,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: verda-platform
     platform.verda-demo.io/owner: platform-observability
-    platform.verda-demo.io/stage: stage-a
+    platform.verda-demo.io/stage: platform
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted
@@ -113,7 +113,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: verda-platform
     platform.verda-demo.io/owner: platform-backup
-    platform.verda-demo.io/stage: stage-a
+    platform.verda-demo.io/stage: platform
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted

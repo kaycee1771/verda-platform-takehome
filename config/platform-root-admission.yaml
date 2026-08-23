@@ -1,0 +1,64 @@
+---
+schema_version: 1
+# This file is the sanitized, reviewable platform root-admission ledger. It must
+# not contain credentials, endpoints, object identifiers, raw runtime output,
+# or secret material. A gate may become true only after its owning live or
+# offline verification has passed. The checker independently validates the
+# component activation contracts and ciphertext/digest sentinels, so changing
+# this ledger alone cannot activate platform services.
+admission_status: blocked
+gates:
+  capacity:
+    offline_capacity_admission_passed: false
+    one_node_loss_headroom_proven: false
+    renders_checksum_bound: false
+  component_activation:
+    sealed_secrets_runtime_ready: false
+    kyverno_audit_runtime_ready: false
+    rancher_activation_ready: false
+    harbor_activation_ready: false
+    monitoring_runtime_ready: false
+    loki_activation_ready: false
+    alloy_activation_ready: false
+    velero_activation_ready: false
+    environment_foundations_ready: false
+  sealed_runtime:
+    harbor_ciphertexts_locked: false
+    environment_registry_ciphertexts_locked: false
+    runtime_secrets_reconciled: false
+    sealed_secrets_recovery_key_backed_up: false
+  tls:
+    rancher_staging_certificate_verified: false
+    rancher_production_certificate_ready: false
+    harbor_staging_certificate_verified: false
+    harbor_production_certificate_ready: false
+    platform_demo_certificates_ready: false
+  storage_s3:
+    longhorn_runtime_healthy: false
+    loki_s3_boundary_proven: false
+    velero_s3_boundary_proven: false
+    velero_backup_storage_location_available: false
+    velero_kopia_repository_initialized: false
+  network_monitor:
+    environment_default_denies_ready: false
+    environment_dns_allowances_ready: false
+    alloy_api_egress_proven: false
+    monitoring_service_monitors_ready: false
+    argocd_target_monitor_ready: false
+    harbor_target_monitor_ready: false
+    longhorn_target_monitor_ready: false
+    rancher_target_monitor_ready: false
+    traefik_target_monitor_ready: false
+    prometheus_targets_ready: false
+    grafana_datasources_ready: false
+  platform:
+    image_digest_locked: false
+    harbor_scan_completed_noncritical: false
+    pull_secrets_reconciled: false
+    workload_replicas_ready_1_1_2: false
+    metrics_query_ready: false
+    demo_dev_log_marker_ready: false
+  root:
+    candidate_reviewed: false
+    explicit_activation_authorized: false
+    inclusion_allowed: false

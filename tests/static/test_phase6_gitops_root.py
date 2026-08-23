@@ -11,7 +11,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).parents[2]
 LIVE_ROOT = ROOT / "gitops" / "root"
-CANDIDATE = LIVE_ROOT / "phase6"
+CANDIDATE = LIVE_ROOT / "platform-services"
 REPOSITORY = "https://github.com/kaycee1771/verda-platform-takehome.git"
 SERVER = "https://kubernetes.default.svc"
 
@@ -45,9 +45,9 @@ EXPECTED_RESOURCES = [
     "environment-dev.yaml",
     "environment-staging.yaml",
     "environment-prod.yaml",
-    "stage-a-smoke-dev.yaml",
-    "stage-a-smoke-staging.yaml",
-    "stage-a-smoke-prod.yaml",
+    "platform-demo-dev.yaml",
+    "platform-demo-staging.yaml",
+    "platform-demo-prod.yaml",
 ]
 
 EXPECTED = {
@@ -75,9 +75,9 @@ EXPECTED = {
     "environment-dev.yaml": ("demo-dev-foundation", "foundation", "demo-dev", 0),
     "environment-staging.yaml": ("demo-staging-foundation", "foundation", "demo-staging", 0),
     "environment-prod.yaml": ("demo-prod-foundation", "foundation", "demo-prod", 0),
-    "stage-a-smoke-dev.yaml": ("stage-a-smoke-dev", "dev", "demo-dev", 10),
-    "stage-a-smoke-staging.yaml": ("stage-a-smoke-staging", "staging", "demo-staging", 20),
-    "stage-a-smoke-prod.yaml": ("stage-a-smoke-prod", "prod", "demo-prod", 20),
+    "platform-demo-dev.yaml": ("platform-demo-dev", "dev", "demo-dev", 10),
+    "platform-demo-staging.yaml": ("platform-demo-staging", "staging", "demo-staging", 20),
+    "platform-demo-prod.yaml": ("platform-demo-prod", "prod", "demo-prod", 20),
 }
 
 
@@ -85,9 +85,9 @@ class Phase6GitOpsRootTests(unittest.TestCase):
     def test_candidate_is_complete_but_not_live_while_admission_is_blocked(self) -> None:
         self.assertEqual(load(CANDIDATE / "kustomization.yaml")["resources"], EXPECTED_RESOURCES)
         live_resources = load(LIVE_ROOT / "kustomization.yaml")["resources"]
-        self.assertNotIn("phase6", live_resources)
-        self.assertNotIn("phase6/kustomization.yaml", live_resources)
-        capacity = load(ROOT / "config" / "phase6-capacity-admission.yaml")
+        self.assertNotIn("platform-services", live_resources)
+        self.assertNotIn("platform-services/kustomization.yaml", live_resources)
+        capacity = load(ROOT / "config" / "platform-capacity-admission.yaml")
         self.assertEqual(capacity["admission_status"], "blocked-incomplete-inputs")
 
     def test_all_applications_have_exact_identity_destination_and_safe_source(self) -> None:
@@ -157,9 +157,9 @@ class Phase6GitOpsRootTests(unittest.TestCase):
             ("monitoring-controller.yaml", "rancher-monitoring.yaml"),
             ("monitoring-controller.yaml", "traefik-monitoring.yaml"),
             ("velero-controller.yaml", "velero-resources.yaml"),
-            ("environment-dev.yaml", "stage-a-smoke-dev.yaml"),
-            ("environment-staging.yaml", "stage-a-smoke-staging.yaml"),
-            ("environment-prod.yaml", "stage-a-smoke-prod.yaml"),
+            ("environment-dev.yaml", "platform-demo-dev.yaml"),
+            ("environment-staging.yaml", "platform-demo-staging.yaml"),
+            ("environment-prod.yaml", "platform-demo-prod.yaml"),
         ):
             self.assertLess(waves[earlier], waves[later])
 

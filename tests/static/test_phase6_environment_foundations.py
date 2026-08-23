@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove Stage A namespaces have bounded resources and default isolation."""
+"""Prove Platform namespaces have bounded resources and default isolation."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ class Phase6EnvironmentFoundationTests(unittest.TestCase):
         )
         for item in namespaces:
             labels = item["metadata"]["labels"]
-            self.assertEqual(labels["platform.verda-demo.io/stage"], "stage-a")
+            self.assertEqual(labels["platform.verda-demo.io/stage"], "platform")
             self.assertEqual(
                 labels["pod-security.kubernetes.io/audit"], "restricted"
             )
@@ -126,7 +126,7 @@ class Phase6EnvironmentFoundationTests(unittest.TestCase):
                 self.assertEqual(labels["pod-security.kubernetes.io/enforce"], "restricted")
                 self.assertEqual(
                     labels["platform.verda-demo.io/topology"],
-                    "stage-a-management-cluster",
+                    "platform-management-cluster",
                 )
                 quota = documents(root / "quota.yaml")[0]
                 self.assertEqual(quota["metadata"]["namespace"], namespace)

@@ -1,0 +1,23 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-demo-prod
+  namespace: argocd
+  annotations: {argocd.argoproj.io/sync-wave: "20"}
+spec:
+  project: prod
+  sources:
+    - repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+      targetRevision: main
+      path: applications/platform-demo/chart
+      helm:
+        releaseName: platform-demo
+        valueFiles: [$values/applications/platform-demo/values-prod.yaml]
+    - repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+      targetRevision: main
+      ref: values
+  destination: {server: https://kubernetes.default.svc, namespace: demo-prod}
+  syncPolicy:
+    automated: {prune: true, selfHeal: true, allowEmpty: false}
+    syncOptions: [PruneLast=true]

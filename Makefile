@@ -5,7 +5,7 @@ PWSH ?= pwsh
 .PHONY: help bootstrap-tools install-hooks validate validate-negative pre-commit secret-scan ci discover \
 	phase0-validate phase0-tools phase0-preflight phase0-discover-account phase0-provider-schema \
 	infra-init infra-plan infra-apply infra-repair-node-02-plan infra-repair-node-02-apply infra-lifecycle-check inventory configure verify-hosts cluster-bootstrap verify-cluster \
-	bootstrap-gitops platform-status stage-a-verify register-clusters stage-b-verify \
+	bootstrap-gitops platform-status platform-verify register-clusters stage-b-verify \
 	app-test app-build supply-chain-verify promote verify fault backup restore-test \
 	cost-report collect-evidence sanitize-evidence destroy
 
@@ -51,5 +51,5 @@ phase0-discover-account:
 phase0-provider-schema:
 	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/phase0/export-provider-schema.ps1 -AllowProviderDownload -OutputPath evidence/phase-0/provider-schema.local.json
 
-infra-init infra-plan infra-apply infra-repair-node-02-plan infra-repair-node-02-apply infra-lifecycle-check inventory configure verify-hosts cluster-bootstrap verify-cluster bootstrap-gitops platform-status stage-a-verify register-clusters stage-b-verify app-test app-build supply-chain-verify promote verify fault backup restore-test cost-report collect-evidence sanitize-evidence destroy:
+infra-init infra-plan infra-apply infra-repair-node-02-plan infra-repair-node-02-apply infra-lifecycle-check inventory configure verify-hosts cluster-bootstrap verify-cluster bootstrap-gitops platform-status platform-verify register-clusters stage-b-verify app-test app-build supply-chain-verify promote verify fault backup restore-test cost-report collect-evidence sanitize-evidence destroy:
 	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/phase-gate.ps1 -Target "$@" -Arguments "CLUSTER=$(CLUSTER) FROM=$(FROM) TO=$(TO) DIGEST=$(DIGEST) TEST=$(TEST) TARGET=$(TARGET) CONFIRM=$(CONFIRM)"
