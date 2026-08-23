@@ -116,7 +116,6 @@ class Phase6EnvironmentFoundationTests(unittest.TestCase):
                         "limitrange.yaml",
                         "network-policies.yaml",
                         "access.yaml",
-                        "registry-credentials.yaml",
                     },
                 )
                 namespace_doc = documents(root / "namespace.yaml")[0]
@@ -179,8 +178,7 @@ class Phase6EnvironmentFoundationTests(unittest.TestCase):
                     {"app.kubernetes.io/name": "rke2-traefik"},
                 )
 
-    def test_access_and_registry_material_are_secret_safe_and_fail_closed(self) -> None:
-        ciphertexts: set[str] = set()
+    def test_access_uses_an_external_pull_secret_without_committed_credentials(self) -> None:
         for environment in ("dev", "staging", "prod"):
             root = ROOT / "environments" / environment / "namespace"
             access = documents(root / "access.yaml")
@@ -204,20 +202,7 @@ class Phase6EnvironmentFoundationTests(unittest.TestCase):
                 backup_binding["subjects"],
                 [{"kind": "ServiceAccount", "name": "velero", "namespace": "velero"}],
             )
-            sealed = documents(root / "registry-credentials.yaml")[0]
-            self.assertEqual(sealed["kind"], "SealedSecret")
-            self.assertEqual(
-                sealed["metadata"]["annotations"]["sealedsecrets.bitnami.com/strict"],
-                "true",
-            )
-            encrypted = sealed["spec"]["encryptedData"]
-            self.assertEqual(set(encrypted), {".dockerconfigjson"})
-            value = encrypted[".dockerconfigjson"]
-            self.assertRegex(value, r"^REQUIRED_SEALED_CIPHERTEXT_[A-Z_]+$")
-            ciphertexts.add(value)
-            self.assertNotIn("data", sealed["spec"]["template"])
-            self.assertNotIn("stringData", sealed["spec"]["template"])
-        self.assertEqual(len(ciphertexts), 3)
+            self.assertFalse((root / "registry-credentials.yaml").exists())
 
 
 if __name__ == "__main__":

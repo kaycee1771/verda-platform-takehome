@@ -10,15 +10,15 @@ JSON records on stdout with the stable `platform_demo` marker. The builder image
 as an immutable digest. `scratch` is Docker's empty reserved base and has no mutable registry tag.
 
 `chart/` is rendered once for each of `values-dev.yaml`, `values-staging.yaml`, and
-`values-prod.yaml`. All three committed value files are inert. A controlled activation is:
+`values-prod.yaml`. The final submission uses one controlled activation:
 
 1. Verify the locked builder digest, build without network-dependent modules, test, scan, push
    once to Harbor, and record the resulting application digest.
-2. Set `certificate.bootstrapEnabled=true` for one environment and verify the staging
-   Certificate for its exact `nip.io` hostname.
-3. Confirm the namespace-owned `platform-demo-registry` SealedSecret and Prometheus Operator CRD.
-4. Replace the application digest sentinel, set every gate and `activation.enabled=true`, and
-   reconcile that environment. Repeat without rebuilding for staging and production.
+2. Verify the staging Certificate for each exact `nip.io` hostname.
+3. Install a namespace-owned `platform-demo-registry` Secret from the Harbor project-scoped,
+   pull-only robot credential outside Git, and confirm the Prometheus Operator CRD.
+4. Pin the resulting digest identically, set the gates, and reconcile dev, staging, then prod
+   without rebuilding.
 
 The immutable digest must be identical in all three value files. Dev and staging run one replica;
 production runs two. The chart references the existing `platform-demo` ServiceAccount and its
