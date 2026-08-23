@@ -8,7 +8,7 @@ serviceAccountName: platform-demo
 imagePullSecretName: platform-demo-registry
 activation: {enabled: false, imageDigestLocked: false, pullSecretReady: false, serviceMonitorCRDReady: false}
 certificate:
-  bootstrapEnabled: false
+  bootstrapEnabled: true
   stagingCertificateVerified: false
   acmeEmail: kelechi.okpala13@yahoo.com
   ingressClassName: traefik
