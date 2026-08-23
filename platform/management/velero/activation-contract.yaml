@@ -1,0 +1,52 @@
+---
+schema_version: 1
+activation_status: blocked
+owner: backup-recovery
+target_namespace: velero
+controller_sync_wave: "-4"
+resource_sync_wave: "-3"
+chart:
+  name: velero
+  version: 12.1.0
+  app_version: 1.18.1
+  archive_sha256: cd23589ad1b2d25cdd3220f6866b3f6f4c5683c4c09494e76a14700b33f81f83
+required_images:
+  - role: velero-controller-and-node-agent
+    repository: docker.io/velero/velero
+    tag: v1.18.1
+    digest: sha256:11459094b1b21ec7c817b08f8067d9e89380835547915cac9c4132ff05b55b90
+    digest_provenance: docker-hub-tag-api-2026-08-20
+  - role: aws-object-store-plugin
+    repository: docker.io/velero/velero-plugin-for-aws
+    tag: v1.14.0
+    digest: sha256:7e82f717f44e89671212e0dfce7e061321c386ea84a33bca64a671670ca6c278
+    digest_provenance: docker-hub-tag-api-2026-08-20
+object_storage:
+  status: pending-live-proof
+  backup_storage_location: management-s3
+  bucket: verda-takehome-velero
+  prefix: mgmt
+  preexisting_secret_name: velero-management-s3
+  required_secret_keys:
+    - cloud
+  credential_scope: velero-management-only
+  tls_required: true
+  path_style_required: true
+volume_strategy:
+  type: filesystem-backup
+  uploader: kopia
+  default_for_selected_schedule: true
+  volume_snapshot_location_created: false
+  rationale: Longhorn volumes are not AWS EBS volumes; the AWS plugin is object-store-only here.
+blocking_gates:
+  immutable_image_digests_locked: true
+  immutable_image_provenance_recorded: true
+  dedicated_bucket_or_prefix_proven: false
+  dedicated_s3_credential_scope_proven: false
+  tls_path_style_read_write_list_delete_proven: false
+  backup_storage_location_available: false
+  kopia_repository_initialized: false
+  capacity_admission_passed: false
+  namespace_backup_reader_bindings_proven: false
+  schedule_unpaused: false
+  root_application_allowed: false

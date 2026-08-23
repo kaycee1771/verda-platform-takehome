@@ -1,0 +1,95 @@
+{{- if .Values.enabled }}
+{{- $admission := include "verdaHarborPostgresql.assertAdmission" . -}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: harbor-postgresql
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "verdaHarborPostgresql.labels" . | nindent 4 }}
+  annotations:
+    verda.platform/admission: {{ $admission | quote }}
+spec:
+  replicas: 1
+  serviceName: harbor-postgresql
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: harbor-postgresql
+      app.kubernetes.io/instance: harbor-postgresql
+  template:
+    metadata:
+      labels:
+        {{- include "verdaHarborPostgresql.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: harbor-postgresql
+      automountServiceAccountToken: false
+      priorityClassName: {{ .Values.priorityClassName | quote }}
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgresql
+          image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            privileged: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 999
+          env:
+            - {name: POSTGRES_USER, value: {{ .Values.credentials.username | quote }}}
+            - {name: POSTGRES_DB, value: {{ .Values.credentials.database | quote }}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentials.existingSecret | quote }}
+                  key: {{ .Values.credentials.passwordKey | quote }}
+          ports:
+            - {name: postgresql, containerPort: 5432, protocol: TCP}
+          startupProbe:
+            exec: {command: [pg_isready, -U, harbor, -d, registry]}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          livenessProbe:
+            exec: {command: [pg_isready, -U, harbor, -d, registry]}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          readinessProbe:
+            exec: {command: [pg_isready, -U, harbor, -d, registry]}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "verdaHarborPostgresql.labels" . | nindent 10 }}
+        annotations:
+          helm.sh/resource-policy: keep
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: {{ .Values.storage.className | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size | quote }}
+{{- end }}

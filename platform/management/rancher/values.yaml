@@ -1,0 +1,105 @@
+---
+# The first GitOps reconciliation creates only the staging Issuer and
+# Certificate. Rancher remains disabled until that exact hostname is proven and
+# the coordinator replaces every REQUIRED_* sentinel with a registry-verified
+# digest recorded in versions.lock.yaml.
+gates:
+  stagingCertificateVerified: false
+  imageDigestsLocked: false
+
+certificate:
+  acmeEmail: kelechi.okpala13@yahoo.com
+  ingressClassName: traefik
+  stagingSecretName: rancher-staging-tls
+  productionSecretName: tls-rancher-ingress
+
+rancher:
+  enabled: false
+  fullnameOverride: rancher
+  hostname: rancher.95-133-252-214.sslip.io
+  replicas: 3
+  priorityClassName: platform-critical
+
+  # Required hostname anti-affinity is stronger than a soft spread preference
+  # for this fixed three-replica, three-node management topology.
+  antiAffinity: required
+  topologyKey: kubernetes.io/hostname
+
+  agentTLSMode: strict
+  addLocal: "true"
+  bootstrapPassword: ""
+  privateCA: false
+  tls: ingress
+  useBundledSystemChart: false
+
+  networkExposure:
+    type: ingress
+  ingress:
+    enabled: true
+    includeDefaultExtraAnnotations: false
+    ingressClassName: traefik
+    pathType: Prefix
+    path: /
+    servicePort: 80
+    extraAnnotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      verda.platform/authentication-boundary: rancher-local-rbac
+    tls:
+      source: secret
+      secretName: tls-rancher-ingress
+  service:
+    type: ClusterIP
+    disableHTTP: false
+
+  image:
+    repository: rancher/rancher
+    tag: v2.14.3@sha256:5d0354e95d55f92da0f3c0fdcf59c07dacfe5bda886aac5273da4ca98c8c1376
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  auditLog:
+    enabled: true
+    level: 0
+    destination: sidecar
+    maxAge: 1
+    maxBackup: 2
+    maxSize: 100
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    image:
+      repository: rancher/mirrored-bci-micro
+      tag: 15.6.24.2@sha256:6d9cbebabbf60987f7976263b193337bbb69d8408c5ed89df56c09ef30cece9f
+      pullPolicy: IfNotPresent
+
+  # The destructive chart uninstall hook is deliberately disabled. Rancher
+  # data and namespaces are removed only by the separately guarded teardown.
+  postDelete:
+    enabled: false
+    image:
+      repository: rancher/shell
+      tag: v0.7.1@sha256:f2326fe57fd60b11543dc04718d3fa56dad975a89b60c7550fceac9c22269a60
+  preUpgrade:
+    image:
+      repository: rancher/shell
+      tag: v0.7.1@sha256:f2326fe57fd60b11543dc04718d3fa56dad975a89b60c7550fceac9c22269a60
+
+  certmanager:
+    version: v1.21.1
+  customLogos:
+    enabled: false
+
+  extraEnv:
+    - name: CATTLE_PROMETHEUS_METRICS
+      value: "true"

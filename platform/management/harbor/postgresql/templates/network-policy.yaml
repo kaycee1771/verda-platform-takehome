@@ -1,0 +1,27 @@
+{{- if .Values.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-postgresql-default-deny-and-core-ingress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: harbor-postgresql
+      app.kubernetes.io/instance: harbor-postgresql
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: harbor
+              app.kubernetes.io/name: harbor
+            matchExpressions:
+              - key: component
+                operator: In
+                values: [core, exporter]
+      ports:
+        - {protocol: TCP, port: 5432}
+  egress: []
+{{- end }}

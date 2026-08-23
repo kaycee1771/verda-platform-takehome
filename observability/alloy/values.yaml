@@ -1,0 +1,338 @@
+---
+# Alloy chart 1.11.1 / Alloy v1.18.1. Activation is coupled to the blocked
+# Loki activation contract and the immutable image lock below.
+crds:
+  create: true
+
+alloy:
+  stabilityLevel: generally-available
+  enableReporting: false
+  enableHttpServerPort: true
+  listenAddr: 0.0.0.0
+  listenPort: 12345
+  listenScheme: HTTP
+  storagePath: /var/lib/alloy/data
+  clustering:
+    enabled: true
+    name: management-logs
+  mounts:
+    varlog: false
+    dockercontainers: false
+    extra:
+      - name: alloy-data
+        mountPath: /var/lib/alloy
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsGroup: 473
+    runAsNonRoot: true
+    runAsUser: 473
+    seccompProfile:
+      type: RuntimeDefault
+  configMap:
+    create: true
+    content: |-
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+
+        selectors {
+          role  = "pod"
+          field = "spec.nodeName=" + sys.env("HOSTNAME")
+        }
+      }
+
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          target_label = "application"
+          replacement  = "unknown"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          regex         = "(.+)"
+          target_label  = "application"
+        }
+
+        rule {
+          target_label = "environment"
+          replacement  = "platform"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "demo-(dev|staging|prod)"
+          replacement   = "$1"
+          target_label  = "environment"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+      }
+
+      loki.process "pod_logs" {
+        stage.json {
+          expressions = {
+            level      = "level",
+            request_id = "request_id",
+            version    = "version",
+          }
+          drop_malformed = false
+        }
+
+        stage.labels {
+          values = {
+            level = "level",
+          }
+        }
+
+        stage.structured_metadata {
+          values = {
+            pod        = "pod",
+            request_id = "request_id",
+            version    = "version",
+          }
+        }
+
+        stage.label_keep {
+          values = [
+            "cluster",
+            "namespace",
+            "environment",
+            "application",
+            "container",
+            "level",
+          ]
+        }
+
+        forward_to = [loki.write.management.receiver]
+      }
+
+      loki.source.kubernetes "pod_logs" {
+        targets    = discovery.relabel.pod_logs.output
+        forward_to = [loki.process.pod_logs.receiver]
+
+        clustering {
+          enabled = true
+        }
+      }
+
+      loki.process "kubernetes_events" {
+        stage.static_labels {
+          values = {
+            application = "kubernetes-events",
+            container   = "events",
+            environment = "platform",
+          }
+        }
+
+        stage.label_keep {
+          values = [
+            "cluster",
+            "namespace",
+            "environment",
+            "application",
+            "container",
+          ]
+        }
+
+        forward_to = [loki.write.management.receiver]
+      }
+
+      loki.source.kubernetes_events "cluster_events" {
+        job_name   = "kubernetes-events"
+        log_format = "json"
+        forward_to = [loki.process.kubernetes_events.receiver]
+
+        clustering {
+          enabled = true
+        }
+      }
+
+      loki.write "management" {
+        external_labels = {
+          cluster = "management",
+        }
+        max_streams = 5000
+
+        endpoint {
+          name                = "management-loki"
+          url                 = "http://loki-gateway.loki.svc.cluster.local/loki/api/v1/push"
+          batch_size          = "1MiB"
+          batch_wait          = "1s"
+          min_backoff_period  = "500ms"
+          max_backoff_period  = "5m"
+          max_backoff_retries = 10
+          remote_timeout      = "10s"
+          retry_on_http_429   = true
+        }
+      }
+
+image:
+  registry: docker.io
+  repository: grafana/alloy
+  tag: v1.18.1
+  digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
+  pullPolicy: IfNotPresent
+
+configReloader:
+  enabled: false
+
+rbac:
+  create: true
+  namespaces: []
+  rules:
+    - apiGroups:
+        - ""
+      resources:
+        - namespaces
+        - pods
+        - pods/log
+        - events
+      verbs:
+        - get
+        - list
+        - watch
+  # Chart 1.11.1 renders an explicit empty list as a stray `[]` after rules.
+  # A duplicate pod-read rule avoids that chart defect without adding access.
+  clusterRules:
+    - apiGroups:
+        - ""
+      resources:
+        - pods
+      verbs:
+        - get
+        - list
+        - watch
+
+serviceAccount:
+  create: true
+  name: alloy
+  automountServiceAccountToken: true
+
+controller:
+  type: daemonset
+  hostNetwork: false
+  hostPID: false
+  dnsPolicy: ClusterFirst
+  priorityClassName: platform-important
+  terminationGracePeriodSeconds: 60
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  volumes:
+    extra:
+      - name: alloy-data
+        emptyDir:
+          sizeLimit: 1Gi
+
+service:
+  enabled: true
+  type: ClusterIP
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  additionalLabels:
+    platform.verda-demo.io/owner: observability
+    platform.verda-demo.io/monitor: "true"
+
+networkPolicy:
+  enabled: true
+  flavor: kubernetes
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+              app.kubernetes.io/instance: alloy
+      ports:
+        - {protocol: TCP, port: 12345}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: monitoring}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports:
+        - {protocol: TCP, port: 12345}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: loki}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+              app.kubernetes.io/instance: loki
+              app.kubernetes.io/component: gateway
+      ports:
+        - {protocol: TCP, port: 8080}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+              app.kubernetes.io/instance: alloy
+      ports:
+        - {protocol: TCP, port: 12345}
+
+extraObjects:
+  - apiVersion: cilium.io/v2
+    kind: CiliumNetworkPolicy
+    metadata: {name: alloy-kubernetes-api, namespace: logging}
+    spec:
+      endpointSelector:
+        matchLabels:
+          app.kubernetes.io/name: alloy
+          app.kubernetes.io/instance: alloy
+      egress:
+        - toEntities: [kube-apiserver]
+          toPorts:
+            - ports:
+                - {port: "443", protocol: TCP}
+
+ingress:
+  enabled: false

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["environment", "namespace", "replicas", "hostname", "priorityClassName", "serviceAccountName", "imagePullSecretName", "activation", "certificate", "image", "resources"],
+  "properties": {
+    "environment": {"type": "string", "enum": ["dev", "staging", "prod"]},
+    "namespace": {"type": "string", "enum": ["demo-dev", "demo-staging", "demo-prod"]},
+    "replicas": {"type": "integer", "minimum": 1, "maximum": 2},
+    "hostname": {"type": "string", "pattern": "^stage-a-(dev|staging|prod)\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.sslip\\.io$"},
+    "priorityClassName": {"const": "platform-workload"},
+    "serviceAccountName": {"const": "platform-demo"},
+    "imagePullSecretName": {"const": "platform-demo-registry"},
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "imageDigestLocked", "pullSecretReady", "serviceMonitorCRDReady"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "imageDigestLocked": {"type": "boolean"},
+        "pullSecretReady": {"type": "boolean"},
+        "serviceMonitorCRDReady": {"type": "boolean"}
+      }
+    },
+    "certificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bootstrapEnabled", "stagingCertificateVerified", "acmeEmail", "ingressClassName", "stagingSecretName", "productionSecretName"],
+      "properties": {
+        "bootstrapEnabled": {"type": "boolean"},
+        "stagingCertificateVerified": {"type": "boolean"},
+        "acmeEmail": {"type": "string", "format": "email"},
+        "ingressClassName": {"const": "traefik"},
+        "stagingSecretName": {"const": "stage-a-smoke-staging-tls"},
+        "productionSecretName": {"const": "stage-a-smoke-tls"}
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "pattern": "^harbor\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.sslip\\.io/platform-demo/stage-a-smoke$"},
+        "digest": {"type": "string"},
+        "pullPolicy": {"const": "IfNotPresent"}
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"type": "object", "additionalProperties": false, "required": ["cpu", "memory"], "properties": {"cpu": {"const": "10m"}, "memory": {"const": "16Mi"}}},
+        "limits": {"type": "object", "additionalProperties": false, "required": ["cpu", "memory"], "properties": {"cpu": {"const": "100m"}, "memory": {"const": "64Mi"}}}
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: velero-controller
+  namespace: argocd
+  annotations: {argocd.argoproj.io/sync-wave: "-4"}
+spec:
+  project: backup
+  sources:
+    - repoURL: https://vmware-tanzu.github.io/helm-charts
+      chart: velero
+      targetRevision: 12.1.0
+      helm:
+        releaseName: velero
+        valueFiles: [$values/platform/management/velero/values.yaml]
+    - repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+      targetRevision: main
+      ref: values
+  destination: {server: https://kubernetes.default.svc, namespace: velero}
+  syncPolicy:
+    automated: {prune: false, selfHeal: true, allowEmpty: false}
+    syncOptions: [ServerSideApply=true, PruneLast=true]

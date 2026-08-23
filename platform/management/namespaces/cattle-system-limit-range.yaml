@@ -1,0 +1,20 @@
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cattle-system-default-container-resources
+  namespace: cattle-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "-19"
+  labels:
+    app.kubernetes.io/part-of: verda-platform
+    platform.verda-demo.io/owner: platform-foundation
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      default:
+        cpu: 500m
+        memory: 256Mi

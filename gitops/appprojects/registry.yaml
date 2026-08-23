@@ -1,0 +1,21 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: registry
+  namespace: argocd
+spec:
+  description: Phase 6 Harbor, Trivy, and isolated database trust domain
+  sourceRepos:
+    - https://github.com/kaycee1771/verda-platform-takehome.git
+    - https://helm.goharbor.io
+  destinations:
+    - {namespace: harbor, server: https://kubernetes.default.svc}
+    - {namespace: harbor-database, server: https://kubernetes.default.svc}
+  clusterResourceWhitelist:
+    - {group: "", kind: Namespace}
+    - {group: rbac.authorization.k8s.io, kind: ClusterRole}
+    - {group: rbac.authorization.k8s.io, kind: ClusterRoleBinding}
+  namespaceResourceWhitelist:
+    - {group: "*", kind: "*"}
+  orphanedResources: {warn: true}

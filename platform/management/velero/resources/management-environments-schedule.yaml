@@ -1,0 +1,32 @@
+---
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: management-environments-daily
+  namespace: velero
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+  labels:
+    app.kubernetes.io/part-of: stage-a-backup
+spec:
+  # Unpause only after the environment-foundation applications have created
+  # the three namespaces and their read-only velero-backup-reader bindings.
+  paused: true
+  skipImmediately: true
+  useOwnerReferencesInBackup: false
+  schedule: 17 2 * * *
+  template:
+    storageLocation: management-s3
+    ttl: 168h
+    includedNamespaces:
+      - demo-dev
+      - demo-staging
+      - demo-prod
+    includeClusterResources: false
+    excludedNamespaceScopedResources:
+      - events
+      - events.events.k8s.io
+    snapshotVolumes: false
+    defaultVolumesToFsBackup: true
+    uploaderConfig:
+      parallelFilesUpload: 2

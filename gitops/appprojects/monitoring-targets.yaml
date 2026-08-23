@@ -1,0 +1,21 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: monitoring-targets
+  namespace: argocd
+spec:
+  description: Namespace-local Phase 6 scrape targets and ingress allowances
+  sourceRepos:
+    - https://github.com/kaycee1771/verda-platform-takehome.git
+  destinations:
+    - {namespace: argocd, server: https://kubernetes.default.svc}
+    - {namespace: cattle-system, server: https://kubernetes.default.svc}
+    - {namespace: harbor, server: https://kubernetes.default.svc}
+    - {namespace: kube-system, server: https://kubernetes.default.svc}
+    - {namespace: longhorn-system, server: https://kubernetes.default.svc}
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - {group: monitoring.coreos.com, kind: ServiceMonitor}
+    - {group: networking.k8s.io, kind: NetworkPolicy}
+  orphanedResources: {warn: true}

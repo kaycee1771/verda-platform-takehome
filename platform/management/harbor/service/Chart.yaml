@@ -1,0 +1,13 @@
+---
+apiVersion: v2
+name: verda-harbor
+description: Fail-closed Harbor and Trivy desired state for the Verda management cluster
+type: application
+version: 0.1.0
+appVersion: "2.15.2"
+kubeVersion: ">=1.35.0-0 <1.36.0-0"
+dependencies:
+  - name: harbor
+    version: 1.19.2
+    repository: https://helm.goharbor.io
+    condition: harbor.enabled

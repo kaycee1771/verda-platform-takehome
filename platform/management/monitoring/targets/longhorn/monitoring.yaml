@@ -1,0 +1,42 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: longhorn-manager
+  namespace: longhorn-system
+  labels:
+    app.kubernetes.io/part-of: verda-platform
+    platform.verda-demo.io/monitor: "true"
+    platform.verda-demo.io/owner: observability
+spec:
+  selector:
+    matchLabels:
+      verda.io/metrics: longhorn
+  namespaceSelector:
+    matchNames: [longhorn-system]
+  endpoints:
+    - port: manager
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: longhorn-prometheus-ingress
+  namespace: longhorn-system
+spec:
+  podSelector:
+    matchLabels: {app: longhorn-manager}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: monitoring}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports:
+        - {protocol: TCP, port: 9500}

@@ -77,7 +77,9 @@ if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $bootstrapMarkerPath -PathT
 if ($reuseQualityImage) {
     Write-Host '[PASS] Existing pinned quality image matches the unchanged Dockerfile input.'
 } else {
-    & docker build --pull --provenance=false --tag $image `
+    # Every base/tool input is digest- or checksum-pinned, so a forced mutable
+    # registry refresh adds no integrity and makes offline cache reuse impossible.
+    & docker build --provenance=false --tag $image `
         --file $dockerfilePath $repoRoot 2>&1 |
         Tee-Object -FilePath $buildLog
     if ($LASTEXITCODE -ne 0) {

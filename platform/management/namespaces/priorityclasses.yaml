@@ -1,0 +1,27 @@
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-critical
+value: 900000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: Critical Stage A controllers and stateful control-plane services.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-important
+value: 800000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: Important Stage A services that may reschedule after a node loss.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-workload
+value: 100000
+globalDefault: false
+preemptionPolicy: Never
+description: Demonstrator workloads; never preempt platform services.

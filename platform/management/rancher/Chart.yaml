@@ -1,0 +1,13 @@
+---
+apiVersion: v2
+name: verda-rancher
+description: Fail-closed Rancher Manager desired state for the Verda management cluster
+type: application
+version: 0.1.0
+appVersion: v2.14.3
+kubeVersion: ">=1.35.0-0 <1.36.0-0"
+dependencies:
+  - name: rancher
+    version: 2.14.3
+    repository: https://releases.rancher.com/server-charts/stable
+    condition: rancher.enabled

@@ -1,0 +1,48 @@
+---
+schema_version: 1
+activation_status: blocked
+owner: observability
+target_namespace: loki
+sync_wave: "-6"
+chart:
+  name: loki
+  version: 7.3.0
+  app_version: 3.6.12
+  archive_sha256: 04a339f712d770a1f599f05fc0a5a3cde18e43914e49ae6a49f7171be86bcc09
+required_images:
+  - role: loki
+    repository: docker.io/grafana/loki
+    tag: 3.6.12
+    digest: sha256:2483b71b28b15dee230f85512cae2b20c4b5f6e98a6eabe686cbccfa5ea3ba4a
+    digest_provenance: registry-v2-manifest-response-2026-08-20
+  - role: gateway
+    repository: docker.io/nginxinc/nginx-unprivileged
+    tag: 1.29-alpine
+    digest: sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+    digest_provenance: registry-v2-manifest-response-2026-08-20
+object_storage:
+  status: pending-live-proof
+  preexisting_secret_name: loki-object-storage
+  required_secret_keys:
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - LOKI_S3_ENDPOINT
+    - LOKI_S3_REGION
+    - LOKI_CHUNKS_BUCKET
+    - LOKI_RULER_BUCKET
+    - LOKI_ADMIN_BUCKET
+  credential_scope: loki-only
+  tls_required: true
+  path_style_required: true
+  retention_hours: 72
+  compactor_delete_delay_hours: 2
+  minimum_bucket_lifecycle_days: 7
+blocking_gates:
+  immutable_image_digests_locked: true
+  immutable_image_provenance_recorded: true
+  dedicated_s3_credential_scope_proven: false
+  unique_bucket_names_proven: false
+  tls_path_style_read_write_delete_proven: false
+  lifecycle_policy_proven: false
+  capacity_admission_passed: false
+  root_application_allowed: false

@@ -9,3 +9,9 @@ paths = [
   '''^\.local/provider-source-v1\.1\.2/''',
   '''^\.local/verda-sdk-v1\.2\.2/''',
 ]
+
+[[allowlists]]
+description = "Public GitHub web-flow signing-key checksum in historical Phase 6 verifier"
+condition = "AND"
+paths = ['''^scripts/phase6/verify-github-authorization\.py$''']
+regexes = ['''^40ce89d21fb075092d256f9fbf62a1c19299d3282cb913d3e61d08235d0c491a$''']

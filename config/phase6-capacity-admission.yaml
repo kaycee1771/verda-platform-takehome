@@ -1,0 +1,250 @@
+---
+schema_version: 1
+# Every mandatory component is now rendered or explicitly projected and bound
+# to its checked-in inputs. Admission remains closed because the exact CPU
+# projection cannot fit the current one-node-loss envelope and the candidate
+# replacement shape's Kubernetes allocatable values remain unverified.
+admission_status: blocked-incomplete-inputs
+blockers:
+  - current-three-node-cpu-envelope-insufficient
+  - candidate-shape-kubernetes-allocatable-unverified
+protected_evidence:
+  baseline:
+    path: phase6-capacity-baseline.identity-free.yaml
+    sha256: 504a8f973544fe8696fe038f8f154ebcf80b97c51f243be59acf6937ed48809b
+  # Written only by the protected live reducer after all three replacement
+  # nodes exist. Null is deliberately invalid for admission.
+  candidate:
+    path: ../.local/phase6/protected/candidate-capacity.identity-free.yaml
+    sha256: null
+required_reserve:
+  cpu_millicores: 1000
+  memory_bytes: 4294967296
+  storage_bytes: 53687091200
+baseline:
+  node_count: 3
+  allocatable_cpu_millicores: 9000
+  allocatable_memory_bytes: 42291773440
+  one_node_loss_allocatable_cpu_millicores: 6000
+  one_node_loss_allocatable_memory_bytes: 28194512896
+  existing_requested_cpu_millicores: 5935
+  existing_requested_memory_bytes: 10122952704
+  # Operational reserve remains after the complete rollout peak and one node
+  # loss. It covers one full CPU core and four GiB for recovery/diagnostics.
+  required_cpu_reserve_millicores: 1000
+  required_memory_reserve_bytes: 4294967296
+  storage_available_bytes: 314887372800
+  worst_two_node_storage_available_bytes: 209924915200
+  # Fifty GiB remains free after replicated PVC allocation for rebuild work,
+  # temporary snapshots, and bounded take-home growth.
+  required_storage_reserve_bytes: 53687091200
+baseline_provenance:
+  raw_snapshot_kind: sanitized-phase5-node-and-pod-json
+  node_snapshot_sha256: a9164bfe8ed82398a38d83130b3a643355916f7ac7be79d907840e0eea371281
+  pod_snapshot_sha256: 3f2b6463d1ffa2dea99772e5b0f47140b0054a9accf948cbea6bf054a2e6dc94
+  raw_requested_memory_bytes: 7371489280
+  phase5_render_requested_memory_bytes: 2751463424
+  phase5_render_sha256:
+    argocd: 5348a5ac48041c169cb07847b54bbd7c224bb592005d3c9b42005fc09a19e119
+    cert_manager: 6a4a3813206e958a404966a8a517c7b0e784ceb8dd7c951f89c83a79b3853897
+    longhorn: 8275b7773f73aedbfb409e0f6202e1f3e7b166cea79b684e8faf92714e848ab0
+  post_phase5_cpu_source: protected-phase5-identity-free-reducer
+  post_phase5_memory_source: exact-raw-baseline-plus-checksum-bound-phase5-render-delta
+projection_result:
+  candidate_allocatable_cpu_millicores: null
+  candidate_allocatable_memory_bytes: null
+  candidate_one_node_loss_allocatable_cpu_millicores: null
+  candidate_one_node_loss_allocatable_memory_bytes: null
+  candidate_storage_available_bytes: null
+  candidate_one_node_loss_storage_available_bytes: null
+  candidate_one_node_loss_cpu_headroom_millicores: null
+  candidate_one_node_loss_cpu_reserve_shortfall_millicores: null
+  candidate_one_node_loss_memory_headroom_bytes: null
+  candidate_one_node_loss_memory_reserve_headroom_bytes: null
+  candidate_storage_headroom_bytes: null
+  candidate_one_node_loss_storage_headroom_bytes: null
+  rendered_document_count: 350
+  workload_definition_count: 34
+  pvc_definition_count: 8
+  unrequested_container_count: 0
+  new_steady_cpu_millicores: 4460
+  new_rollout_peak_cpu_millicores: 6650
+  new_steady_memory_bytes: 9328132096
+  new_rollout_peak_memory_bytes: 12901679104
+  new_logical_pvc_bytes: 63350767616
+  new_raw_pvc_bytes: 177167400960
+  one_node_loss_pvc_bytes: 113816633344
+  post_steady_cpu_millicores: 10395
+  post_rollout_peak_cpu_millicores: 12585
+  post_steady_memory_bytes: 19451084800
+  post_rollout_peak_memory_bytes: 23024631808
+  total_cpu_shortfall_millicores: 1395
+  one_node_loss_cpu_headroom_millicores: -6585
+  one_node_loss_cpu_reserve_shortfall_millicores: 7585
+  one_node_loss_memory_headroom_bytes: 5169881088
+  one_node_loss_memory_reserve_headroom_bytes: 874913792
+  required_candidate_two_node_cpu_millicores: 13585
+  required_candidate_per_node_cpu_millicores: 6793
+  required_candidate_two_node_memory_bytes: 27319599104
+  required_candidate_per_node_memory_bytes: 13659799552
+  storage_headroom_bytes: 137719971840
+  one_node_loss_storage_headroom_bytes: 96108281856
+storage_class_manifest:
+  path: ../platform/management/longhorn/resources/storageclasses.yaml
+  sha256: 957f80b3a65fce97f29acb683bc1b2a24f2c4ea03558572d48fe8873f7cc8744
+components:
+  alloy:
+    render_path: ../.local/phase6/renders/alloy.yaml
+    render_sha256: c94b6086ba9052ce0996d4d5b8dd298d58f4574defc7894eda40b966249cf829
+    expected_document_count: 11
+    expected_workload_count: 1
+    expected_pvc_definition_count: 0
+    chart_archive_sha256: cc4cd48a885c070fe8b2929971552852375c11e92d95fc6337d0c3fa277ac575
+    projection_semantics: exact upstream chart render
+    source_inputs:
+      - {path: observability/alloy/values.yaml, recursive: false,
+         sha256: 0b41b199a37a7f96161bd9ab1fdc71eb431a903a5b2c5e512b46364fcec813e0}
+      - {path: versions.lock.yaml, recursive: false,
+         sha256: f62ed32809471a1e156f48242a7888fcf15830d6253341119b5fb7de3085fbb6}
+  environment_foundations:
+    render_path: ../.local/phase6/renders/environment-foundations.yaml
+    render_sha256: b08e52c3427e8463cd1839955a88556c1236d57ac43741b43be52205ec35ca68
+    expected_document_count: 30
+    expected_workload_count: 0
+    expected_pvc_definition_count: 0
+    projection_semantics: exact three-environment Kustomize renders
+    source_inputs:
+      - {path: environments/dev/namespace, recursive: true,
+         sha256: e21020093b290d5e5dbb69c60fb3b4534bf226d52968bcc065277e1558cf9e12}
+      - {path: environments/prod/namespace, recursive: true,
+         sha256: 14a83a340cfbdabebf2d1455a3147da884f9a05ff112b6b81824ce212ad9b729}
+      - {path: environments/staging/namespace, recursive: true,
+         sha256: e5994e03a3abed60f98aa0ad6ad21731be1ccc719a4cc092e25d532d80b243c2}
+  harbor:
+    render_path: ../.local/phase6/renders/harbor.yaml
+    render_sha256: bfb1bd4f11060e76df9c13924a6af6959fd5c8e561a4ffa8baef02cce22f51ea
+    expected_document_count: 34
+    expected_workload_count: 8
+    expected_pvc_definition_count: 5
+    chart_archive_sha256: 36d8eeb41b4df1aeff18c9af7709110a2fac2194b491d37957822b3359cd5e9a
+    projection_semantics: >-
+      Harbor upstream chart plus separately-owned PostgreSQL; non-secret gates
+      enabled only in ignored projection
+    source_inputs:
+      - {path: platform/management/harbor/postgresql, recursive: true,
+         sha256: fe37c126feb0369e38e0fcb5dacd2108a71d0708ddf6dfa830c7b05dd04af9c1}
+      - {path: platform/management/harbor/service/values.yaml, recursive: false,
+         sha256: e87467bbb4a0d7a60ff9e133c005b809e8fd48175be429db428be994fb62137d}
+      - {path: versions.lock.yaml, recursive: false,
+         sha256: f62ed32809471a1e156f48242a7888fcf15830d6253341119b5fb7de3085fbb6}
+  kube_prometheus_stack:
+    render_path: ../.local/phase6/renders/kube-prometheus-stack.yaml
+    render_sha256: da169b6984afdbbe438d6d0630b06797c77e67c4aeffb1d6eacb68d30b3a87c1
+    expected_document_count: 110
+    expected_workload_count: 6
+    expected_pvc_definition_count: 2
+    chart_archive_sha256: 5609de52e7af33792e6c6678b9443cacaec0cd81feacc956f6da0209a7463cba
+    operator_projection_replacement_count: 2
+    projection_semantics: >-
+      Exact chart render with Prometheus and Alertmanager CRs replaced
+      one-for-one by operator StatefulSet projections
+    source_inputs:
+      - {path: platform/management/monitoring/capacity/operator-workloads.capacity-input,
+         recursive: false,
+         sha256: 97306d93f81f0455c270d9180b5c32a2dd03275a7f32d1b25a9be6152ed40a53}
+      - {path: platform/management/monitoring/values.yaml, recursive: false,
+         sha256: eef80885daafd282be3041a171d3fba4f1a99153daa833608047261269bd8573}
+      - {path: versions.lock.yaml, recursive: false,
+         sha256: f62ed32809471a1e156f48242a7888fcf15830d6253341119b5fb7de3085fbb6}
+  kyverno:
+    render_path: ../.local/phase6/renders/kyverno.yaml
+    render_sha256: dd51e69fc81cfbaefd4581ea82483118c60a87517145a457e4e0b507a683b185
+    expected_document_count: 65
+    expected_workload_count: 7
+    expected_pvc_definition_count: 0
+    chart_archive_sha256: f4fc787cf1d6781eefb9e9b45837edcddcfae984c872888289914e97207cc5de
+    projection_semantics: exact upstream chart render
+    source_inputs:
+      - {path: platform/management/kyverno/values.yaml, recursive: false,
+         sha256: 9c06689a61920f80331013850367fe6ef8fc8fa84d236d5af6c6eba3c90e12d6}
+      - {path: versions.lock.yaml, recursive: false,
+         sha256: f62ed32809471a1e156f48242a7888fcf15830d6253341119b5fb7de3085fbb6}
+  loki:
+    render_path: ../.local/phase6/renders/loki.yaml
+    render_sha256: ff2936086fdb2ae3aedec12c681bab65aca44d5770f81af8f7350812b3a85a4d
+    expected_document_count: 18
+    expected_workload_count: 2
+    expected_pvc_definition_count: 1
+    chart_archive_sha256: 04a339f712d770a1f599f05fc0a5a3cde18e43914e49ae6a49f7171be86bcc09
+    projection_semantics: exact upstream chart render
+    source_inputs:
+      - {path: platform/management/loki/values.yaml, recursive: false,
+         sha256: 07dc3463da32ec9683ea09049c9b0d87f255f930596f004c3ccb550ba16650c6}
+      - {path: versions.lock.yaml, recursive: false,
+         sha256: f62ed32809471a1e156f48242a7888fcf15830d6253341119b5fb7de3085fbb6}
+  platform_demo:
+    render_path: ../.local/phase6/renders/platform-demo.yaml
+    render_sha256: 589d5ad70a5fd915312cbfb19252f832b0a7c104f7cc4546efea04590a993d8b
+    expected_document_count: 30
+    expected_workload_count: 3
+    expected_pvc_definition_count: 0
+    projection_semantics: >-
+      Latent dev/staging/prod render with synthetic nonzero digest and gates
+      enabled only in ignored projection
+    immutable_activation_input_remaining: real Harbor digest and live readiness gates
+    source_inputs:
+      - {path: applications/stage-a-smoke/chart, recursive: true,
+         sha256: b69b272bb02fd91fcc0448a318db03ede9e331c1d0a50aafcf7d8f68e25f95ad}
+      - {path: applications/stage-a-smoke/values-dev.yaml, recursive: false,
+         sha256: e82b602a26f6ca053657e2f8d604316963f6e44b0f2b02128adf3d9c5c1f35a9}
+      - {path: applications/stage-a-smoke/values-prod.yaml, recursive: false,
+         sha256: 33cce1d1d82ef33f4cb337eb4fa62e6859ea85743e4b047568d70406b712ee2b}
+      - {path: applications/stage-a-smoke/values-staging.yaml, recursive: false,
+         sha256: 463b3454d1e284ec59f1bc19765e254b5bfd0ee9c5c664fbf28b30c6e111cceb}
+  rancher:
+    render_path: ../.local/phase6/renders/rancher.yaml
+    render_sha256: 3e1bd47c0dc78f2075511c0e2949048cfb043138e59d060150529fcb82235464
+    expected_document_count: 13
+    expected_workload_count: 2
+    expected_pvc_definition_count: 0
+    chart_archive_sha256: 65d4505a3547e7ee5179f14345377137e826541b4daf19c6a7575517f992daf6
+    projection_semantics: >-
+      upstream chart with checked-in values and exact cattle-system LimitRange
+      mutation for the pre-upgrade hook; activation gate not asserted
+    source_inputs:
+      - {path: platform/management/namespaces/cattle-system-limit-range.yaml,
+         recursive: false,
+         sha256: e7bed7736b66e6266d955532ebb59ab4e4de014c4c47c8f6912fd92ce9d49e38}
+      - {path: platform/management/rancher/values.yaml, recursive: false,
+         sha256: e745b1af4c250cfc5c7c556a81ec54f8c60bb6f1880f8dbb5b1ceb4d518a068f}
+      - {path: versions.lock.yaml, recursive: false,
+         sha256: f62ed32809471a1e156f48242a7888fcf15830d6253341119b5fb7de3085fbb6}
+  sealed_secrets:
+    render_path: ../.local/phase6/renders/sealed-secrets.yaml
+    render_sha256: 6d4ec4b0976f379a9a84346d0f49500dcbdfe538bf250bbe29df863bf8f329ce
+    expected_document_count: 10
+    expected_workload_count: 1
+    expected_pvc_definition_count: 0
+    chart_archive_sha256: b624623176637273e584791b7bc13b0357dbeca999e4a96ba4013440bb7699b6
+    projection_semantics: exact upstream chart render
+    source_inputs:
+      - {path: platform/management/sealed-secrets/values.yaml, recursive: false,
+         sha256: 176c119364e4e9203ddca7bf73baddbc7e9b29cde1dccdfe83dc7db5db95c82c}
+      - {path: versions.lock.yaml, recursive: false,
+         sha256: f62ed32809471a1e156f48242a7888fcf15830d6253341119b5fb7de3085fbb6}
+  velero:
+    render_path: ../.local/phase6/renders/velero.yaml
+    render_sha256: 9e7bd9f0a6550c94e637012714b4a3e6a2cdf2f51de918cfb9b49543c0c31bda
+    expected_document_count: 29
+    expected_workload_count: 4
+    expected_pvc_definition_count: 0
+    chart_archive_sha256: cd23589ad1b2d25cdd3220f6866b3f6f4c5683c4c09494e76a14700b33f81f83
+    generated_peak_projection_count: 2
+    projection_semantics: exact chart render plus bounded data-mover and repository-maintenance peak projections
+    source_inputs:
+      - {path: platform/management/velero/capacity-input.yaml, recursive: false,
+         sha256: 77368eb42af2faf5bc5c493daad9f888f28fd08f3705ab71cc5f342fb8a46e4a}
+      - {path: platform/management/velero/values.yaml, recursive: false,
+         sha256: 4b955647813df07bf7cbd22d7bda560d359fc504d4c2d5218875a91e7f04552c}
+      - {path: versions.lock.yaml, recursive: false,
+         sha256: f62ed32809471a1e156f48242a7888fcf15830d6253341119b5fb7de3085fbb6}

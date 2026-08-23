@@ -1,0 +1,9 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: strict-fixture
+  namespace: demo-dev
+spec:
+  encryptedData:
+    fixture: AgStrictCiphertextFixtureOnly

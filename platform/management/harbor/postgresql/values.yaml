@@ -1,0 +1,24 @@
+---
+enabled: false
+gates:
+  sealedCredentialsReady: false
+  imageDigestLocked: false
+
+image:
+  repository: docker.io/library/postgres
+  tag: 15.10-bookworm@sha256:d609c3005478af92bddad773423df829b7402ea0b356d5b72edd2fd54d1ad3ea
+  pullPolicy: IfNotPresent
+
+credentials:
+  existingSecret: harbor-database-credentials
+  passwordKey: POSTGRES_PASSWORD
+  username: harbor
+  database: registry
+
+priorityClassName: platform-important
+storage:
+  className: longhorn-critical
+  size: 8Gi
+resources:
+  requests: {cpu: 200m, memory: 384Mi}
+  limits: {cpu: "1", memory: 1Gi}

@@ -27,7 +27,7 @@ repos:
         types: [terraform]
       - id: shellcheck
         name: ShellCheck
-        entry: shellcheck
+        entry: shellcheck -x
         language: unsupported
         types: [shell]
       - id: private-key

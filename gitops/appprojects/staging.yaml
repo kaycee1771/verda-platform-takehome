@@ -1,2 +1,23 @@
 ---
-# Phase 10 placeholder: staging AppProject is not implemented.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: staging
+  namespace: argocd
+spec:
+  description: Stage A staging destination on the management cluster
+  sourceRepos:
+    - https://github.com/kaycee1771/verda-platform-takehome.git
+  destinations:
+    - {namespace: demo-staging, server: https://kubernetes.default.svc}
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - {group: "", kind: ConfigMap}
+    - {group: "", kind: Service}
+    - {group: apps, kind: Deployment}
+    - {group: networking.k8s.io, kind: Ingress}
+    - {group: networking.k8s.io, kind: NetworkPolicy}
+    - {group: monitoring.coreos.com, kind: ServiceMonitor}
+    - {group: cert-manager.io, kind: Certificate}
+    - {group: cert-manager.io, kind: Issuer}
+  orphanedResources: {warn: true}

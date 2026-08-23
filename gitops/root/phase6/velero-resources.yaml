@@ -1,0 +1,17 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: velero-resources
+  namespace: argocd
+  annotations: {argocd.argoproj.io/sync-wave: "-3"}
+spec:
+  project: backup
+  source:
+    repoURL: https://github.com/kaycee1771/verda-platform-takehome.git
+    targetRevision: main
+    path: platform/management/velero/resources
+  destination: {server: https://kubernetes.default.svc, namespace: velero}
+  syncPolicy:
+    automated: {prune: false, selfHeal: true, allowEmpty: false}
+    syncOptions: [SkipDryRunOnMissingResource=true, PruneLast=true]

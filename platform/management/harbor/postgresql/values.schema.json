@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enabled", "gates", "image", "credentials", "priorityClassName", "storage", "resources"],
+  "properties": {
+    "enabled": {"type": "boolean"},
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sealedCredentialsReady", "imageDigestLocked"],
+      "properties": {
+        "sealedCredentialsReady": {"type": "boolean"},
+        "imageDigestLocked": {"type": "boolean"}
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": {"const": "docker.io/library/postgres"},
+        "tag": {"type": "string"},
+        "pullPolicy": {"const": "IfNotPresent"}
+      }
+    },
+    "credentials": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["existingSecret", "passwordKey", "username", "database"],
+      "properties": {
+        "existingSecret": {"const": "harbor-database-credentials"},
+        "passwordKey": {"const": "POSTGRES_PASSWORD"},
+        "username": {"const": "harbor"},
+        "database": {"const": "registry"}
+      }
+    },
+    "priorityClassName": {"const": "platform-important"},
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["className", "size"],
+      "properties": {
+        "className": {"const": "longhorn-critical"},
+        "size": {"const": "8Gi"}
+      }
+    },
+    "resources": {"type": "object"}
+  }
+}
