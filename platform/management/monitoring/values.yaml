@@ -385,6 +385,7 @@ prometheus:
   prometheusSpec:
     replicas: 1
     shards: 1
+    priorityClassName: platform-critical
     image:
       registry: quay.io
       repository: prometheus/prometheus
