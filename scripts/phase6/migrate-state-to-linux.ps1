@@ -54,12 +54,33 @@ function Start-WslBinary {
         $errorText = $process.StandardError.ReadToEnd()
         $process.WaitForExit()
         if ($process.ExitCode -ne 0) {
-            throw "The Linux GPG boundary refused the migration; diagnostic withheld (exit $($process.ExitCode))."
+            throw "The Linux migration boundary refused $($Arguments[0]); diagnostic withheld (exit $($process.ExitCode))."
         }
         if ($CaptureOutput) { return $captured.ToArray() }
         return [byte[]]::new(0)
     } finally {
         $process.Dispose()
+    }
+}
+
+function Write-LinuxProtectedFile {
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination
+    )
+
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+        throw "A required protected Phase 6 input is absent: $([IO.Path]::GetFileName($Source))."
+    }
+    $bytes = [IO.File]::ReadAllBytes($Source)
+    $temporary = "$Destination.tmp"
+    try {
+        Invoke-WslText -Arguments @('rm', '-f', $temporary) | Out-Null
+        Start-WslBinary -Arguments @('dd', "of=$temporary", 'status=none') -InputBytes $bytes | Out-Null
+        Invoke-WslText -Arguments @('chmod', '0600', $temporary) | Out-Null
+        Invoke-WslText -Arguments @('mv', '-f', $temporary, $Destination) | Out-Null
+    } finally {
+        [Array]::Clear($bytes, 0, $bytes.Length)
     }
 }
 
@@ -96,12 +117,17 @@ try {
     $linuxUser = Invoke-WslText -Arguments @('id', '-un')
     if ($linuxUser -notmatch '^[a-z_][a-z0-9_-]*$') { throw 'The Ubuntu control identity is invalid.' }
     $linuxHome = "/home/$linuxUser"
-    $stateDirectory = "$linuxHome/.local/state/verda-takehome/terraform"
+    $stateRoot = "$linuxHome/.local/state/verda-takehome"
+    $stateDirectory = "$stateRoot/terraform"
+    $configDirectory = "$linuxHome/.config/verda-takehome"
     $gpgHome = "$linuxHome/.config/verda-takehome/gnupg"
     $encryptedState = "$stateDirectory/management.tfstate.gpg"
     $temporaryState = "$encryptedState.tmp"
 
-    Invoke-WslText -Arguments @('install', '-d', '-m', '0700', $stateDirectory, $gpgHome) | Out-Null
+    Invoke-WslText -Arguments @(
+        'install', '-d', '-m', '0700', $stateRoot, $stateDirectory, $configDirectory, $gpgHome,
+        "$configDirectory/ssh", "$configDirectory/kubeconfigs", "$configDirectory/inventory"
+    ) | Out-Null
     $fingerprint = Invoke-WslText -Arguments @(
         'gpg', '--homedir', $gpgHome, '--batch', '--with-colons', '--list-secret-keys',
         'phase6-state@verda.invalid'
@@ -143,6 +169,18 @@ try {
     $actualHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($roundTrip)).ToLowerInvariant()
     if ($actualHash -cne $expectedHash) { throw 'Linux encrypted-state round-trip verification failed.' }
 
+    $runtimeInputs = [ordered]@{
+        (Join-Path $externalBase 'credentials\verda-shared-credentials') = "$configDirectory/verda-shared-credentials"
+        (Join-Path $externalBase 'ssh\id_ed25519') = "$configDirectory/ssh/id_ed25519"
+        (Join-Path $externalBase 'ssh\id_ed25519.pub') = "$configDirectory/ssh/id_ed25519.pub"
+        (Join-Path $externalBase 'ssh\known_hosts_phase3') = "$configDirectory/ssh/known_hosts"
+        (Join-Path $externalBase 'kubeconfigs\management\management-primary.kubeconfig') = "$configDirectory/kubeconfigs/management-primary.kubeconfig"
+        (Join-Path $repository '.local\phase4\inventory-admin.yaml') = "$configDirectory/inventory/management.yaml"
+    }
+    foreach ($entry in $runtimeInputs.GetEnumerator()) {
+        Write-LinuxProtectedFile -Source $entry.Key -Destination $entry.Value
+    }
+
     [ordered]@{
         schema_version = 1
         status = 'LINUX_STATE_MIGRATION_VERIFIED'
@@ -154,6 +192,7 @@ try {
         linux_distribution = $Distribution
         linux_state_path = $encryptedState
         original_dpapi_state_preserved = $true
+        protected_runtime_input_count = $runtimeInputs.Count
         raw_values_recorded = $false
     } | ConvertTo-Json -Compress
 } finally {

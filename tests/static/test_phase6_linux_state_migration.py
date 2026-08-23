@@ -32,6 +32,13 @@ class LinuxStateMigrationContractTests(unittest.TestCase):
         self.assertNotIn("ConvertTo-Json -InputObject $state", self.source)
         self.assertNotIn("Write-Output $stateBytes", self.source)
 
+    def test_runtime_inputs_are_copied_through_stdin_with_owner_only_mode(self) -> None:
+        self.assertIn("function Write-LinuxProtectedFile", self.source)
+        self.assertIn("'dd', \"of=$temporary\"", self.source)
+        self.assertIn("'chmod', '0600'", self.source)
+        self.assertIn("protected_runtime_input_count", self.source)
+        self.assertNotIn("VERDA_CLIENT_SECRET=", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()
