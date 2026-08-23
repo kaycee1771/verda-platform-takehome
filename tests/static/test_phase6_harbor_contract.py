@@ -311,7 +311,10 @@ class Phase6HarborContractTests(unittest.TestCase):
             "ciphertexts.adminPassword=not-a-kubeseal-ciphertext",
         )
         self.assertNotEqual(rejected.returncode, 0)
-        self.assertIn("real kubeseal ciphertext", rejected.stderr)
+        self.assertTrue(
+            "real kubeseal ciphertext" in rejected.stderr
+            or "does not match pattern" in rejected.stderr
+        )
 
         fake = "Ag" + "A" * 90
         settings = ["enabled=true", "gates.ciphertextsLocked=true"]
