@@ -15,10 +15,12 @@ class LinuxTransactionTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.source = SCRIPT.read_text(encoding="utf-8")
 
-    def test_only_read_only_state_verification_is_exposed_initially(self) -> None:
+    def test_only_read_only_verification_and_plan_are_exposed_initially(self) -> None:
         self.assertIn("case \"$action\"", self.source)
         self.assertIn("verify-state", self.source)
-        self.assertNotIn("terraform -chdir=\"$terraform_root\" apply", self.source)
+        self.assertIn("plan-node", self.source)
+        self.assertIn("assert-saved-plan", self.source)
+        self.assertNotIn(' apply -input=false', self.source)
         self.assertNotIn("ansible-playbook", self.source)
 
     def test_linux_state_lease_and_cleanup_are_mandatory(self) -> None:
