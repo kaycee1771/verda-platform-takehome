@@ -19,6 +19,7 @@ class LinuxTransactionTests(unittest.TestCase):
         self.assertIn("case \"$action\"", self.source)
         self.assertIn("verify-state", self.source)
         self.assertIn("plan-node", self.source)
+        self.assertIn('-var="ssh_public_key_path=$ssh_public_key"', self.source)
         self.assertIn("assert-saved-plan", self.source)
         self.assertNotIn(' apply -input=false', self.source)
         self.assertNotIn("ansible-playbook", self.source)

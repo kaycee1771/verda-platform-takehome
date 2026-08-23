@@ -21,6 +21,7 @@ config_root="${XDG_CONFIG_HOME:-$HOME/.config}/verda-takehome"
 state_root="${XDG_STATE_HOME:-$HOME/.local/state}/verda-takehome"
 gpg_home="$config_root/gnupg"
 encrypted_state="$state_root/terraform/management.tfstate.gpg"
+ssh_public_key="$config_root/ssh/id_ed25519.pub"
 lock_file="$state_root/phase6-resize.lock"
 terraform_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../infra/terraform/environments/management" && pwd -P)"
 repository="$(cd -- "$terraform_root/../../../.." && pwd -P)"
@@ -37,6 +38,10 @@ for directory in "$config_root" "$state_root" "$gpg_home"; do
 done
 [[ -f "$encrypted_state" && ! -L "$encrypted_state" && "$(stat -c '%u:%a:%h' "$encrypted_state")" == "$(id -u):600:1" ]] || {
   printf '%s\n' '[FAIL] encrypted Linux Terraform state boundary differs.' >&2
+  exit 64
+}
+[[ -f "$ssh_public_key" && ! -L "$ssh_public_key" && "$(stat -c '%u:%a:%h' "$ssh_public_key")" == "$(id -u):600:1" ]] || {
+  printf '%s\n' '[FAIL] protected Linux SSH public key boundary differs.' >&2
   exit 64
 }
 
@@ -156,6 +161,7 @@ mv -f -- "$backup_file.tmp" "$backup_file"
 rm -f -- "$plan_file"
 set +e
 "$terraform_bin" -chdir="$terraform_root" plan -input=false -lock-timeout=60s \
+  -var="ssh_public_key_path=$ssh_public_key" \
   -detailed-exitcode -out="$plan_file" >/dev/null
 plan_exit=$?
 set -e
