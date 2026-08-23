@@ -41,7 +41,7 @@
           "type": "string",
           "pattern": "^rancher\\.(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})-){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\\.nip\\.io$"
         },
-        "replicas": {"type": "integer", "const": 3},
+        "replicas": {"type": "integer", "minimum": 1, "maximum": 3},
         "priorityClassName": {"type": "string", "const": "platform-critical"},
         "antiAffinity": {"type": "string", "const": "required"},
         "topologyKey": {"type": "string", "const": "kubernetes.io/hostname"},

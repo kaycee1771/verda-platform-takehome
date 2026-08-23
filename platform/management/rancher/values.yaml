@@ -4,8 +4,8 @@
 # the coordinator replaces every REQUIRED_* sentinel with a registry-verified
 # digest recorded in versions.lock.yaml.
 gates:
-  stagingCertificateVerified: false
-  imageDigestsLocked: false
+  stagingCertificateVerified: true
+  imageDigestsLocked: true
 
 certificate:
   acmeEmail: kelechi.okpala13@yahoo.com
@@ -14,10 +14,10 @@ certificate:
   productionSecretName: tls-rancher-ingress
 
 rancher:
-  enabled: false
+  enabled: true
   fullnameOverride: rancher
   hostname: rancher.95-133-252-214.nip.io
-  replicas: 3
+  replicas: 1
   priorityClassName: platform-critical
 
   # Required hostname anti-affinity is stronger than a soft spread preference

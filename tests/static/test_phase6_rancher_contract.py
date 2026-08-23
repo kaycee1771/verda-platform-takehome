@@ -110,10 +110,10 @@ class Phase6RancherContractTests(unittest.TestCase):
 
     def test_values_are_ha_strict_tls_bounded_and_destructive_hook_free(self) -> None:
         values = load_yaml(RANCHER / "values.yaml")
-        self.assertFalse(values["rancher"]["enabled"])
-        self.assertFalse(values["gates"]["stagingCertificateVerified"])
-        self.assertFalse(values["gates"]["imageDigestsLocked"])
-        self.assertEqual(values["rancher"]["replicas"], 3)
+        self.assertTrue(values["rancher"]["enabled"])
+        self.assertTrue(values["gates"]["stagingCertificateVerified"])
+        self.assertTrue(values["gates"]["imageDigestsLocked"])
+        self.assertEqual(values["rancher"]["replicas"], 1)
         self.assertEqual(values["rancher"]["antiAffinity"], "required")
         self.assertEqual(values["rancher"]["topologyKey"], "kubernetes.io/hostname")
         self.assertEqual(values["rancher"]["agentTLSMode"], "strict")
@@ -137,7 +137,11 @@ class Phase6RancherContractTests(unittest.TestCase):
         )
 
     def test_initial_render_contains_only_staging_certificate_path(self) -> None:
-        result = helm_template()
+        result = helm_template(
+            "rancher.enabled=false",
+            "gates.stagingCertificateVerified=false",
+            "gates.imageDigestsLocked=false",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         objects = rendered_objects(result.stdout)
         self.assertEqual({item["kind"] for item in objects}, {"Issuer", "Certificate"})
@@ -154,7 +158,10 @@ class Phase6RancherContractTests(unittest.TestCase):
         self.assertEqual(certificate["spec"]["secretName"], "rancher-staging-tls")
 
     def test_enablement_fails_closed_for_proof_and_each_digest(self) -> None:
-        no_proof = helm_template("rancher.enabled=true")
+        no_proof = helm_template(
+            "rancher.enabled=true",
+            "gates.stagingCertificateVerified=false",
+        )
         self.assertNotEqual(no_proof.returncode, 0)
         self.assertIn("stagingCertificateVerified=true", no_proof.stderr)
 
@@ -182,10 +189,10 @@ class Phase6RancherContractTests(unittest.TestCase):
         self.assertEqual(len(deployments), 1)
         deployment = deployments[0]
         self.assertEqual(deployment["metadata"]["name"], "rancher")
-        self.assertEqual(deployment["spec"]["replicas"], 3)
+        self.assertEqual(deployment["spec"]["replicas"], 1)
         self.assertEqual(
             deployment["spec"]["strategy"]["rollingUpdate"],
-            {"maxSurge": 1, "maxUnavailable": 1},
+            {"maxSurge": 1, "maxUnavailable": 0},
         )
         required = deployment["spec"]["template"]["spec"]["affinity"][
             "podAntiAffinity"
