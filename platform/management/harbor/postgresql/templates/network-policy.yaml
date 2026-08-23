@@ -20,7 +20,7 @@ spec:
             matchExpressions:
               - key: component
                 operator: In
-                values: [core, exporter]
+                values: [core, exporter, jobservice]
       ports:
         - {protocol: TCP, port: 5432}
   egress: []
