@@ -1,0 +1,207 @@
+---
+# Chart: kyverno 3.8.2; application: v1.18.2.
+# Every active or hook image is pinned to an immutable multi-architecture
+# manifest digest. A tag-only substitution is a release-blocking defect.
+global:
+  image:
+    registry: reg.kyverno.io
+  priorityClassName: platform-critical
+
+crds:
+  install: true
+  # This is a fresh installation. Enabling the migration hook would add an
+  # unnecessary privileged lifecycle and another image to the live boundary.
+  migration:
+    enabled: false
+
+openreports:
+  enabled: false
+  installCrds: false
+
+reportsServer:
+  enabled: false
+
+features:
+  admissionReports:
+    enabled: true
+  aggregateReports:
+    enabled: true
+  backgroundScan:
+    enabled: true
+    backgroundScanInterval: 1h
+    backgroundScanWorkers: 2
+    skipResourceFilters: false
+  policyReports:
+    enabled: true
+  policyExceptions:
+    enabled: true
+    namespace: kyverno
+  # Phase 6 is deliberately fail-open and Audit-only. Phase 12 owns the
+  # reviewed transition to enforcement.
+  forceFailurePolicyIgnore:
+    enabled: true
+  generateValidatingAdmissionPolicy:
+    enabled: false
+  validatingAdmissionPolicyReports:
+    enabled: false
+  mutatingAdmissionPolicyReports:
+    enabled: false
+  dumpPatches:
+    enabled: false
+  dumpPayload:
+    enabled: false
+
+admissionController:
+  replicas: 2
+  revisionHistoryLimit: 3
+  initContainer:
+    image:
+      registry: reg.kyverno.io
+      repository: kyverno/kyvernopre
+      tag: "v1.18.2@sha256:cd8cb4a31d25b3992734fb8f24a90ef691c90ce49338c89bea96792160eacb98"
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+  container:
+    image:
+      registry: reg.kyverno.io
+      repository: kyverno/kyverno
+      tag: "v1.18.2@sha256:0a540e2ddf74d0d2d3d45f9ef248d7dbc96576accdbcc6a2dd7eaff9fea56504"
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 384Mi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  antiAffinity:
+    enabled: true
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/instance: kyverno
+            app.kubernetes.io/component: admission-controller
+        topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/instance: kyverno
+          app.kubernetes.io/component: admission-controller
+  metricsService:
+    create: true
+    type: ClusterIP
+    port: 8000
+  serviceMonitor:
+    enabled: false
+
+backgroundController:
+  enabled: true
+  replicas: 1
+  revisionHistoryLimit: 3
+  image:
+    registry: reg.kyverno.io
+    repository: kyverno/background-controller
+    tag: "v1.18.2@sha256:d62566ce41bd0d4a32bf2cf44b9ebfc02c36374f821f83070890287f62f68671"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+  podDisruptionBudget:
+    enabled: false
+  metricsService:
+    create: true
+    type: ClusterIP
+    port: 8000
+  serviceMonitor:
+    enabled: false
+
+# No CleanupPolicy is part of the Phase 6 baseline. Keep this controller
+# disabled until a reviewed policy needs it, while retaining a pinned image for
+# a future deliberate enablement.
+cleanupController:
+  enabled: false
+  replicas: 1
+  revisionHistoryLimit: 3
+  image:
+    registry: reg.kyverno.io
+    repository: kyverno/cleanup-controller
+    tag: "v1.18.2@sha256:b0395d29ae332276e6910eb40418be9bc127c068d659f90aa1bcddd6be99ccb4"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+  podDisruptionBudget:
+    enabled: false
+  serviceMonitor:
+    enabled: false
+
+reportsController:
+  enabled: true
+  replicas: 1
+  revisionHistoryLimit: 3
+  image:
+    registry: reg.kyverno.io
+    repository: kyverno/reports-controller
+    tag: "v1.18.2@sha256:f09cf305170014e191b94e1c54f5be73163d8824eefad49349675c4efe43159a"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+  podDisruptionBudget:
+    enabled: false
+  metricsService:
+    create: true
+    type: ClusterIP
+    port: 8000
+  serviceMonitor:
+    enabled: false
+
+webhooksCleanup:
+  enabled: true
+  image:
+    registry: ghcr.io
+    repository: kyverno/readiness-checker
+    tag: "v1.18.2@sha256:4fb1870b1a4adfed0fa7a32b7c3bcaf736fb889c7e1947ee8b20710bc2f5a5ce"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+
+test:
+  image:
+    registry: ghcr.io
+    repository: kyverno/readiness-checker
+    tag: "v1.18.2@sha256:4fb1870b1a4adfed0fa7a32b7c3bcaf736fb889c7e1947ee8b20710bc2f5a5ce"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi

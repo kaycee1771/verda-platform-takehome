@@ -5,6 +5,10 @@ failures=()
 render_dir='.local/rendered'
 schema_location='.local/schema-cache/{{.ResourceKind}}{{.KindSuffix}}.json'
 mkdir -p "${render_dir}" .local/reports
+mkdir -p .local/go-build-cache .local/go-tmp
+export GOCACHE="${PWD}/.local/go-build-cache"
+export GOTMPDIR="${PWD}/.local/go-tmp"
+export GOTOOLCHAIN=local
 
 echo '[phase 1] target=validate network=none cloud-credentials=not-mounted'
 
@@ -162,6 +166,11 @@ kubernetes_validate() {
     platform/management/longhorn/prerequisites/ui-network-policy.yaml \
     platform/management/longhorn/resources/nodes.yaml \
     platform/management/longhorn/resources/storageclasses.yaml \
+    platform/management/monitoring/targets/argocd/monitoring.yaml \
+    platform/management/monitoring/targets/harbor/monitoring.yaml \
+    platform/management/monitoring/targets/longhorn/monitoring.yaml \
+    platform/management/monitoring/targets/rancher/monitoring.yaml \
+    platform/management/monitoring/targets/traefik/monitoring.yaml \
     "${render_dir}"
 }
 
@@ -175,10 +184,10 @@ prometheus_validate() {
 }
 
 trivy_validate() {
-  trivy config --cache-dir .local/trivy --skip-check-update --timeout 15m --exit-code 1 \
+  trivy config --cache-dir .local/trivy --skip-check-update --timeout 30m --exit-code 1 \
     --helm-kube-version 1.35.7 \
     --severity HIGH,CRITICAL \
-    --skip-dirs .git --skip-dirs .local --skip-dirs tmp \
+    --skip-dirs .git --skip-dirs .local --skip-dirs .worktrees --skip-dirs tmp \
     --skip-dirs tests --skip-dirs policies/kyverno/tests \
     --skip-dirs platform/management/cert-manager/staging \
     --skip-dirs platform/management/cert-manager/production \
@@ -201,11 +210,30 @@ phase5_owned_render_trivy_validate() {
 
 go_format_validate() {
   local unformatted
-  unformatted="$(gofmt -l applications/platform-demo)"
+  local -a go_files=()
+  mapfile -d '' go_files < <(
+    find applications -type f -name '*.go' -not -path '*/vendor/*' -print0
+  )
+  ((${#go_files[@]})) || return 0
+  unformatted="$(gofmt -l "${go_files[@]}")"
   if [[ -n "${unformatted}" ]]; then
     printf '%s\n' "${unformatted}"
     return 1
   fi
+}
+
+go_module_validate() {
+  local command="$1" module_file module_root
+  local -a go_modules=()
+  mapfile -d '' go_modules < <(
+    find applications -type f -name go.mod -not -path '*/vendor/*' -print0
+  )
+  for module_file in "${go_modules[@]}"; do
+    module_root="$(dirname "${module_file}")"
+    if find "${module_root}" -type f -name '*.go' -not -path '*/vendor/*' -print -quit | grep -q .; then
+      (cd "${module_root}" && go "${command}" ./...)
+    fi
+  done
 }
 
 dockerfile_validate() {
@@ -267,10 +295,10 @@ run_gate 'Prometheus rule syntax and unit tests' prometheus_validate
 
 if find . -type f -name '*.go' -not -path './.git/*' -not -path './.local/*' -print -quit | grep -q .; then
   run_gate 'Go format' go_format_validate
-  run_gate 'Go vet' go vet ./applications/platform-demo/...
-  run_gate 'Go tests' go test ./applications/platform-demo/...
+  run_gate 'Go vet' go_module_validate vet
+  run_gate 'Go tests' go_module_validate test
 else
-  not_applicable 'Go format/vet/test' 'application source begins in Phase 9; module ownership is reserved only'
+  not_applicable 'Go format/vet/test' 'no application Go source exists'
 fi
 
 if find . -type f -name Dockerfile -not -path './.git/*' -not -path './.local/*' -print -quit | grep -q .; then

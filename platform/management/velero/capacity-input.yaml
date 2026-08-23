@@ -1,0 +1,61 @@
+---
+schema_version: 1
+activation_status: blocked
+assumptions:
+  node_count: 3
+  node_agent_data_mover_concurrency_per_node: 1
+workloads:
+  controller:
+    kind: Deployment
+    replicas: 1
+    rollout_strategy: Recreate
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    init_peak:
+      cpu: 10m
+      memory: 32Mi
+  node-agent:
+    kind: DaemonSet
+    replicas: 3
+    rollout_max_unavailable: 1
+    requests_per_pod:
+      cpu: 100m
+      memory: 256Mi
+    limits_per_pod:
+      cpu: 500m
+      memory: 512Mi
+  data-mover:
+    kind: generated-Pod
+    priority_class: platform-workload
+    maximum_concurrent_pods: 3
+    requests_per_pod:
+      cpu: 250m
+      memory: 256Mi
+      ephemeral-storage: 1Gi
+    limits_per_pod:
+      cpu: 750m
+      memory: 1Gi
+      ephemeral-storage: 4Gi
+  repository-maintenance:
+    kind: generated-Job
+    priority_class: platform-workload
+    maximum_concurrent_pods: 1
+    requests_per_pod:
+      cpu: 50m
+      memory: 128Mi
+      ephemeral-storage: 256Mi
+    limits_per_pod:
+      cpu: 250m
+      memory: 256Mi
+      ephemeral-storage: 1Gi
+steady_state:
+  cpu: 500m
+  memory: 1024Mi
+backup_peak_including_data_movers_and_maintenance:
+  cpu: 1300m
+  memory: 1920Mi
+persistent_volume_claims: []

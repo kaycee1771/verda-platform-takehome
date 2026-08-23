@@ -1,0 +1,27 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: foundation
+  namespace: argocd
+spec:
+  description: Phase 6 namespace, priority, quota, and baseline isolation ownership
+  sourceRepos:
+    - https://github.com/kaycee1771/verda-platform-takehome.git
+  destinations:
+    - {namespace: argocd, server: https://kubernetes.default.svc}
+    - {namespace: demo-dev, server: https://kubernetes.default.svc}
+    - {namespace: demo-staging, server: https://kubernetes.default.svc}
+    - {namespace: demo-prod, server: https://kubernetes.default.svc}
+  clusterResourceWhitelist:
+    - {group: "", kind: Namespace}
+    - {group: scheduling.k8s.io, kind: PriorityClass}
+  namespaceResourceWhitelist:
+    - {group: bitnami.com, kind: SealedSecret}
+    - {group: "", kind: LimitRange}
+    - {group: "", kind: ResourceQuota}
+    - {group: "", kind: ServiceAccount}
+    - {group: networking.k8s.io, kind: NetworkPolicy}
+    - {group: rbac.authorization.k8s.io, kind: Role}
+    - {group: rbac.authorization.k8s.io, kind: RoleBinding}
+  orphanedResources: {warn: true}

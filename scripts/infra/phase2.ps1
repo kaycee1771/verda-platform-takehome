@@ -1,12 +1,22 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('init', 'plan', 'apply', 'repair-node-02-plan', 'repair-node-02-apply', 'inventory', 'verify-hosts', 'lifecycle-check', 'cost-report', 'state-audit', 'destroy')]
+    [ValidateSet('init', 'plan', 'apply', 'repair-node-02-plan', 'repair-node-02-apply', 'inventory', 'verify-hosts', 'lifecycle-check', 'cost-report', 'state-audit', 'destroy', 'phase6-resize-plan', 'phase6-resize-state', 'phase6-resize-no-drift', 'phase6-resize-output')]
     [string]$Target,
     [ValidateSet('management')]
     [string]$Cluster = 'management',
-    [switch]$Confirm
+    [switch]$Confirm,
+    [string]$SavedPlan = '',
+    [string]$ExpectedStateLineageSha256 = '',
+    [long]$ExpectedStateSerial = -1,
+    [string]$OperationId = '',
+    [string]$InventoryOutput = '',
+    [string]$KnownHosts = ''
 )
+
+if ($MyInvocation.InvocationName -eq '.') {
+    throw 'phase2.ps1 is a non-library entrypoint and must not be dot-sourced.'
+}
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -23,6 +33,430 @@ $noDriftSummary = Join-Path $reportRoot 'no-drift-summary.json'
 $rollbackSummary = Join-Path $reportRoot 'compute-rollback-summary.json'
 $repairSummary = Join-Path $reportRoot 'node-02-replacement-summary.json'
 New-Item -ItemType Directory -Force -Path $reportRoot, $logRoot | Out-Null
+
+function Get-CanonicalBoundaryPath {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $full = [IO.Path]::GetFullPath($Path)
+    $ancestor = $full
+    while (-not (Test-Path -LiteralPath $ancestor) -and $ancestor -ne [IO.Path]::GetPathRoot($ancestor)) {
+        $ancestor = Split-Path -Parent $ancestor
+    }
+    $resolvedAncestor = (Resolve-Path -LiteralPath $ancestor).Path
+    $relative = [IO.Path]::GetRelativePath($ancestor, $full)
+    [IO.Path]::GetFullPath((Join-Path $resolvedAncestor $relative))
+}
+
+function Assert-OutsideRepository {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Label)
+
+    $repo = Get-CanonicalBoundaryPath -Path $repoRoot
+    foreach ($candidate in @([IO.Path]::GetFullPath($Path), (Get-CanonicalBoundaryPath -Path $Path))) {
+        $prefix = $repo.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($candidate.Equals($repo, [StringComparison]::OrdinalIgnoreCase) -or
+            $candidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "$Label must resolve outside the repository."
+        }
+    }
+}
+
+function Assert-NoReparsePath {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Label)
+
+    $cursor = [IO.Path]::GetFullPath($Path)
+    while ($cursor) {
+        if (Test-Path -LiteralPath $cursor) {
+            $item = Get-Item -LiteralPath $cursor -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "$Label must not traverse a symlink, junction, or other reparse point."
+            }
+        }
+        $parent = Split-Path -Parent $cursor
+        if (-not $parent -or $parent -eq $cursor) { break }
+        $cursor = $parent
+    }
+}
+
+function Assert-CanonicalTreesDisjoint {
+    param(
+        [Parameter(Mandatory)][string]$Left,
+        [Parameter(Mandatory)][string]$Right,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    $leftPath = Get-CanonicalBoundaryPath -Path $Left
+    $rightPath = Get-CanonicalBoundaryPath -Path $Right
+    $leftPrefix = $leftPath.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    $rightPrefix = $rightPath.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if ($leftPath.Equals($rightPath, [StringComparison]::OrdinalIgnoreCase) -or
+        $leftPath.StartsWith($rightPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+        $rightPath.StartsWith($leftPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Label must be canonical, separate external trees."
+    }
+}
+
+function Assert-SingleFileIdentity {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Label)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+    $item = Get-Item -LiteralPath $Path -Force
+    $linkTypeProperty = $item.PSObject.Properties['LinkType']
+    $targetProperty = $item.PSObject.Properties['Target']
+    $linkType = if ($linkTypeProperty) { [string]$linkTypeProperty.Value } else { '' }
+    $linkTargets = if ($targetProperty) { @($targetProperty.Value) } else { @() }
+    if ($linkType -eq 'HardLink' -and $linkTargets.Count -gt 1) {
+        throw "$Label must not be a hard link or share file identity with another asset."
+    }
+}
+
+function Enter-Phase2MutationLease {
+    param([Parameter(Mandatory)]$Paths)
+
+    $canonicalState = (Get-CanonicalBoundaryPath -Path $Paths.StatePath).ToLowerInvariant()
+    $stateDigest = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonicalState))
+    ).ToLowerInvariant()
+    $mutexName = if ($IsWindows) { "Local\VerdaPhase2State-$stateDigest" } else { "VerdaPhase2State-$stateDigest" }
+    $mutex = [Threading.Mutex]::new($false, $mutexName)
+    $acquired = $false
+    try {
+        $acquired = $mutex.WaitOne(0)
+    } catch [Threading.AbandonedMutexException] {
+        $acquired = $true
+    } catch {
+        $mutex.Dispose()
+        throw 'Unable to acquire the OS-exclusive protected-state mutex.'
+    }
+    if (-not $acquired) {
+        $mutex.Dispose()
+        throw 'Another Phase 2 process holds the OS-exclusive protected-state mutex.'
+    }
+    $mutex
+}
+
+function Exit-Phase2MutationLease {
+    param([Parameter(Mandatory)][Threading.Mutex]$Lease)
+
+    try { $Lease.ReleaseMutex() } finally { $Lease.Dispose() }
+}
+
+function Open-ReviewedPlanHandle {
+    param([Parameter(Mandatory)][string]$Path)
+
+    Assert-NoReparsePath -Path (Split-Path -Parent $Path) -Label 'Reviewed Terraform plan directory'
+    Assert-NoReparsePath -Path $Path -Label 'Reviewed Terraform saved plan'
+    Assert-SingleFileIdentity -Path $Path -Label 'Reviewed Terraform saved plan'
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw 'The reviewed Terraform saved plan is absent.'
+    }
+    try {
+        [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    } catch {
+        throw 'Unable to hold the reviewed Terraform saved plan against replacement.'
+    }
+}
+
+function Get-OpenPlanSha256 {
+    param([Parameter(Mandatory)][IO.FileStream]$Stream)
+
+    $Stream.Position = 0
+    $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Stream)).ToLowerInvariant()
+    $Stream.Position = 0
+    $digest
+}
+
+function Initialize-Phase2NativeFileIdentity {
+    if ('Phase2NativeFileIdentity' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+public static class Phase2NativeFileIdentity {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BY_HANDLE_FILE_INFORMATION {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+        string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle handle, out BY_HANDLE_FILE_INFORMATION information);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(
+        SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+
+    public static SafeFileHandle OpenDirectoryNoDelete(string path) {
+        const uint GENERIC_READ = 0x80000000;
+        const uint FILE_SHARE_READ_WRITE = 0x00000003;
+        const uint OPEN_EXISTING = 3;
+        const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+        const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+        SafeFileHandle handle = CreateFile(
+            path, GENERIC_READ, FILE_SHARE_READ_WRITE, IntPtr.Zero, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return handle;
+    }
+
+    private static string NormalizePath(string path) {
+        if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            return @"\\" + path.Substring(8);
+        if (path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+            return path.Substring(4);
+        return path;
+    }
+
+    public static string VerifyDirectory(SafeFileHandle handle, string intendedPath) {
+        const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
+        const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400;
+        BY_HANDLE_FILE_INFORMATION information;
+        if (!GetFileInformationByHandle(handle, out information))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        if ((information.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+            (information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+            throw new InvalidOperationException("staging handle is not a non-reparse directory");
+        string finalPath = NormalizePath(FinalPath(handle));
+        string expected = System.IO.Path.GetFullPath(intendedPath).TrimEnd('\\');
+        if (!String.Equals(finalPath.TrimEnd('\\'), expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("staging handle final path differs from intended canonical directory");
+        return String.Format("{0:x8}:{1:x8}{2:x8}", information.VolumeSerialNumber,
+            information.FileIndexHigh, information.FileIndexLow);
+    }
+
+    public static string Identity(SafeFileHandle handle) {
+        BY_HANDLE_FILE_INFORMATION information;
+        if (!GetFileInformationByHandle(handle, out information))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return String.Format("{0:x8}:{1:x8}{2:x8}", information.VolumeSerialNumber,
+            information.FileIndexHigh, information.FileIndexLow);
+    }
+
+    public static string FinalPath(SafeFileHandle handle) {
+        StringBuilder path = new StringBuilder(32768);
+        uint length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, 0);
+        if (length == 0 || length >= path.Capacity)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return path.ToString();
+    }
+}
+'@
+}
+
+function New-StagedReviewedPlan {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Paths)
+
+    $stagingDirectory = Join-Path (Split-Path -Parent $Paths.PlanPath) 'reviewed-plans'
+    Assert-NoReparsePath -Path $stagingDirectory -Label 'Reviewed Terraform plan staging directory'
+    Protect-Directory -Path $stagingDirectory
+    Assert-NoReparsePath -Path $stagingDirectory -Label 'Reviewed Terraform plan staging directory'
+    if (-not $IsWindows) { throw 'Reviewed plan staging requires Windows handle-identity protections.' }
+    Initialize-Phase2NativeFileIdentity
+    $parentHandle = $null
+    try {
+        $parentHandle = [Phase2NativeFileIdentity]::OpenDirectoryNoDelete($stagingDirectory)
+        $parentIdentity = [Phase2NativeFileIdentity]::VerifyDirectory($parentHandle, $stagingDirectory)
+    } catch {
+        if ($parentHandle) { $parentHandle.Dispose() }
+        throw 'Unable to hold the reviewed-plan staging directory against replacement.'
+    }
+    $stagedPath = Join-Path $stagingDirectory ("reviewed-{0}.tfplan" -f [Guid]::NewGuid().ToString('N'))
+    $source = $null
+    $staged = $null
+    $held = $null
+    try {
+        $source = Open-ReviewedPlanHandle -Path $Path
+        $staged = [IO.File]::Open(
+            $stagedPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read
+        )
+        $source.Position = 0
+        $source.CopyTo($staged)
+        $staged.Flush($true)
+        $staged.Position = 0
+        Assert-NoReparsePath -Path $stagedPath -Label 'Staged reviewed Terraform plan'
+        Assert-SingleFileIdentity -Path $stagedPath -Label 'Staged reviewed Terraform plan'
+        $createdIdentity = [Phase2NativeFileIdentity]::Identity($staged.SafeFileHandle)
+        $createdFinalPath = [Phase2NativeFileIdentity]::FinalPath($staged.SafeFileHandle)
+        $createdSha256 = Get-OpenPlanSha256 -Stream $staged
+        $staged.Dispose()
+        $staged = $null
+        $held = [IO.File]::Open(
+            $stagedPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read
+        )
+        if (
+            [Phase2NativeFileIdentity]::Identity($held.SafeFileHandle) -ne $createdIdentity -or
+            -not [Phase2NativeFileIdentity]::FinalPath($held.SafeFileHandle).Equals(
+                $createdFinalPath, [StringComparison]::OrdinalIgnoreCase
+            ) -or
+            (Get-OpenPlanSha256 -Stream $held) -ne $createdSha256
+        ) {
+            throw 'Staged reviewed Terraform plan changed while acquiring its held read boundary.'
+        }
+        [pscustomobject]@{
+            Path = $stagedPath
+            Handle = $held
+            Sha256 = $createdSha256
+            Identity = $createdIdentity
+            FinalPath = $createdFinalPath
+            ParentHandle = $parentHandle
+            ParentIdentity = $parentIdentity
+            ParentPath = [IO.Path]::GetFullPath($stagingDirectory)
+        }
+        $held = $null
+        $parentHandle = $null
+    } finally {
+        if ($source) { $source.Dispose() }
+        if ($staged) { $staged.Dispose() }
+        if ($held) { $held.Dispose() }
+        if ($parentHandle) { $parentHandle.Dispose() }
+    }
+}
+
+function Open-VerifiedStagedPlanPath {
+    param([Parameter(Mandatory)]$Stage)
+
+    $parentIdentity = [Phase2NativeFileIdentity]::VerifyDirectory($Stage.ParentHandle, $Stage.ParentPath)
+    if ($parentIdentity -ne $Stage.ParentIdentity) {
+        throw 'Reviewed-plan staging directory identity changed before apply.'
+    }
+    Assert-NoReparsePath -Path $Stage.Path -Label 'Staged reviewed Terraform plan before apply'
+    Assert-SingleFileIdentity -Path $Stage.Path -Label 'Staged reviewed Terraform plan before apply'
+    $pathHandle = [IO.File]::Open(
+        $Stage.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read
+    )
+    try {
+        $identity = [Phase2NativeFileIdentity]::Identity($pathHandle.SafeFileHandle)
+        $finalPath = [Phase2NativeFileIdentity]::FinalPath($pathHandle.SafeFileHandle)
+        if ($identity -ne $Stage.Identity -or
+            -not $finalPath.Equals($Stage.FinalPath, [StringComparison]::OrdinalIgnoreCase) -or
+            (Get-OpenPlanSha256 -Stream $pathHandle) -ne $Stage.Sha256) {
+            throw 'Staged reviewed Terraform plan pathname identity differs from the held reviewed bytes.'
+        }
+        $pathHandle
+        $pathHandle = $null
+    } finally {
+        if ($pathHandle) { $pathHandle.Dispose() }
+    }
+}
+
+function Remove-StagedReviewedPlan {
+    param([Parameter(Mandatory)]$Stage)
+
+    try {
+        $Stage.Handle.Dispose()
+        Assert-NoReparsePath -Path $Stage.Path -Label 'Staged reviewed Terraform plan cleanup'
+        Assert-SingleFileIdentity -Path $Stage.Path -Label 'Staged reviewed Terraform plan cleanup'
+        Remove-Item -LiteralPath $Stage.Path -Force
+    } finally {
+        $Stage.ParentHandle.Dispose()
+    }
+}
+
+function Assert-Phase6StateBoundary {
+    param([Parameter(Mandatory)]$Paths)
+
+    $expectedState = [IO.Path]::GetFullPath((Join-Path $Paths.Base 'terraform\management.tfstate'))
+    $configuredState = [IO.Path]::GetFullPath($Paths.StatePath)
+    if (-not $configuredState.Equals($expectedState, [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Get-CanonicalBoundaryPath -Path $configuredState).Equals(
+            (Get-CanonicalBoundaryPath -Path $expectedState), [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'Phase 6 state must use the exact dedicated protected state path.'
+    }
+    $stateDirectory = Split-Path -Parent $configuredState
+    Assert-NoReparsePath -Path $stateDirectory -Label 'Phase 6 state directory'
+    $stateAssets = @(
+        $configuredState, $Paths.EncryptedStatePath,
+        "$configuredState.dpapi.new", "$configuredState.backup", "$configuredState.backup.dpapi",
+        "$configuredState.backup.dpapi.new"
+    )
+    $otherAssets = @($Paths.SshPrivateKey, $Paths.SshPublicKey, $Paths.KnownHosts)
+    foreach ($asset in $stateAssets + $otherAssets) {
+        Assert-NoReparsePath -Path $asset -Label 'Phase 6 protected asset'
+        Assert-SingleFileIdentity -Path $asset -Label 'Phase 6 protected asset'
+    }
+    $allCanonical = @(($stateAssets + $otherAssets) | ForEach-Object { Get-CanonicalBoundaryPath -Path $_ })
+    if (@($allCanonical | Sort-Object -Unique).Count -ne $allCanonical.Count) {
+        throw 'Phase 6 protected state, key, and known-hosts paths must be pairwise distinct.'
+    }
+    foreach ($stateAsset in $stateAssets) {
+        $stateCanonical = Get-CanonicalBoundaryPath -Path $stateAsset
+        foreach ($otherAsset in $otherAssets) {
+            if ($stateCanonical.Equals(
+                (Get-CanonicalBoundaryPath -Path $otherAsset), [StringComparison]::OrdinalIgnoreCase
+            )) {
+                throw 'Phase 6 state aliases an SSH key or known-hosts asset.'
+            }
+        }
+        $backup = Get-CanonicalBoundaryPath -Path $Paths.BackupDirectory
+        $backupPrefix = $backup.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($stateCanonical.Equals($backup, [StringComparison]::OrdinalIgnoreCase) -or
+            $stateCanonical.StartsWith($backupPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Phase 6 state aliases the protected backup tree.'
+        }
+    }
+}
+
+function Assert-Phase6FreshArtifactPath {
+    param(
+        [Parameter(Mandatory)][string]$Candidate,
+        [Parameter(Mandatory)][string]$DedicatedDirectory,
+        [Parameter(Mandatory)]$Paths,
+        [Parameter(Mandatory)][string]$KnownHostsPath,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    $full = [IO.Path]::GetFullPath($Candidate)
+    $directory = [IO.Path]::GetFullPath($DedicatedDirectory)
+    Assert-NoReparsePath -Path $Paths.Base -Label 'Phase 6 external base'
+    Assert-NoReparsePath -Path $directory -Label "$Label directory"
+    Assert-NoReparsePath -Path $full -Label $Label
+    if (Test-Path -LiteralPath $full) {
+        throw "$Label must be a fresh path; overwriting or hard-link aliasing is refused."
+    }
+    $parent = Split-Path -Parent $full
+    if (-not $parent -or
+        -not ([IO.Path]::GetFullPath($parent)).Equals($directory, [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Get-CanonicalBoundaryPath -Path $parent).Equals(
+            (Get-CanonicalBoundaryPath -Path $directory), [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw "$Label must be directly inside its dedicated protected directory."
+    }
+    $protectedFiles = @(
+        $Paths.StatePath, $Paths.EncryptedStatePath, "$($Paths.StatePath).backup",
+        "$($Paths.StatePath).backup.dpapi", $Paths.SshPrivateKey, $Paths.SshPublicKey, $KnownHostsPath
+    )
+    $candidateCanonical = Get-CanonicalBoundaryPath -Path $full
+    foreach ($protected in $protectedFiles) {
+        Assert-NoReparsePath -Path $protected -Label 'Protected Phase 6 asset'
+        if ($candidateCanonical.Equals(
+            (Get-CanonicalBoundaryPath -Path $protected), [StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "$Label aliases a protected state, key, or known-hosts asset."
+        }
+    }
+    $backup = Get-CanonicalBoundaryPath -Path $Paths.BackupDirectory
+    $backupPrefix = $backup.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if ($candidateCanonical.Equals($backup, [StringComparison]::OrdinalIgnoreCase) -or
+        $candidateCanonical.StartsWith($backupPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Label aliases the protected backup tree."
+    }
+    Protect-Directory -Path $directory
+    $full
+}
 
 function Get-ExternalPaths {
     if ($IsWindows) {
@@ -53,18 +487,18 @@ function Get-ExternalPaths {
 
     $base = [IO.Path]::GetFullPath($base)
     $backupBase = [IO.Path]::GetFullPath($backupBase)
-    $repoPrefix = $repoRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-    foreach ($candidate in @($base, $backupBase)) {
-        if ($candidate.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Phase 2 state, keys, and backups must resolve outside the repository."
-        }
-    }
+    Assert-OutsideRepository -Path $base -Label 'Phase 2 state/key base'
+    Assert-OutsideRepository -Path $backupBase -Label 'Phase 2 backup directory'
+    Assert-NoReparsePath -Path $base -Label 'Phase 2 state/key base'
+    Assert-NoReparsePath -Path $backupBase -Label 'Phase 2 backup directory'
+    Assert-CanonicalTreesDisjoint -Left $base -Right $backupBase -Label 'Phase 2 state/key base and backup directory'
 
     $statePath = if ($env:VERDA_TF_STATE_PATH) {
         [IO.Path]::GetFullPath($env:VERDA_TF_STATE_PATH)
     } else {
         Join-Path $base 'terraform\management.tfstate'
     }
+    Assert-OutsideRepository -Path $statePath -Label 'Terraform state'
     $planPath = Join-Path $base 'terraform\management.tfplan'
     $rollbackPlanPath = Join-Path $base 'terraform\management-compute-rollback.tfplan'
     $repairPlanPath = Join-Path $base 'terraform\management-node-02-replacement.tfplan'
@@ -80,6 +514,9 @@ function Get-ExternalPaths {
         RepairPlanPath   = $repairPlanPath
         SshPrivateKey    = $sshPrivateKey
         SshPublicKey     = "$sshPrivateKey.pub"
+        KnownHosts       = Join-Path $base 'ssh\known_hosts'
+        Phase6PlanDirectory = Join-Path $base 'phase6\plans'
+        Phase6InventoryDirectory = Join-Path $base 'phase6\inventory'
     }
 }
 
@@ -399,24 +836,30 @@ function Invoke-Node02RepairApply {
         throw "No reviewed node-02 recovery plan exists; run the guarded recovery-plan target first."
     }
 
+    $stage = New-StagedReviewedPlan -Path $Paths.RepairPlanPath -Paths $Paths
     $originalPlanPath = $Paths.PlanPath
     try {
-        $Paths.PlanPath = $Paths.RepairPlanPath
+        $Paths.PlanPath = $stage.Path
         Assert-Plan -Paths $Paths -Mode 'node-02-replacement' -SummaryPath $repairSummary
         Assert-CostEnvelope -SummaryPath $repairSummary
+        if ((Get-OpenPlanSha256 -Stream $stage.Handle) -ne $stage.Sha256) {
+            throw 'Staged reviewed node-02 plan bytes changed while held open.'
+        }
+        $pathHandle = Open-VerifiedStagedPlanPath -Stage $stage
+        try {
+            Backup-State -Paths $Paths
+            Invoke-Terraform -Arguments @(
+                'apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $stage.Path
+            ) -LogName 'node-02-replacement-apply.log' | Out-Null
+        } finally {
+            $pathHandle.Dispose()
+            if (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf) {
+                Backup-State -Paths $Paths
+            }
+        }
     } finally {
         $Paths.PlanPath = $originalPlanPath
-    }
-
-    Backup-State -Paths $Paths
-    try {
-        Invoke-Terraform -Arguments @(
-            'apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $Paths.RepairPlanPath
-        ) -LogName 'node-02-replacement-apply.log' | Out-Null
-    } finally {
-        if (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf) {
-            Backup-State -Paths $Paths
-        }
+        Remove-StagedReviewedPlan -Stage $stage
     }
     Write-Host "[PASS] Node 02 compute/OS replacement applied; protected data-volume state remains managed."
 }
@@ -428,8 +871,9 @@ function Backup-State {
         throw "Terraform state is absent; encrypted backup cannot be created."
     }
     $stateBytes = [IO.File]::ReadAllBytes($Paths.StatePath)
-    $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
-    $backupPath = Join-Path $Paths.BackupDirectory "management-$timestamp.tfstate.dpapi"
+    $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ')
+    $backupNonce = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    $backupPath = Join-Path $Paths.BackupDirectory "management-$timestamp-$backupNonce.tfstate.dpapi"
     if ($IsWindows) {
         $encrypted = Protect-BytesForCurrentUser -Bytes $stateBytes
         [IO.File]::WriteAllBytes($backupPath, $encrypted)
@@ -449,6 +893,299 @@ function Backup-State {
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $backupPath).Hash.ToLowerInvariant()
     Set-Content -LiteralPath "$backupPath.sha256" -Value "$hash  $(Split-Path -Leaf $backupPath)" -Encoding utf8NoBOM
     Write-Host "[PASS] Independent encrypted state backup created and round-trip verified; path/value withheld."
+}
+
+function Get-Phase6StateReceipt {
+    param([Parameter(Mandatory)]$Paths)
+
+    if (-not (Test-Path -LiteralPath $Paths.StatePath -PathType Leaf)) {
+        throw 'Terraform state is absent.'
+    }
+    $bytes = [IO.File]::ReadAllBytes($Paths.StatePath)
+    try {
+        $document = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json -Depth 100
+    } catch {
+        throw 'Terraform state is not valid JSON.'
+    }
+    if ($document.lineage -notmatch '^[0-9a-f-]{36}$' -or [int64]$document.serial -lt 0) {
+        throw 'Terraform state lineage or serial is invalid.'
+    }
+    [ordered]@{
+        state_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        lineage_sha256 = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes([string]$document.lineage))
+        ).ToLowerInvariant()
+        serial = [int64]$document.serial
+    }
+}
+
+function Assert-Phase6ControlArguments {
+    param([Parameter(Mandatory)]$Paths)
+    if ($OperationId -notmatch '^[0-9a-f]{64}$') { throw 'Phase 6 operation ID must be a SHA-256 nonce.' }
+    if (-not $SavedPlan) { throw 'An external Phase 6 saved plan path is required.' }
+    $script:SavedPlan = Assert-Phase6FreshArtifactPath `
+        -Candidate $SavedPlan -DedicatedDirectory $Paths.Phase6PlanDirectory -Paths $Paths `
+        -KnownHostsPath $Paths.KnownHosts -Label 'Phase 6 saved plan'
+    Assert-OutsideRepository -Path $script:SavedPlan -Label 'Phase 6 saved plan'
+    if ($ExpectedStateLineageSha256 -notmatch '^[0-9a-f]{64}$' -or $ExpectedStateSerial -lt 0) {
+        throw 'Expected Terraform state lineage/serial is invalid.'
+    }
+}
+
+function Assert-Phase6OutputArguments {
+    param([Parameter(Mandatory)]$Paths)
+
+    if ($OperationId -notmatch '^[0-9a-f]{64}$') { throw 'Phase 6 operation ID must be a SHA-256 nonce.' }
+    if ($ExpectedStateLineageSha256 -notmatch '^[0-9a-f]{64}$' -or $ExpectedStateSerial -lt 0) {
+        throw 'Expected Terraform state lineage/serial is invalid.'
+    }
+    if (-not $InventoryOutput -or -not $KnownHosts) { throw 'External inventory and known-hosts paths are required.' }
+    $known = [IO.Path]::GetFullPath($KnownHosts)
+    Assert-NoReparsePath -Path $known -Label 'Phase 6 known-hosts file'
+    if (-not $known.Equals([IO.Path]::GetFullPath($Paths.KnownHosts), [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Get-CanonicalBoundaryPath -Path $known).Equals(
+            (Get-CanonicalBoundaryPath -Path $Paths.KnownHosts), [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'Phase 6 known-hosts file must use its dedicated protected path.'
+    }
+    $script:KnownHosts = $known
+    $script:InventoryOutput = Assert-Phase6FreshArtifactPath `
+        -Candidate $InventoryOutput -DedicatedDirectory $Paths.Phase6InventoryDirectory -Paths $Paths `
+        -KnownHostsPath $known -Label 'Phase 6 recovery inventory'
+    Assert-OutsideRepository -Path $script:InventoryOutput -Label 'Phase 6 recovery inventory'
+    Assert-OutsideRepository -Path $script:KnownHosts -Label 'Phase 6 known-hosts file'
+}
+
+function Assert-NoActivePhase6MutationJournal {
+    param([Parameter(Mandatory)]$Paths)
+
+    $control = Join-Path $Paths.Base 'phase6-resize-control'
+    if (-not (Test-Path -LiteralPath $control -PathType Container)) { return }
+    Assert-NoReparsePath -Path $control -Label 'Phase 6 durable operation sentinel directory'
+    foreach ($journal in @(Get-ChildItem -LiteralPath $control -File -Filter 'phase6-resize-operation-*.json')) {
+        Assert-NoReparsePath -Path $journal.FullName -Label 'Phase 6 durable operation sentinel'
+        Assert-SingleFileIdentity -Path $journal.FullName -Label 'Phase 6 durable operation sentinel'
+        try { $value = Get-Content -LiteralPath $journal.FullName -Raw | ConvertFrom-Json }
+        catch { throw 'A Phase 6 durable operation sentinel is unreadable.' }
+        $expectedNames = @(
+            'schema_version', 'phase', 'integrated_commit', 'operation_id', 'generation', 'state',
+            'node', 'direction', 'plan_sha256', 'review_sha256', 'prepare_sha256',
+            'state_lineage_sha256', 'state_serial_before', 'apply_receipt_sha256',
+            'recovery_receipt_sha256', 'postflight_sha256', 'progress_sha256', 'created_at',
+            'apply_started_at', 'adopted_at', 'applied_at', 'recovered_at', 'completed_at'
+        )
+        $actualNames = @($value.PSObject.Properties.Name)
+        $nameDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)
+        $operationFromName = $journal.BaseName -replace '^phase6-resize-operation-', ''
+        $digestValues = @(
+            $value.plan_sha256, $value.review_sha256, $value.prepare_sha256,
+            $value.state_lineage_sha256, $value.apply_receipt_sha256,
+            $value.recovery_receipt_sha256, $value.postflight_sha256, $value.progress_sha256
+        )
+        $timestampValues = @(
+            $value.created_at, $value.apply_started_at, $value.applied_at,
+            $value.recovered_at, $value.completed_at
+        )
+        $timestampsValid = $true
+        $previousTimestamp = [DateTimeOffset]::MinValue
+        foreach ($timestampValue in $timestampValues) {
+            $parsedTimestamp = [DateTimeOffset]::MinValue
+            if (
+                $timestampValue -isnot [string] -or
+                -not [DateTimeOffset]::TryParse(
+                    $timestampValue, [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsedTimestamp
+                ) -or $parsedTimestamp.Offset -ne [TimeSpan]::Zero -or
+                $parsedTimestamp -lt $previousTimestamp
+            ) {
+                $timestampsValid = $false
+                break
+            }
+            $previousTimestamp = $parsedTimestamp
+        }
+        if ($timestampsValid -and $null -ne $value.adopted_at) {
+            $adoptedTimestamp = [DateTimeOffset]::MinValue
+            $applyStartedTimestamp = [DateTimeOffset]::Parse($value.apply_started_at)
+            $appliedTimestamp = [DateTimeOffset]::Parse($value.applied_at)
+            if (
+                $value.adopted_at -isnot [string] -or
+                -not [DateTimeOffset]::TryParse(
+                    $value.adopted_at, [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::RoundtripKind, [ref]$adoptedTimestamp
+                ) -or $adoptedTimestamp.Offset -ne [TimeSpan]::Zero -or
+                $adoptedTimestamp -lt $applyStartedTimestamp -or $adoptedTimestamp -gt $appliedTimestamp
+            ) { $timestampsValid = $false }
+        }
+        if (
+            $nameDifference.Count -ne 0 -or
+            $value.schema_version -ne 1 -or $value.phase -ne 6 -or $value.state -ne 'COMPLETED' -or
+            $value.integrated_commit -notmatch '^[0-9a-f]{40}$' -or
+            $value.operation_id -notmatch '^[0-9a-f]{64}$' -or
+            $value.operation_id -ne $operationFromName -or
+            (($value.generation -isnot [long]) -and ($value.generation -isnot [int])) -or
+            $value.generation -lt 5 -or $value.node -notmatch '^0[1-3]$' -or
+            $value.direction -notin @('resize', 'rollback') -or
+            $digestValues.Where({ $_ -isnot [string] -or $_ -notmatch '^[0-9a-f]{64}$' }).Count -ne 0 -or
+            (($value.state_serial_before -isnot [long]) -and ($value.state_serial_before -isnot [int])) -or
+            $value.state_serial_before -lt 0 -or -not $timestampsValid
+        ) {
+            throw 'A durable Phase 6 operation is incomplete; generic Phase 2 state access is refused.'
+        }
+    }
+}
+
+function Assert-Phase6StateArguments {
+    if ($OperationId -notmatch '^[0-9a-f]{64}$' -or
+        $ExpectedStateLineageSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'Phase 6 state receipt operation or lineage digest is invalid.'
+    }
+}
+
+function Invoke-Phase6Terraform {
+    param(
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][string]$LogName,
+        [int[]]$AcceptedExitCodes = @(0)
+    )
+
+    Protect-Directory -Path $logRoot
+    $env:NO_COLOR = '1'
+    $logPath = Join-Path $logRoot $LogName
+    & terraform "-chdir=$terraformRoot" @Arguments *> $logPath
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -notin $AcceptedExitCodes) {
+        throw "Protected Terraform command failed with exit code $exitCode; raw diagnostic withheld."
+    }
+    $exitCode
+}
+
+function Initialize-Phase6Terraform {
+    param([Parameter(Mandatory)]$Paths)
+
+    $env:TF_PLUGIN_CACHE_DIR = Join-Path $repoRoot '.local\terraform-plugin-cache'
+    New-Item -ItemType Directory -Force -Path $env:TF_PLUGIN_CACHE_DIR | Out-Null
+    Invoke-Phase6Terraform -Arguments @(
+        'init', '-reconfigure', '-input=false', '-lockfile=readonly',
+        "-backend-config=path=$($Paths.StatePath)"
+    ) -LogName 'phase6-init.log' | Out-Null
+}
+
+function Invoke-Phase6ResizePlan {
+    param([Parameter(Mandatory)]$Paths)
+
+    Assert-Credentials
+    $receipt = Get-Phase6StateReceipt -Paths $Paths
+    if ($receipt.lineage_sha256 -ne $ExpectedStateLineageSha256 -or $receipt.serial -ne $ExpectedStateSerial) {
+        throw 'Terraform state lineage/serial differs from the reviewed planning boundary.'
+    }
+    Backup-State -Paths $Paths
+    $exitCode = Invoke-Phase6Terraform -Arguments @(
+        'plan', '-input=false', '-lock-timeout=60s', '-detailed-exitcode', "-out=$SavedPlan"
+    ) -LogName "phase6-plan-$OperationId.log" -AcceptedExitCodes @(2)
+    if ($exitCode -ne 2) { throw 'Phase 6 plan must contain exactly the reviewed non-empty change.' }
+    $planHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $SavedPlan).Hash.ToLowerInvariant()
+    [ordered]@{
+        schema_version = 1
+        status = 'PLAN_CREATED_REVIEW_REQUIRED'
+        operation_id = $OperationId
+        plan_sha256 = $planHash
+        state_lineage_sha256 = $receipt.lineage_sha256
+        state_serial = $receipt.serial
+        raw_values_recorded = $false
+    } | ConvertTo-Json -Compress
+}
+
+function Invoke-Phase6ResizeState {
+    param([Parameter(Mandatory)]$Paths)
+
+    $receipt = Get-Phase6StateReceipt -Paths $Paths
+    if ($receipt.lineage_sha256 -ne $ExpectedStateLineageSha256) {
+        throw 'Terraform state lineage differs from the reviewed operation.'
+    }
+    [ordered]@{
+        schema_version = 1
+        status = 'STATE_RECEIPT'
+        operation_id = $OperationId
+        state_lineage_sha256 = $receipt.lineage_sha256
+        state_serial = $receipt.serial
+        raw_values_recorded = $false
+    } | ConvertTo-Json -Compress
+}
+
+function Invoke-Phase6ResizeNoDrift {
+    param([Parameter(Mandatory)]$Paths)
+
+    $receipt = Get-Phase6StateReceipt -Paths $Paths
+    if ($receipt.lineage_sha256 -ne $ExpectedStateLineageSha256 -or $receipt.serial -ne $ExpectedStateSerial) {
+        throw 'Terraform state lineage/serial differs from the reviewed postflight boundary.'
+    }
+    Invoke-Phase6Terraform -Arguments @(
+        'plan', '-input=false', '-lock-timeout=60s', '-detailed-exitcode'
+    ) -LogName "phase6-no-drift-$OperationId.log" -AcceptedExitCodes @(0) | Out-Null
+    [ordered]@{
+        schema_version = 1
+        status = 'ZERO_DRIFT_VERIFIED'
+        operation_id = $OperationId
+        state_lineage_sha256 = $receipt.lineage_sha256
+        state_serial = $receipt.serial
+        terraform_zero_drift = $true
+        raw_values_recorded = $false
+    } | ConvertTo-Json -Compress
+}
+
+function Invoke-Phase6ResizeOutput {
+    param([Parameter(Mandatory)]$Paths)
+
+    $inventoryDestination = [IO.Path]::GetFullPath($InventoryOutput)
+    $knownHostsPath = [IO.Path]::GetFullPath($KnownHosts)
+    if (-not (Test-Path -LiteralPath $knownHostsPath -PathType Leaf)) { throw 'Verified known-hosts file is absent.' }
+    if (-not (Test-Path -LiteralPath $Paths.SshPrivateKey -PathType Leaf)) { throw 'Protected SSH private key is absent.' }
+    if ($IsWindows) {
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $acl = Get-Acl -LiteralPath $Paths.SshPrivateKey
+        if (-not $acl.Owner.Equals($identity, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'SSH private-key ownership differs from the protected operator identity.'
+        }
+        $unexpectedAllow = @($acl.Access | Where-Object {
+            $_.AccessControlType -eq 'Allow' -and
+            $_.IdentityReference.Value -notin @($identity, 'NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')
+        })
+        if ($acl.AreAccessRulesProtected -ne $true -or $unexpectedAllow.Count -ne 0) {
+            throw 'SSH private-key ACL is not owner-exclusive.'
+        }
+    } else {
+        $protection = (& stat -c '%u:%a' -- $Paths.SshPrivateKey 2>$null).Trim()
+        $statExit = $LASTEXITCODE
+        $currentUid = (& id -u 2>$null).Trim()
+        $idExit = $LASTEXITCODE
+        if ($statExit -ne 0 -or $idExit -ne 0 -or $protection -notin @("${currentUid}:600", "${currentUid}:400")) {
+            throw 'SSH private-key owner or mode is not exact 0600/0400.'
+        }
+    }
+    $receipt = Get-Phase6StateReceipt -Paths $Paths
+    if ($receipt.lineage_sha256 -ne $ExpectedStateLineageSha256 -or $receipt.serial -ne $ExpectedStateSerial) {
+        throw 'Terraform state lineage/serial differs from the reviewed inventory boundary.'
+    }
+    $generatorOutput = & python (Join-Path $repoRoot 'scripts\phase6\generate-resize-inventory.py') `
+        --repository $repoRoot --terraform-root $terraformRoot --output $inventoryDestination `
+        --private-key $Paths.SshPrivateKey --known-hosts $knownHostsPath 2>&1
+    if ($LASTEXITCODE -ne 0) { throw 'Strict post-replacement inventory generation failed; raw diagnostic withheld.' }
+    $publicKey = & ssh-keygen -y -f $Paths.SshPrivateKey 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $publicKey) { throw 'Unable to derive SSH public-key metadata.' }
+    $publicKeyFingerprint = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($publicKey -join "`n").Trim()))
+    ).ToLowerInvariant()
+    [ordered]@{
+        schema_version = 1
+        status = 'STRICT_INVENTORY_CREATED_REVIEW_REQUIRED'
+        operation_id = $OperationId
+        state_lineage_sha256 = $receipt.lineage_sha256
+        state_serial = $receipt.serial
+        inventory_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $inventoryDestination).Hash.ToLowerInvariant()
+        known_hosts_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $knownHostsPath).Hash.ToLowerInvariant()
+        private_key_public_sha256 = $publicKeyFingerprint
+        raw_values_recorded = $false
+    } | ConvertTo-Json -Compress
 }
 
 function Invoke-Inventory {
@@ -535,11 +1272,64 @@ function Write-LiveCostReport {
     Write-Host "[PASS] Live resource count and hourly cost reconcile within the documented tolerance."
 }
 
+$phase6ProtectedTarget = $Target -in @(
+    'phase6-resize-plan', 'phase6-resize-state',
+    'phase6-resize-no-drift', 'phase6-resize-output'
+)
+if ($phase6ProtectedTarget -and -not $IsWindows) {
+    throw 'Phase 6 protected targets require Windows DPAPI until Linux backup decrypt-and-compare verification is implemented.'
+}
 $paths = Get-ExternalPaths
-Write-Host "[phase 2] target=$Target cluster=$Cluster credentials=process-only cloud-mutation=$($Target -in @('apply', 'repair-node-02-apply', 'destroy'))"
+$phase6StateOpened = $false
+$genericStateBoundaryAdmitted = $false
+$mutationTarget = $Target -in @('apply', 'repair-node-02-apply', 'destroy')
+$stateBoundaryLease = $null
+Assert-Phase6StateBoundary -Paths $paths
+if ($mutationTarget -and -not $IsWindows) {
+    throw 'Phase 2 apply/destroy targets require Windows file-share and DPAPI protections.'
+}
+if (-not $phase6ProtectedTarget) {
+    Write-Host "[phase 2] target=$Target cluster=$Cluster credentials=process-only cloud-mutation=$($Target -in @('apply', 'repair-node-02-apply', 'destroy'))"
+}
 
 try {
+$stateBoundaryLease = Enter-Phase2MutationLease -Paths $paths
+if (-not $phase6ProtectedTarget) {
+    Assert-NoActivePhase6MutationJournal -Paths $paths
+    $genericStateBoundaryAdmitted = $true
+}
 switch ($Target) {
+    'phase6-resize-plan' {
+        throw 'Phase 6 saved-plan creation is disabled until its PREPARED capability route is integrated.'
+    }
+    'phase6-resize-state' {
+        Assert-Credentials
+        Assert-Phase6StateArguments
+        Initialize-LocalBoundary -Paths $paths 6>$null
+        Open-SealedState -Paths $paths 6>$null
+        $phase6StateOpened = $true
+        Initialize-Phase6Terraform -Paths $paths 6>$null
+        Invoke-Phase6ResizeState -Paths $paths 6>$null
+    }
+    'phase6-resize-no-drift' {
+        Assert-Credentials
+        Assert-Phase6StateArguments
+        if ($ExpectedStateSerial -lt 0) { throw 'Expected postflight Terraform state serial is invalid.' }
+        Initialize-LocalBoundary -Paths $paths 6>$null
+        Open-SealedState -Paths $paths 6>$null
+        $phase6StateOpened = $true
+        Initialize-Phase6Terraform -Paths $paths 6>$null
+        Invoke-Phase6ResizeNoDrift -Paths $paths 6>$null
+    }
+    'phase6-resize-output' {
+        Assert-Credentials
+        Assert-Phase6OutputArguments -Paths $paths
+        Initialize-LocalBoundary -Paths $paths 6>$null
+        Open-SealedState -Paths $paths 6>$null
+        $phase6StateOpened = $true
+        Initialize-Phase6Terraform -Paths $paths 6>$null
+        Invoke-Phase6ResizeOutput -Paths $paths 6>$null
+    }
     'init' {
         Assert-Credentials
         Initialize-LocalBoundary -Paths $paths
@@ -565,11 +1355,27 @@ switch ($Target) {
         if (-not (Test-Path -LiteralPath $paths.PlanPath -PathType Leaf)) {
             throw "No reviewed external saved plan exists; run make infra-plan CLUSTER=management first."
         }
-        Assert-Plan -Paths $paths -Mode 'auto' -SummaryPath $planSummary
-        Assert-CostEnvelope -SummaryPath $planSummary
-        Invoke-Terraform -Arguments @('apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $paths.PlanPath) `
-            -LogName 'apply.log' | Out-Null
-        Backup-State -Paths $paths
+        $stage = New-StagedReviewedPlan -Path $paths.PlanPath -Paths $paths
+        $originalPlanPath = $paths.PlanPath
+        try {
+            $paths.PlanPath = $stage.Path
+            Assert-Plan -Paths $paths -Mode 'auto' -SummaryPath $planSummary
+            Assert-CostEnvelope -SummaryPath $planSummary
+            if ((Get-OpenPlanSha256 -Stream $stage.Handle) -ne $stage.Sha256) {
+                throw 'Staged reviewed Terraform plan bytes changed while held open.'
+            }
+            $pathHandle = Open-VerifiedStagedPlanPath -Stage $stage
+            try {
+                Invoke-Terraform -Arguments @('apply', '-input=false', '-lock-timeout=60s', '-auto-approve', $stage.Path) `
+                    -LogName 'apply.log' | Out-Null
+            } finally {
+                $pathHandle.Dispose()
+            }
+            Backup-State -Paths $paths
+        } finally {
+            $paths.PlanPath = $originalPlanPath
+            Remove-StagedReviewedPlan -Stage $stage
+        }
     }
     'repair-node-02-plan' {
         Assert-DestructiveConfirmation
@@ -671,5 +1477,13 @@ switch ($Target) {
     }
 }
 } finally {
-    Close-SealedState -Paths $paths
+    try {
+        if ($phase6ProtectedTarget -and $phase6StateOpened) {
+            Close-SealedState -Paths $paths 6>$null
+        } elseif (-not $phase6ProtectedTarget -and $genericStateBoundaryAdmitted) {
+            Close-SealedState -Paths $paths
+        }
+    } finally {
+        if ($stateBoundaryLease) { Exit-Phase2MutationLease -Lease $stateBoundaryLease }
+    }
 }

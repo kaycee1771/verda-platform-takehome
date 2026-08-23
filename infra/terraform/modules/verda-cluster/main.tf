@@ -16,7 +16,7 @@ module "node" {
   name                 = "${var.cluster}-server-${each.key}"
   cluster              = var.cluster
   role                 = each.value.role
-  instance_type        = var.instance_type
+  instance_type        = each.value.instance_type
   provider_image_value = var.provider_image_value
   ssh_key_ids          = var.ssh_key_ids
   root_volume_size_gib = var.root_volume_size_gib
@@ -24,5 +24,5 @@ module "node" {
   data_volume_ids      = [module.data_volume[each.key].id]
   location             = var.location
   startup_script_id    = var.startup_script_id
-  resource_expiry_utc  = var.resource_expiry_utc
+  resource_expiry_utc  = each.value.resource_expiry_utc
 }

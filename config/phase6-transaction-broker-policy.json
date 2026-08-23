@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "phase": 6,
+  "status": "DORMANT_TRANSACTION_BROKER_SPEC",
+  "execution_enabled": false,
+  "production_adapter_present": false,
+  "public_execution_route_present": false,
+  "authorization_mode": "TRANSACTION",
+  "authorization_receipt_requires_synchronous_reverification": true,
+  "authorization_boundary": {
+    "verifier_path": "scripts/phase6/verify-github-authorization.py",
+    "candidate_history_scanner_required": true,
+    "direct_verifier_before_start_required": true,
+    "verifier_receipt_cache_allowed": false,
+    "authorization_hash_recheck_before_each_effect": true,
+    "broker_hash_recheck_before_each_effect": true,
+    "policy_hash_recheck_before_each_effect": true,
+    "rollback_policy_hash_recheck_before_each_effect": true
+  },
+  "lease_scope": "FULL_TRANSACTION_AND_ADOPTION",
+  "journal_schema_version": 2,
+  "journal_persistence": "ATOMIC_CAS_BEFORE_NEXT_EFFECT",
+  "operation_nonce_used_once": true,
+  "maximum_start_window_seconds": 3600,
+  "gate_freshness_seconds": {
+    "pre_prepare": 300,
+    "pre_apply_two_survivor": 60,
+    "pre_recovery_two_survivor": 120,
+    "postflight": 300,
+    "rollback_two_survivor": 60
+  },
+  "protected_state_boundary": {
+    "public_phase2_apply_allowed": false,
+    "child_transaction_required": true,
+    "state_sealed_before_and_after": true,
+    "plan_staged_and_semantically_verified_before_state_open": true,
+    "pre_and_post_backup_required": true,
+    "lineage_unchanged_and_serial_advanced": true,
+    "raw_provider_output_allowed": false
+  },
+  "apply_adoption_outcomes": [
+    "NOT_STARTED",
+    "COMPLETE",
+    "PARTIAL",
+    "UNKNOWN"
+  ],
+  "recovery_milestones": [
+    "NONE",
+    "INVENTORY_BOUND",
+    "HOST_TRUST_BOUND",
+    "JOINED_EXISTING_CLUSTER",
+    "ACCESS_HARDENED",
+    "DATA_PLANE_CONVERGED"
+  ],
+  "rollback_milestones": [
+    "NONE",
+    "ROLLBACK_ADMITTED",
+    "PROVIDER_REVERTED",
+    "ORIGINAL_NODE_RECOVERED",
+    "ZERO_DRIFT_VERIFIED"
+  ],
+  "terminal_states": [
+    "COMPLETED",
+    "ROLLED_BACK",
+    "FAILED_SAFE"
+  ],
+  "raw_values_recorded": false
+}

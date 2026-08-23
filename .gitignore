@@ -32,6 +32,7 @@ override.tf.json
 
 # Generated local discovery evidence
 .local/
+.worktrees/
 rendered/
 /generated/
 artifacts/
@@ -74,6 +75,8 @@ infra/ansible/inventories/generated/*
 .kube/
 admin.conf
 sealed-secret*.yaml
+!gitops/root/phase6/sealed-secrets.yaml
+!gitops/root/phase6/sealed-secrets-monitoring.yaml
 rendered-secret*.yaml
 
 # Evidence is curated; working captures stay local

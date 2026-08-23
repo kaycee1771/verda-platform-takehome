@@ -1,0 +1,9 @@
+---
+- name: Refuse dormant Phase 6 management-node preparation
+  hosts: all
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Stop before any Phase 6 cluster mutation
+      ansible.builtin.fail:
+        msg: Phase 6 cluster mutation is disabled until a trusted external authorization broker is integrated.

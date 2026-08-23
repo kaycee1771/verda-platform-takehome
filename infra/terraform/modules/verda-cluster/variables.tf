@@ -11,8 +11,10 @@ variable "cluster" {
 variable "nodes" {
   description = "Three-node topology keyed by two-digit ordinal."
   type = map(object({
-    role              = string
-    wireguard_address = optional(string)
+    role                = string
+    wireguard_address   = optional(string)
+    instance_type       = string
+    resource_expiry_utc = string
   }))
 
   validation {
@@ -24,11 +26,20 @@ variable "nodes" {
     condition     = alltrue([for ordinal in keys(var.nodes) : can(regex("^[0-9]{2}$", ordinal))])
     error_message = "Node keys must be two-digit ordinals."
   }
-}
 
-variable "instance_type" {
-  description = "Exact Verda instance type used by every node."
-  type        = string
+  validation {
+    condition = alltrue([
+      for node in values(var.nodes) : length(trimspace(node.instance_type)) > 0
+    ])
+    error_message = "Every node lifecycle entry must carry a non-empty instance type."
+  }
+
+  validation {
+    condition = alltrue([
+      for node in values(var.nodes) : can(formatdate("YYYY-MM-DD'T'hh:mm:ssZ", node.resource_expiry_utc))
+    ])
+    error_message = "Every node lifecycle entry must carry an RFC3339 expiry."
+  }
 }
 
 variable "provider_image_value" {
@@ -75,9 +86,4 @@ variable "preserve_data_volumes" {
     condition     = var.preserve_data_volumes
     error_message = "Phase 2 requires preserve_data_volumes=true."
   }
-}
-
-variable "resource_expiry_utc" {
-  description = "Operator-owned expiry included in instance descriptions."
-  type        = string
 }

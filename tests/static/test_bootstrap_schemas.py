@@ -6,12 +6,15 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import json
 import pathlib
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 from urllib.error import HTTPError
+
+import jsonschema
 
 
 SCRIPT = pathlib.Path(__file__).parents[2] / "scripts" / "quality" / "bootstrap_schemas.py"
@@ -47,6 +50,9 @@ class BootstrapSchemaTests(unittest.TestCase):
             "networkpolicy-networking-v1.json",
             "ingress-networking-v1.json",
             "storageclass-storage-v1.json",
+            "persistentvolumeclaim-v1.json",
+            "resourcequota-v1.json",
+            "limitrange-v1.json",
         }
         self.assertTrue(required.issubset(locked_core))
         for name in required:
@@ -88,6 +94,74 @@ class BootstrapSchemaTests(unittest.TestCase):
                 self.assertRegex(item["source_sha256"], r"^[0-9a-f]{64}$")
                 self.assertRegex(item["output_sha256"], r"^[0-9a-f]{64}$")
 
+    def test_phase_six_custom_resources_have_exact_locked_schemas(self) -> None:
+        lock = RUNTIME.yaml.safe_load(RUNTIME.LOCK.read_text(encoding="utf-8"))
+        materialized = {item["name"]: item for item in lock["crds"]["materialized"]}
+        required = {
+            "cilium-network-policy": (
+                "cilium.io",
+                "v2",
+                "CiliumNetworkPolicy",
+            ),
+            "kyverno-policyexception": ("kyverno.io", "v2", "PolicyException"),
+            "velero-backupstoragelocation": (
+                "velero.io",
+                "v1",
+                "BackupStorageLocation",
+            ),
+            "velero-volumesnapshotlocation": (
+                "velero.io",
+                "v1",
+                "VolumeSnapshotLocation",
+            ),
+            "velero-schedule": ("velero.io", "v1", "Schedule"),
+            "prometheus-operator-servicemonitor": (
+                "monitoring.coreos.com",
+                "v1",
+                "ServiceMonitor",
+            ),
+            "prometheus-operator-podmonitor": (
+                "monitoring.coreos.com",
+                "v1",
+                "PodMonitor",
+            ),
+            "prometheus-operator-prometheus": (
+                "monitoring.coreos.com",
+                "v1",
+                "Prometheus",
+            ),
+            "prometheus-operator-alertmanager": (
+                "monitoring.coreos.com",
+                "v1",
+                "Alertmanager",
+            ),
+        }
+        self.assertTrue(required.keys() <= materialized.keys())
+        for name, expected in required.items():
+            with self.subTest(schema=name):
+                item = materialized[name]
+                self.assertEqual(
+                    (item["group"], item["version"], item["kind"]), expected
+                )
+                self.assertRegex(item["source_sha256"], r"^[0-9a-f]{64}$")
+                self.assertRegex(item["output_sha256"], r"^[0-9a-f]{64}$")
+
+        cilium = materialized["cilium-network-policy"]
+        self.assertEqual(
+            cilium["source"],
+            "https://raw.githubusercontent.com/cilium/cilium/v1.19.6/"
+            "pkg/k8s/apis/cilium.io/client/crds/v2/"
+            "ciliumnetworkpolicies.yaml",
+        )
+        self.assertEqual(
+            cilium["source_sha256"],
+            "1b1738a904de1152c43078e6a873440aea100f30f10ce5ed4e8622524c13fa43",
+        )
+        self.assertEqual(
+            cilium["output_sha256"],
+            "917a0c28f44793cae8b147f2648104b261375e9a21883a504a9684f311fb8592",
+        )
+
     def test_cache_is_used_only_when_checksum_matches(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             candidate = pathlib.Path(directory) / "schema.json"
@@ -95,6 +169,32 @@ class BootstrapSchemaTests(unittest.TestCase):
             checksum = hashlib.sha256(b"expected").hexdigest()
             self.assertEqual(RUNTIME.cached_payload(candidate, checksum), b"expected")
             self.assertIsNone(RUNTIME.cached_payload(candidate, "0" * 64))
+
+    def test_cilium_network_policy_schema_accepts_exact_fqdn_shape_only(self) -> None:
+        schema_path = RUNTIME.CACHE / "ciliumnetworkpolicy-cilium-v2.json"
+        self.assertTrue(schema_path.is_file(), "locked Cilium schema is not materialized")
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        policy = {
+            "apiVersion": "cilium.io/v2",
+            "kind": "CiliumNetworkPolicy",
+            "metadata": {"name": "schema-contract", "namespace": "loki"},
+            "spec": {
+                "endpointSelector": {"matchLabels": {"component": "single-binary"}},
+                "egress": [
+                    {
+                        "toFQDNs": [{"matchName": "objects.fin-03.verda.storage"}],
+                        "toPorts": [
+                            {"ports": [{"port": "443", "protocol": "TCP"}]}
+                        ],
+                    }
+                ],
+            },
+        }
+        validator = jsonschema.Draft202012Validator(schema)
+        validator.validate(policy)
+        policy["spec"]["egress"][0]["toFQDNs"] = "not-an-array"
+        with self.assertRaises(jsonschema.ValidationError):
+            validator.validate(policy)
 
     def test_http_429_honors_retry_after_then_verifies_checksum(self) -> None:
         payload = b"locked-schema"

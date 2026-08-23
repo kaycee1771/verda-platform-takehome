@@ -38,3 +38,14 @@ output "preserve_data_volumes" {
   value       = var.preserve_data_volumes
   sensitive   = false
 }
+
+output "node_lifecycle" {
+  description = "Identity-free desired shape and expiry map used for serial maintenance review."
+  value = {
+    for ordinal, node in var.nodes : ordinal => {
+      instance_type       = node.instance_type
+      resource_expiry_utc = node.resource_expiry_utc
+    }
+  }
+  sensitive = false
+}

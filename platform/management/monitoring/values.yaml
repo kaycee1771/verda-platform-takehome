@@ -1,0 +1,447 @@
+---
+# kube-prometheus-stack 88.3.0 / Prometheus Operator v0.93.0.
+# Image digests are deliberately kept in image-lock.yaml and must all be
+# resolved before this subtree is admitted into the Argo root.
+crds:
+  enabled: true
+
+commonLabels:
+  platform.verda-demo.io/monitor: "true"
+
+defaultRules:
+  create: true
+  rules:
+    alertmanager: true
+    configReloaders: true
+    etcd: false
+    kubeApiserverAvailability: true
+    kubeApiserverBurnrate: true
+    kubeApiserverHistogram: true
+    kubeApiserverSlos: true
+    kubeControllerManager: false
+    kubeProxy: false
+    kubePrometheusGeneral: true
+    kubePrometheusNodeRecording: true
+    kubernetesApps: true
+    kubernetesResources: true
+    kubernetesStorage: true
+    kubernetesSystem: true
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeStateMetrics: true
+    network: true
+    node: true
+    nodeExporterAlerting: true
+    nodeExporterRecording: true
+    prometheus: true
+    prometheusOperator: true
+
+kubeApiServer:
+  enabled: true
+kubelet:
+  enabled: true
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
+coreDns:
+  enabled: true
+
+alertmanager:
+  enabled: true
+  ingress:
+    enabled: false
+  ingressPerReplica:
+    enabled: false
+  route:
+    main:
+      enabled: false
+  routePerReplica:
+    main:
+      enabled: false
+  service:
+    type: ClusterIP
+  servicePerReplica:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+  alertmanagerSpec:
+    replicas: 1
+    retention: 72h
+    image:
+      registry: quay.io
+      repository: prometheus/alertmanager
+      tag: v0.33.1
+      sha: 9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn-critical
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 2Gi
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+    podAntiAffinity: soft
+    podAntiAffinityTopologyKey: kubernetes.io/hostname
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: alertmanager
+
+grafana:
+  enabled: true
+  replicas: 1
+  image:
+    registry: docker.io
+    repository: grafana/grafana
+    tag: 13.1.3
+    sha: ab5cb380e3ff3172d6c8bd2e7cfd31cce977d2881b260e1f5bc089bf0b759b43
+  rbac:
+    create: false
+    namespaced: true
+    namespaces:
+      - monitoring
+  extraObjects:
+    - apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: monitoring-grafana-sidecars
+        namespace: monitoring
+      rules:
+        - apiGroups:
+            - ""
+          resources:
+            - configmaps
+          verbs:
+            - get
+            - list
+            - watch
+    - apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: monitoring-grafana-sidecars
+        namespace: monitoring
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: monitoring-grafana-sidecars
+      subjects:
+        - kind: ServiceAccount
+          name: monitoring-grafana
+          namespace: monitoring
+  defaultDashboardsEnabled: true
+  defaultDashboardsEditable: false
+  defaultDashboardsTimezone: utc
+  testFramework:
+    enabled: false
+  ingress:
+    enabled: false
+  service:
+    type: ClusterIP
+  serviceMonitor:
+    enabled: true
+  persistence:
+    enabled: false
+  initChownData:
+    enabled: false
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    privileged: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  extraEmptyDirMounts:
+    - name: grafana-tmp
+      mountPath: /tmp
+  imageRenderer:
+    enabled: false
+  autoscaling:
+    enabled: false
+  admin:
+    existingSecret: grafana-admin-credentials
+    userKey: admin-user
+    passwordKey: admin-password
+  assertNoLeakedSecrets: true
+  deploymentStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  podDisruptionBudget:
+    minAvailable: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  sidecar:
+    image:
+      registry: quay.io
+      repository: kiwigrid/k8s-sidecar
+      tag: 2.10.1
+      sha: 7eac5c4fed714a18d038fc9fea57d8744d113367935dac0ea4eb6a87cef704a3
+    resources:
+      requests:
+        cpu: 20m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+    dashboards:
+      enabled: true
+      resource: configmap
+      searchNamespace: monitoring
+      provider:
+        allowUiUpdates: false
+    datasources:
+      enabled: true
+      resource: configmap
+      defaultDatasourceEnabled: true
+      isDefaultDatasource: true
+      name: Prometheus
+      uid: prometheus
+      httpMethod: POST
+      searchNamespace: monitoring
+      alertmanager:
+        enabled: true
+        name: Alertmanager
+        uid: alertmanager
+        handleGrafanaManagedAlerts: false
+        implementation: prometheus
+  grafana.ini:
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
+    auth.anonymous:
+      enabled: false
+    security:
+      disable_gravatar: true
+      cookie_secure: true
+      cookie_samesite: strict
+    users:
+      allow_sign_up: false
+
+kube-state-metrics:
+  replicas: 1
+  image:
+    registry: registry.k8s.io
+    repository: kube-state-metrics/kube-state-metrics
+    tag: v2.19.1
+    sha: sha256:85108987d044b18a098126732f98602df408888c0f7d456241f5abefb9744bc1
+  updateStrategy: Recreate
+  autosharding:
+    enabled: false
+  kubeRBACProxy:
+    enabled: false
+  collectorsExclude:
+    - secrets
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 30m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+nodeExporter:
+  enabled: true
+  operatingSystems:
+    linux:
+      enabled: true
+    aix:
+      enabled: false
+    darwin:
+      enabled: false
+prometheus-node-exporter:
+  image:
+    registry: quay.io
+    repository: prometheus/node-exporter
+    tag: v1.12.1
+    distroless: true
+    digest: sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106
+  hostNetwork: false
+  hostPID: false
+  kubeRBACProxy:
+    enabled: false
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+prometheusOperator:
+  enabled: true
+  image:
+    registry: quay.io
+    repository: prometheus-operator/prometheus-operator
+    tag: v0.93.0
+    sha: a001ed10a3823bbf2410ea347796d0e35ff8decd24fb98acbe7ab9e98d431c39
+  thanosImage:
+    registry: quay.io
+    repository: thanos/thanos
+    tag: v0.42.4
+    sha: b567818fe608067eb0f1d7c2c4fe361e7ad83c8a256234c97685f1d0bf670cc8
+  strategy:
+    type: Recreate
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  prometheusConfigReloader:
+    image:
+      registry: quay.io
+      repository: prometheus-operator/prometheus-config-reloader
+      tag: v0.93.0
+      sha: 0ccb22ca9f3f6fd9f76ce95585d18bd2e363d421c534dde710be4bd13caa551d
+    enableProbe: true
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+  admissionWebhooks:
+    enabled: true
+    patch:
+      enabled: false
+    certManager:
+      enabled: true
+      rootCert:
+        duration: 43800h
+        revisionHistoryLimit: 1
+      admissionCert:
+        duration: 8760h
+        revisionHistoryLimit: 1
+  service:
+    type: ClusterIP
+  serviceMonitor:
+    selfMonitor: true
+  verticalPodAutoscaler:
+    enabled: false
+
+prometheus:
+  enabled: true
+  ingress:
+    enabled: false
+  ingressPerReplica:
+    enabled: false
+  route:
+    main:
+      enabled: false
+  routePerReplica:
+    main:
+      enabled: false
+  service:
+    type: ClusterIP
+  servicePerReplica:
+    enabled: false
+  thanosService:
+    enabled: false
+  thanosServiceExternal:
+    enabled: false
+  prometheusSpec:
+    replicas: 1
+    shards: 1
+    image:
+      registry: quay.io
+      repository: prometheus/prometheus
+      tag: v3.13.2-distroless
+      sha: 64f71bb84e03c855948418b0fc5dea53e9543d8e3fc9931598f583805507f05e
+    retention: 3d
+    retentionSize: 6GB
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    walCompression: true
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn-critical
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 10Gi
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+    podAntiAffinity: soft
+    podAntiAffinityTopologyKey: kubernetes.io/hostname
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: prometheus
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector:
+      matchLabels:
+        platform.verda-demo.io/monitor: "true"
+    serviceMonitorNamespaceSelector: {}
+    ignoreNamespaceSelectors: true
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelector:
+      matchLabels:
+        platform.verda-demo.io/monitor: "true"
+    podMonitorNamespaceSelector: {}
+    ruleSelectorNilUsesHelmValues: false
+    ruleSelector: {}
+    ruleNamespaceSelector: {}
+    probeSelectorNilUsesHelmValues: false
+    probeSelector: {}
+    probeNamespaceSelector: {}
+
+thanosRuler:
+  enabled: false
+windowsMonitoring:
+  enabled: false

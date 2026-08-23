@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://verda.example/schemas/phase6-transaction-broker-policy.schema.json",
+  "title": "Dormant Phase 6 inseparable transaction broker policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "phase", "status", "execution_enabled", "production_adapter_present",
+    "public_execution_route_present", "authorization_mode",
+    "authorization_receipt_requires_synchronous_reverification", "authorization_boundary", "lease_scope",
+    "journal_schema_version", "journal_persistence", "operation_nonce_used_once",
+    "maximum_start_window_seconds", "gate_freshness_seconds", "protected_state_boundary",
+    "apply_adoption_outcomes", "recovery_milestones", "rollback_milestones",
+    "terminal_states", "raw_values_recorded"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "phase": {"const": 6},
+    "status": {"const": "DORMANT_TRANSACTION_BROKER_SPEC"},
+    "execution_enabled": {"const": false},
+    "production_adapter_present": {"const": false},
+    "public_execution_route_present": {"const": false},
+    "authorization_mode": {"const": "TRANSACTION"},
+    "authorization_receipt_requires_synchronous_reverification": {"const": true},
+    "authorization_boundary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["verifier_path", "candidate_history_scanner_required", "direct_verifier_before_start_required", "verifier_receipt_cache_allowed", "authorization_hash_recheck_before_each_effect", "broker_hash_recheck_before_each_effect", "policy_hash_recheck_before_each_effect", "rollback_policy_hash_recheck_before_each_effect"],
+      "properties": {
+        "verifier_path": {"const": "scripts/phase6/verify-github-authorization.py"},
+        "candidate_history_scanner_required": {"const": true},
+        "direct_verifier_before_start_required": {"const": true},
+        "verifier_receipt_cache_allowed": {"const": false},
+        "authorization_hash_recheck_before_each_effect": {"const": true},
+        "broker_hash_recheck_before_each_effect": {"const": true},
+        "policy_hash_recheck_before_each_effect": {"const": true},
+        "rollback_policy_hash_recheck_before_each_effect": {"const": true}
+      }
+    },
+    "lease_scope": {"const": "FULL_TRANSACTION_AND_ADOPTION"},
+    "journal_schema_version": {"const": 2},
+    "journal_persistence": {"const": "ATOMIC_CAS_BEFORE_NEXT_EFFECT"},
+    "operation_nonce_used_once": {"const": true},
+    "maximum_start_window_seconds": {"const": 3600},
+    "gate_freshness_seconds": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pre_prepare", "pre_apply_two_survivor", "pre_recovery_two_survivor", "postflight", "rollback_two_survivor"],
+      "properties": {
+        "pre_prepare": {"type": "integer", "minimum": 1, "maximum": 300},
+        "pre_apply_two_survivor": {"type": "integer", "minimum": 1, "maximum": 60},
+        "pre_recovery_two_survivor": {"type": "integer", "minimum": 1, "maximum": 120},
+        "postflight": {"type": "integer", "minimum": 1, "maximum": 300},
+        "rollback_two_survivor": {"type": "integer", "minimum": 1, "maximum": 60}
+      }
+    },
+    "protected_state_boundary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["public_phase2_apply_allowed", "child_transaction_required", "state_sealed_before_and_after", "plan_staged_and_semantically_verified_before_state_open", "pre_and_post_backup_required", "lineage_unchanged_and_serial_advanced", "raw_provider_output_allowed"],
+      "properties": {
+        "public_phase2_apply_allowed": {"const": false},
+        "child_transaction_required": {"const": true},
+        "state_sealed_before_and_after": {"const": true},
+        "plan_staged_and_semantically_verified_before_state_open": {"const": true},
+        "pre_and_post_backup_required": {"const": true},
+        "lineage_unchanged_and_serial_advanced": {"const": true},
+        "raw_provider_output_allowed": {"const": false}
+      }
+    },
+    "apply_adoption_outcomes": {"const": ["NOT_STARTED", "COMPLETE", "PARTIAL", "UNKNOWN"]},
+    "recovery_milestones": {"const": ["NONE", "INVENTORY_BOUND", "HOST_TRUST_BOUND", "JOINED_EXISTING_CLUSTER", "ACCESS_HARDENED", "DATA_PLANE_CONVERGED"]},
+    "rollback_milestones": {"const": ["NONE", "ROLLBACK_ADMITTED", "PROVIDER_REVERTED", "ORIGINAL_NODE_RECOVERED", "ZERO_DRIFT_VERIFIED"]},
+    "terminal_states": {"const": ["COMPLETED", "ROLLED_BACK", "FAILED_SAFE"]},
+    "raw_values_recorded": {"const": false}
+  }
+}

@@ -1,0 +1,16 @@
+{{- if .Values.rancher.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rancher
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+    verda.platform/owner: verda-rancher-wrapper
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: rancher
+{{- end }}

@@ -29,6 +29,12 @@ kubernetes:
     - name: validatingwebhookconfiguration-admissionregistration-v1.json
       sha256: cc85149054a94bfee52315f4abbe4846023ae878b25a2cb79aa9b80dc2383479
     - {name: priorityclass-scheduling-v1.json, sha256: e9e6a95c984a39cfed9e5b2d7d55fb0f6f5511dffe508afc27db77238bce8f7f}
+    - name: persistentvolumeclaim-v1.json
+      sha256: 6136871ac0337f11a48da5231a2807407c7386967e3432f344141b902f6a538c
+    - name: resourcequota-v1.json
+      sha256: 9546ed313e622ea84a0ab1ec7ef7e683f05acfbfe97beb746f0b5be6407691df
+    - name: limitrange-v1.json
+      sha256: de9bfabf9ea0bff36b71e5e686d3ecce5246b098061f39a70549f82f8f03acd7
 
 crds:
   materialized:
@@ -89,6 +95,15 @@ crds:
       source_sha256: dedea55e3880be180ba67e79183163fe7b97144e53054f812645fd6aae285cb1
       output: clusterpolicy-kyverno-v1.json
       output_sha256: be0c330180086c7b3c3a222ab3e161fe2c9b415714637edfa258bfc957ea18ca
+    - name: kyverno-policyexception
+      group: kyverno.io
+      version: v2
+      kind: PolicyException
+      source: >-
+        https://raw.githubusercontent.com/kyverno/kyverno/v1.18.2/config/crds/kyverno/kyverno.io_policyexceptions.yaml
+      source_sha256: 83d0478d61e88890c0dbf1e8360f5e5b7bb7d5708d0cc2d52c7dab8cfc833dbc
+      output: policyexception-kyverno-v2.json
+      output_sha256: e2350ad2d1658b85af9f8a634cb040dd76de228d4b66dcca84ddb1f557fc6bd3
     - name: kueue-workload
       group: kueue.x-k8s.io
       version: v1beta2
@@ -137,6 +152,33 @@ crds:
       source_sha256: 38107fa5fad6bff25794489d12c8a898eed4d9d89ed49d00ea90369bc4e206b1
       output: backup-velero-v1.json
       output_sha256: 1e4e9942981f221a35d1150aa7688430d0fda6207c034014495130851da647c4
+    - name: velero-backupstoragelocation
+      group: velero.io
+      version: v1
+      kind: BackupStorageLocation
+      source: >-
+        https://raw.githubusercontent.com/velero-io/velero/v1.18.1/config/crd/v1/bases/velero.io_backupstoragelocations.yaml
+      source_sha256: bd6e8fb1169d6e9299f49090f86cb9aa263a9e67314013ba231e93ba74485eba
+      output: backupstoragelocation-velero-v1.json
+      output_sha256: 240a87e63ae1ea6768c96676792929229f6fc317a420e303d3d3524ae3691d85
+    - name: velero-volumesnapshotlocation
+      group: velero.io
+      version: v1
+      kind: VolumeSnapshotLocation
+      source: >-
+        https://raw.githubusercontent.com/velero-io/velero/v1.18.1/config/crd/v1/bases/velero.io_volumesnapshotlocations.yaml
+      source_sha256: ec1b87c3f1b83053e97e01edf3aa059dff2bcb73c9d8a89bc08a5e8644777849
+      output: volumesnapshotlocation-velero-v1.json
+      output_sha256: 208523b48abe0b57a5a1b3dab7f706fda47bba8a66027f66bde73030c13ee3f3
+    - name: velero-schedule
+      group: velero.io
+      version: v1
+      kind: Schedule
+      source: >-
+        https://raw.githubusercontent.com/velero-io/velero/v1.18.1/config/crd/v1/bases/velero.io_schedules.yaml
+      source_sha256: d2276c19d93b63ed848fb492a0f34a2ac1e162938bed499a824acf356b5860c9
+      output: schedule-velero-v1.json
+      output_sha256: 4bfd4e0a270edde1cf9a173804bcdea9f44e393c5d7e4e59b5c861b8acc90584
     - name: prometheus-operator-prometheusrule
       group: monitoring.coreos.com
       version: v1
@@ -146,6 +188,42 @@ crds:
       source_sha256: 78be98554b9c8506ab2b4f4feb91c5f3a56e536a0a510f3a8e876a459970d56d
       output: prometheusrule-monitoring-v1.json
       output_sha256: 3714828e611fba744fda6c0bc405546a1e712239886af4ee8d7a02d97bbd33a9
+    - name: prometheus-operator-servicemonitor
+      group: monitoring.coreos.com
+      version: v1
+      kind: ServiceMonitor
+      source: >-
+        https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.93.0/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
+      source_sha256: a99047972c9dd7679ce2050b9968e8a08773492e671b3e17abd476d42aa78a32
+      output: servicemonitor-monitoring-v1.json
+      output_sha256: 897341953e8576bd8ca9459a24450d0e97bef401cae8f44f61bd735d6393ba58
+    - name: prometheus-operator-podmonitor
+      group: monitoring.coreos.com
+      version: v1
+      kind: PodMonitor
+      source: >-
+        https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.93.0/example/prometheus-operator-crd/monitoring.coreos.com_podmonitors.yaml
+      source_sha256: 45a93443daa687d3654f7e9631909ff7edcdf3ec09c5e60251b74aa2722aee5d
+      output: podmonitor-monitoring-v1.json
+      output_sha256: 23f51912e0d4bbc9bbeb51f53c8b7870ddce5bde77b9ac6bac6cad43fc80dc5a
+    - name: prometheus-operator-prometheus
+      group: monitoring.coreos.com
+      version: v1
+      kind: Prometheus
+      source: >-
+        https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.93.0/example/prometheus-operator-crd/monitoring.coreos.com_prometheuses.yaml
+      source_sha256: c0eed4b2c38a58e3a5be7e2f5846df067804c694b0c9316b35029ab68fa183a4
+      output: prometheus-monitoring-v1.json
+      output_sha256: eb8b5cfe81625e543cbca599c1461d5c25fed4f47da29083a1225f4fd5d9c7cb
+    - name: prometheus-operator-alertmanager
+      group: monitoring.coreos.com
+      version: v1
+      kind: Alertmanager
+      source: >-
+        https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.93.0/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagers.yaml
+      source_sha256: 0e8eccd22699818c93f619c8fe2d92dbbd783a7e9232827a886dedeac1fb5dc1
+      output: alertmanager-monitoring-v1.json
+      output_sha256: 6f8fe35dfe6e3c93f125909536c75dcba6c5b8b8386e1538b8de8299fe897743
     - name: sealed-secrets-sealedsecret
       group: bitnami.com
       version: v1alpha1
@@ -155,6 +233,15 @@ crds:
       source_sha256: fb33ba448b89c2c3252480664078b7f4bdf0949426e5280d07ca049c0dbdbfb7
       output: sealedsecret-bitnami-v1alpha1.json
       output_sha256: 294e9dad7fa0fbccfd161e52b4ba5f5fe0c15fc496162738d39db89a6bcb2b09
+    - name: cilium-network-policy
+      group: cilium.io
+      version: v2
+      kind: CiliumNetworkPolicy
+      source: >-
+        https://raw.githubusercontent.com/cilium/cilium/v1.19.6/pkg/k8s/apis/cilium.io/client/crds/v2/ciliumnetworkpolicies.yaml
+      source_sha256: 1b1738a904de1152c43078e6a873440aea100f30f10ce5ed4e8622524c13fa43
+      output: ciliumnetworkpolicy-cilium-v2.json
+      output_sha256: 917a0c28f44793cae8b147f2648104b261375e9a21883a504a9684f311fb8592
   policy: >-
     Reject a custom-resource manifest unless a matching local schema exists;
     every new kind/version requires a pinned source, checksum, and validation fixture.

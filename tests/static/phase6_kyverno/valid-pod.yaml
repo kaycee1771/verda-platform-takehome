@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: valid-pod
+  namespace: demo-dev
+  labels:
+    app.kubernetes.io/name: valid-pod
+    app.kubernetes.io/component: fixture
+    platform.verda-demo.io/owner: platform-operations
+spec:
+  containers:
+    - name: app
+      image: >-
+        registry.invalid/platform-demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi

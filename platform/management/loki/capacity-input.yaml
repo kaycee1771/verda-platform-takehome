@@ -1,0 +1,35 @@
+---
+schema_version: 1
+activation_status: blocked
+workloads:
+  loki-single-binary:
+    kind: StatefulSet
+    replicas: 1
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    persistent_volume:
+      storage_class: longhorn-critical
+      logical_size: 5Gi
+      replica_count: 3
+      raw_size: 15Gi
+      purpose: wal-compactor-working-state
+  loki-gateway:
+    kind: Deployment
+    replicas: 1
+    rollout_max_surge: 1
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+steady_state:
+  cpu: 275m
+  memory: 544Mi
+rollout_peak:
+  cpu: 300m
+  memory: 576Mi

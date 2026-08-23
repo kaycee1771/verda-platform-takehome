@@ -73,14 +73,13 @@ output "infrastructure_summary" {
     node_count                = length(module.management.node_names)
     data_volume_count         = length(module.management.data_volume_names)
     location                  = var.location
-    instance_type             = var.instance_type
+    node_lifecycle            = module.management.node_lifecycle
     os_image_id               = var.os_image_id
     provider_image_value      = var.provider_image_value
     root_volume_size_gib      = var.root_volume_size_gib
     data_volume_size_gib      = var.data_volume_size_gib
     preserve_data_volumes     = module.management.preserve_data_volumes
     startup_configuration     = "ssh-key-injection-only"
-    resource_expiry_utc       = var.resource_expiry_utc
     provider_private_ip_field = "not-exposed-in-provider-1.1.2"
   }
   sensitive = false

@@ -1,0 +1,3 @@
+{{- if .Values.rancher.enabled -}}
+{{- $admission := include "verdaRancher.assertAdmission" . -}}
+{{- end -}}

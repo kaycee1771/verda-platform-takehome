@@ -20,6 +20,7 @@ allowed_top_level_directories:
 ignored_local_directories:
   - .git
   - .local
+  - .worktrees
   - tmp
 required_directories:
   - .github/workflows
@@ -53,6 +54,7 @@ required_directories:
   - bootstrap/argocd
   - bootstrap/cluster-registration
   - gitops/root
+  - gitops/root/phase6
   - gitops/appprojects
   - gitops/applicationsets
   - gitops/clusters/management
@@ -66,6 +68,12 @@ required_directories:
   - platform/management/harbor
   - platform/management/longhorn
   - platform/management/monitoring
+  - platform/management/monitoring/targets
+  - platform/management/monitoring/targets/argocd
+  - platform/management/monitoring/targets/harbor
+  - platform/management/monitoring/targets/longhorn
+  - platform/management/monitoring/targets/rancher
+  - platform/management/monitoring/targets/traefik
   - platform/management/loki
   - platform/management/sealed-secrets
   - platform/management/kyverno
@@ -84,6 +92,8 @@ required_directories:
   - platform/shared/quotas
   - platform/shared/rbac
   - applications/platform-demo/cmd/server
+  - applications/stage-a-smoke
+  - applications/stage-a-smoke/chart
   - applications/platform-demo/internal
   - applications/platform-demo/tests
   - applications/platform-demo/deploy/chart
@@ -130,6 +140,7 @@ required_directories:
   - tests/kueue
   - tests/fixtures
   - scripts/cluster
+  - scripts/phase6
   - evidence/manifests
   - evidence/cluster
   - evidence/gitops
@@ -172,6 +183,9 @@ required_files:
   - .github/workflows/release-evidence.yml
   - config/phase-map.json
   - config/firewall-port-matrix.yaml
+  - config/phase6-capacity-admission.yaml
+  - config/phase6-capacity-baseline.identity-free.yaml
+  - config/phase6-root-admission.yaml
   - .github/pull_request_template.md
   - .github/ISSUE_TEMPLATE/bug.yml
   - .github/ISSUE_TEMPLATE/config.yml
@@ -217,6 +231,10 @@ required_files:
   - docs/runbooks/certificate-expiry.md
   - docs/runbooks/backup-failure.md
   - docs/runbooks/restore.md
+  - docs/runbooks/sealed-secrets-recovery.md
+  - docs/runbooks/kyverno-audit-first.md
+  - docs/reports/phase6-capacity-resize-plan.md
+  - docs/reports/phase6-capacity-projection.md
   - docs/runbooks/credential-rotation.md
   - docs/runbooks/teardown.md
   - docs/reports/restore-report-template.md
@@ -329,6 +347,30 @@ required_files:
   - gitops/README.md
   - gitops/appprojects/platform.yaml
   - gitops/appprojects/kustomization.yaml
+  - gitops/appprojects/foundation.yaml
+  - gitops/appprojects/security.yaml
+  - gitops/appprojects/management.yaml
+  - gitops/appprojects/registry.yaml
+  - gitops/appprojects/observability.yaml
+  - gitops/appprojects/backup.yaml
+  - gitops/appprojects/monitoring-targets.yaml
+  - gitops/root/phase6/argocd-monitoring.yaml
+  - gitops/root/phase6/harbor-monitoring.yaml
+  - gitops/root/phase6/longhorn-monitoring.yaml
+  - gitops/root/phase6/rancher-monitoring.yaml
+  - gitops/root/phase6/sealed-secrets.yaml
+  - gitops/root/phase6/sealed-secrets-monitoring.yaml
+  - gitops/root/phase6/traefik-monitoring.yaml
+  - platform/management/monitoring/targets/argocd/kustomization.yaml
+  - platform/management/monitoring/targets/argocd/monitoring.yaml
+  - platform/management/monitoring/targets/harbor/kustomization.yaml
+  - platform/management/monitoring/targets/harbor/monitoring.yaml
+  - platform/management/monitoring/targets/longhorn/kustomization.yaml
+  - platform/management/monitoring/targets/longhorn/monitoring.yaml
+  - platform/management/monitoring/targets/rancher/kustomization.yaml
+  - platform/management/monitoring/targets/rancher/monitoring.yaml
+  - platform/management/monitoring/targets/traefik/kustomization.yaml
+  - platform/management/monitoring/targets/traefik/monitoring.yaml
   - gitops/root/kustomization.yaml
   - gitops/root/platform-project.yaml
   - gitops/root/cert-manager-controller.yaml
@@ -339,6 +381,14 @@ required_files:
   - gitops/appprojects/dev.yaml
   - gitops/appprojects/staging.yaml
   - gitops/appprojects/prod.yaml
+  - tests/static/test_phase6_appprojects.py
+  - tests/static/test_phase6_environment_foundations.py
+  - platform/management/namespaces/kustomization.yaml
+  - platform/management/namespaces/namespaces.yaml
+  - platform/management/namespaces/priorityclasses.yaml
+  - environments/dev/namespace/kustomization.yaml
+  - environments/staging/namespace/kustomization.yaml
+  - environments/prod/namespace/kustomization.yaml
   - gitops/applicationsets/cluster-addons.yaml
   - gitops/applicationsets/platform-services.yaml
   - gitops/applicationsets/environments.yaml
@@ -405,6 +455,10 @@ required_files:
   - scripts/phase5/longhorn-storage-test.sh
   - scripts/phase5/verify-argocd-ingress.py
   - scripts/phase5/verify-runtime.sh
+  - scripts/phase6/capacity-admission.py
+  - scripts/phase6/render-capacity-inputs.py
+  - scripts/phase6/check-root-admission.py
+  - scripts/phase6/verify-stage-a.sh
   - scripts/verify.sh
   - scripts/verify-cluster.sh
   - scripts/cluster/phase4.ps1
@@ -478,5 +532,18 @@ required_files:
   - tests/static/test_phase5_longhorn_storage_test.py
   - tests/static/test_phase5_runtime_verifier_contract.py
   - tests/static/test_phase5_evidence_safety.py
+  - tests/static/test_phase6_capacity_admission.py
+  - tests/static/test_phase6_cilium_schema_contract.py
+  - tests/static/test_phase6_gitops_root.py
+  - tests/static/test_phase6_root_admission.py
+  - tests/static/test_phase6_harbor_contract.py
+  - tests/static/test_phase6_logging_contract.py
+  - tests/static/test_phase6_monitoring_contract.py
+  - tests/static/test_phase6_target_monitors.py
+  - tests/static/test_phase6_rancher_contract.py
+  - tests/static/test_phase6_sealed_kyverno_contract.py
+  - tests/static/test_phase6_stage_a_runtime_verifier.py
+  - tests/static/test_phase6_stage_a_smoke_contract.py
+  - tests/static/test_phase6_velero_contract.py
   - tooling/README.md
   - tooling/quality/Dockerfile

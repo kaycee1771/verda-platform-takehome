@@ -1,0 +1,63 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-components
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: verda-platform
+    platform.verda-demo.io/monitor: "true"
+    platform.verda-demo.io/owner: observability
+spec:
+  jobLabel: app.kubernetes.io/component
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: argocd
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - application-controller
+          - applicationset-controller
+          - repo-server
+          - server
+  namespaceSelector:
+    matchNames: [argocd]
+  endpoints:
+    - port: http-metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: argocd-prometheus-ingress
+  namespace: argocd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: argocd
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - argocd-application-controller
+          - argocd-applicationset-controller
+          - argocd-repo-server
+          - argocd-server
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: monitoring}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports:
+        - {protocol: TCP, port: 8080}
+        - {protocol: TCP, port: 8082}
+        - {protocol: TCP, port: 8083}
+        - {protocol: TCP, port: 8084}

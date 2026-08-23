@@ -1,0 +1,342 @@
+---
+# Loki chart 7.3.0 / Loki 3.6.12. This values file is not activation-ready:
+# activation-contract.yaml must be satisfied before an Argo Application owns it.
+kubeVersionOverride: v1.35.7
+
+global:
+  priorityClassName: platform-important
+  clusterDomain: cluster.local
+
+deploymentMode: SingleBinary
+
+enterprise:
+  enabled: false
+
+loki:
+  auth_enabled: false
+  enableServiceLinks: false
+  image:
+    registry: docker.io
+    repository: grafana/loki
+    tag: 3.6.12
+    digest: sha256:2483b71b28b15dee230f85512cae2b20c4b5f6e98a6eabe686cbccfa5ea3ba4a
+    pullPolicy: IfNotPresent
+  podSecurityContext:
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
+    runAsGroup: 10001
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http-metrics
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /ready
+      port: http-metrics
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 2
+    failureThreshold: 5
+  startupProbe:
+    httpGet:
+      path: /ready
+      port: http-metrics
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 30
+  analytics:
+    reporting_enabled: false
+  commonConfig:
+    path_prefix: /var/loki
+    replication_factor: 1
+    compactor_address: http://loki:3100
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  limits_config:
+    allow_structured_metadata: true
+    ingestion_rate_mb: 4
+    ingestion_burst_size_mb: 8
+    max_global_streams_per_user: 5000
+    max_query_parallelism: 8
+    max_query_series: 500
+    query_timeout: 120s
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+    retention_period: 72h
+    split_queries_by_interval: 30m
+    volume_enabled: true
+  compactor:
+    compaction_interval: 10m
+    retention_enabled: true
+    retention_delete_delay: 2h
+    retention_delete_worker_count: 20
+    delete_request_store: s3
+    working_directory: /var/loki/compactor
+  storage:
+    type: s3
+    bucketNames:
+      chunks: ${LOKI_CHUNKS_BUCKET}
+      ruler: ${LOKI_RULER_BUCKET}
+      admin: ${LOKI_ADMIN_BUCKET}
+    s3:
+      endpoint: ${LOKI_S3_ENDPOINT}
+      region: ${LOKI_S3_REGION}
+      accessKeyId: ${AWS_ACCESS_KEY_ID}
+      secretAccessKey: ${AWS_SECRET_ACCESS_KEY}
+      signatureVersion: v4
+      s3ForcePathStyle: true
+      insecure: false
+      disable_dualstack: true
+  useTestSchema: false
+  pattern_ingester:
+    enabled: false
+  tracing:
+    enabled: false
+  ui:
+    enabled: false
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+singleBinary:
+  replicas: 1
+  priorityClassName: platform-important
+  extraArgs:
+    - -config.expand-env=true
+  extraEnvFrom:
+    - secretRef:
+        name: loki-object-storage
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  terminationGracePeriodSeconds: 60
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    storageClass: longhorn-critical
+    size: 5Gi
+    whenScaled: Retain
+    whenDeleted: Retain
+    enableStatefulSetAutoDeletePVC: false
+    enableStatefulSetRecreationForSizeChange: false
+  service:
+    type: ClusterIP
+
+gateway:
+  enabled: true
+  replicas: 1
+  priorityClassName: platform-important
+  verboseLogging: false
+  image:
+    registry: docker.io
+    repository: nginxinc/nginx-unprivileged
+    tag: 1.29-alpine
+    digest: sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+    pullPolicy: IfNotPresent
+  deploymentStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: false
+
+# Every Simple Scalable and Distributed workload is explicitly disabled.
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+ingester:
+  replicas: 0
+distributor:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+queryScheduler:
+  replicas: 0
+compactor:
+  replicas: 0
+indexGateway:
+  replicas: 0
+bloomGateway:
+  replicas: 0
+bloomPlanner:
+  replicas: 0
+bloomBuilder:
+  replicas: 0
+patternIngester:
+  replicas: 0
+ruler:
+  enabled: false
+  replicas: 0
+overridesExporter:
+  enabled: false
+  replicas: 0
+adminApi:
+  replicas: 0
+
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+memcached:
+  enabled: false
+memcachedExporter:
+  enabled: false
+minio:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+sidecar:
+  rules:
+    enabled: false
+rollout_operator:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+
+extraObjects:
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata: {name: loki-default-deny, namespace: loki}
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress, Egress]
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata: {name: loki-internal, namespace: loki}
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress, Egress]
+      ingress:
+        - from:
+            - podSelector: {}
+      egress:
+        - to:
+            - podSelector: {}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata: {name: loki-alloy-ingress, namespace: loki}
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: loki
+          app.kubernetes.io/instance: loki
+          app.kubernetes.io/component: gateway
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels: {kubernetes.io/metadata.name: logging}
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: alloy
+                  app.kubernetes.io/instance: alloy
+          ports:
+            - {protocol: TCP, port: http-metrics}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata: {name: loki-prometheus-ingress, namespace: loki}
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: loki
+          app.kubernetes.io/instance: loki
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels: {kubernetes.io/metadata.name: monitoring}
+              podSelector:
+                matchLabels: {app.kubernetes.io/name: prometheus}
+          ports:
+            - {protocol: TCP, port: http-metrics}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata: {name: loki-cluster-dns, namespace: loki}
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: loki
+          app.kubernetes.io/instance: loki
+      policyTypes: [Egress]
+      egress:
+        - to:
+            - namespaceSelector:
+                matchLabels: {kubernetes.io/metadata.name: kube-system}
+              podSelector:
+                matchLabels: {k8s-app: kube-dns}
+          ports:
+            - {protocol: UDP, port: 53}
+            - {protocol: TCP, port: 53}
+  - apiVersion: cilium.io/v2
+    kind: CiliumNetworkPolicy
+    metadata: {name: loki-object-storage, namespace: loki}
+    spec:
+      endpointSelector:
+        matchLabels:
+          app.kubernetes.io/name: loki
+          app.kubernetes.io/instance: loki
+          app.kubernetes.io/component: single-binary
+      egress:
+        - toFQDNs:
+            - matchName: objects.fin-03.verda.storage
+          toPorts:
+            - ports:
+                - {port: "443", protocol: TCP}
+
+monitoring:
+  dashboards:
+    enabled: false
+  rules:
+    enabled: false
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels:
+      platform.verda-demo.io/owner: observability
+      platform.verda-demo.io/monitor: "true"

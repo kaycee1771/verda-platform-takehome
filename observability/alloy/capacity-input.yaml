@@ -1,0 +1,22 @@
+---
+schema_version: 1
+activation_status: blocked
+workload:
+  name: alloy
+  kind: DaemonSet
+  expected_nodes: 3
+  update_max_unavailable: 1
+  per_pod:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  steady_state:
+    cpu: 150m
+    memory: 288Mi
+  rollout_peak:
+    cpu: 150m
+    memory: 288Mi
+  ephemeral_state_per_node: 1Gi

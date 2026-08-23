@@ -1,0 +1,108 @@
+---
+# Chart: sealed-secrets 2.19.0; controller: 0.38.1.
+# The tag includes the immutable multi-architecture manifest digest. Do not
+# replace it with a mutable tag-only reference.
+image:
+  registry: ghcr.io
+  repository: bitnami/sealed-secrets-controller
+  tag: "0.38.1@sha256:2d18b78e3410c80e6d4163def168a774f36fda74f3b3ea225f0547f99a08e23b"
+  pullPolicy: IfNotPresent
+
+namespace: sealed-secrets
+fullnameOverride: sealed-secrets-controller
+replicaCount: 2
+revisionHistoryLimit: 3
+priorityClassName: platform-critical
+
+# Old private keys remain available for decrypting already-sealed material.
+# Rotation and removal are separate, reviewed operations documented in the
+# recovery runbook.
+secretName: sealed-secrets-key
+keyrenewperiod: 720h
+updateStatus: true
+skipRecreate: false
+watchForSecrets: false
+
+privateKeyLabels:
+  platform.verda-demo.io/recovery-class: critical
+  platform.verda-demo.io/owner: platform-operations
+privateKeyAnnotations:
+  platform.verda-demo.io/backup-required: "true"
+  platform.verda-demo.io/plaintext-prohibited: "true"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+pdb:
+  create: true
+  minAvailable: 1
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: sealed-secrets
+            app.kubernetes.io/instance: sealed-secrets
+        topologyKey: kubernetes.io/hostname
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: sealed-secrets
+        app.kubernetes.io/instance: sealed-secrets
+
+podSecurityContext:
+  enabled: true
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  enabled: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+rbac:
+  create: true
+  clusterRole: true
+  pspEnabled: false
+  serviceProxier:
+    create: false
+    bind: false
+
+serviceAccount:
+  create: true
+  name: sealed-secrets-controller
+  annotations: {}
+
+metrics:
+  service:
+    type: ClusterIP
+    port: 8081
+  # The ServiceMonitor is owned separately at sync wave -2, after the
+  # Prometheus Operator CRDs are healthy.
+  serviceMonitor:
+    enabled: false
+  prometheusRule:
+    enabled: false
+  dashboards:
+    create: false
+
+ingress:
+  enabled: false
+
+logFormat: json
+logInfoStdout: true

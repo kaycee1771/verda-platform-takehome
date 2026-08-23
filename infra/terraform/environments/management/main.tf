@@ -1,14 +1,34 @@
 locals {
   nodes = {
     "01" = {
-      role = "server"
+      role                = "server"
+      instance_type       = "CPU.4V.16G"
+      resource_expiry_utc = "2026-08-24T21:00:00Z"
     }
     "02" = {
-      role = "server"
+      role                = "server"
+      instance_type       = "CPU.4V.16G"
+      resource_expiry_utc = "2026-08-24T21:00:00Z"
     }
     "03" = {
-      role = "server"
+      role                = "server"
+      instance_type       = "CPU.8V.32G"
+      resource_expiry_utc = "2026-08-27T21:00:00Z"
     }
+  }
+}
+
+check "management_node_lifecycle" {
+  assert {
+    condition = (
+      keys(local.nodes) == ["01", "02", "03"] &&
+      alltrue([
+        for node in values(local.nodes) :
+        contains(["CPU.4V.16G", "CPU.8V.32G"], node.instance_type) &&
+        can(formatdate("YYYY-MM-DD'T'hh:mm:ssZ", node.resource_expiry_utc))
+      ])
+    )
+    error_message = "Management lifecycle must contain exactly nodes 01-03 with a reviewed CPU shape and RFC3339 expiry."
   }
 }
 
@@ -22,7 +42,6 @@ module "management" {
 
   cluster               = "verda-mgmt"
   nodes                 = local.nodes
-  instance_type         = var.instance_type
   provider_image_value  = var.provider_image_value
   ssh_key_ids           = [verda_ssh_key.management.id]
   root_volume_size_gib  = var.root_volume_size_gib
@@ -30,5 +49,4 @@ module "management" {
   location              = var.location
   startup_script_id     = null
   preserve_data_volumes = var.preserve_data_volumes
-  resource_expiry_utc   = var.resource_expiry_utc
 }

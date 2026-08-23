@@ -53,6 +53,46 @@ configs:
       p, role:reviewer, applications, sync, platform/*, deny
       p, role:reviewer, applications, action/*, platform/*, deny
       p, role:reviewer, logs, get, platform/*, allow
+      p, role:reviewer, applications, get, foundation/*, allow
+      p, role:reviewer, applications, sync, foundation/*, deny
+      p, role:reviewer, applications, action/*, foundation/*, deny
+      p, role:reviewer, logs, get, foundation/*, allow
+      p, role:reviewer, applications, get, security/*, allow
+      p, role:reviewer, applications, sync, security/*, deny
+      p, role:reviewer, applications, action/*, security/*, deny
+      p, role:reviewer, logs, get, security/*, allow
+      p, role:reviewer, applications, get, management/*, allow
+      p, role:reviewer, applications, sync, management/*, deny
+      p, role:reviewer, applications, action/*, management/*, deny
+      p, role:reviewer, logs, get, management/*, allow
+      p, role:reviewer, applications, get, registry/*, allow
+      p, role:reviewer, applications, sync, registry/*, deny
+      p, role:reviewer, applications, action/*, registry/*, deny
+      p, role:reviewer, logs, get, registry/*, allow
+      p, role:reviewer, applications, get, observability/*, allow
+      p, role:reviewer, applications, sync, observability/*, deny
+      p, role:reviewer, applications, action/*, observability/*, deny
+      p, role:reviewer, logs, get, observability/*, allow
+      p, role:reviewer, applications, get, backup/*, allow
+      p, role:reviewer, applications, sync, backup/*, deny
+      p, role:reviewer, applications, action/*, backup/*, deny
+      p, role:reviewer, logs, get, backup/*, allow
+      p, role:reviewer, applications, get, monitoring-targets/*, allow
+      p, role:reviewer, applications, sync, monitoring-targets/*, deny
+      p, role:reviewer, applications, action/*, monitoring-targets/*, deny
+      p, role:reviewer, logs, get, monitoring-targets/*, allow
+      p, role:reviewer, applications, get, dev/*, allow
+      p, role:reviewer, applications, sync, dev/*, deny
+      p, role:reviewer, applications, action/*, dev/*, deny
+      p, role:reviewer, logs, get, dev/*, allow
+      p, role:reviewer, applications, get, staging/*, allow
+      p, role:reviewer, applications, sync, staging/*, deny
+      p, role:reviewer, applications, action/*, staging/*, deny
+      p, role:reviewer, logs, get, staging/*, allow
+      p, role:reviewer, applications, get, prod/*, allow
+      p, role:reviewer, applications, sync, prod/*, deny
+      p, role:reviewer, applications, action/*, prod/*, deny
+      p, role:reviewer, logs, get, prod/*, allow
 
 dex:
   enabled: false

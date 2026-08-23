@@ -3,7 +3,9 @@ node-name: {{ inventory_hostname | quote }}
 node-ip: {{ phase3_wireguard_addresses[inventory_hostname] | quote }}
 node-external-ip: {{ ansible_host | quote }}
 advertise-address: {{ phase3_wireguard_addresses[inventory_hostname] | quote }}
-{% if inventory_hostname != 'verda-mgmt-server-01' %}
+{% if phase4_join_existing_cluster | default(false) | bool %}
+server: "https://{{ phase4_join_server_address }}:9345"
+{% elif inventory_hostname != 'verda-mgmt-server-01' %}
 server: "https://{{ phase3_wireguard_addresses['verda-mgmt-server-01'] }}:9345"
 {% endif %}
 node-label:
