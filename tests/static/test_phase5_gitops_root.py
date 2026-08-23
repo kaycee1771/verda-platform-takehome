@@ -19,7 +19,7 @@ def load(path: pathlib.Path) -> dict:
 
 
 class Phase5GitOpsRootTests(unittest.TestCase):
-    def test_root_has_only_the_live_verified_phase_five_children(self) -> None:
+    def test_root_includes_the_mandatory_platform_services(self) -> None:
         kustomization = load(GITOPS_ROOT / "kustomization.yaml")
         self.assertEqual(
             kustomization["resources"],
@@ -32,6 +32,7 @@ class Phase5GitOpsRootTests(unittest.TestCase):
                 "longhorn-prerequisites.yaml",
                 "longhorn-controller.yaml",
                 "longhorn-resources.yaml",
+                "platform-services",
             ],
         )
 
@@ -177,7 +178,7 @@ class Phase5GitOpsRootTests(unittest.TestCase):
         ingress = load(
             ROOT / "platform" / "management" / "ingress" / "argocd" / "values.yaml"
         )
-        self.assertRegex(staging["hostname"], r"^argocd\.(?:\d{1,3}-){3}\d{1,3}\.sslip\.io$")
+        self.assertRegex(staging["hostname"], r"^argocd\.(?:\d{1,3}-){3}\d{1,3}\.nip\.io$")
         self.assertIn("@", staging["acmeEmail"])
         self.assertEqual(production["hostname"], staging["hostname"])
         self.assertEqual(production["acmeEmail"], staging["acmeEmail"])

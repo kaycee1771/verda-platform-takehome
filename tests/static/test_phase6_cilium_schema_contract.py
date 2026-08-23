@@ -20,7 +20,6 @@ ROOT = pathlib.Path(__file__).parents[2]
 SCHEMA_LOCK = ROOT / "schemas" / "schema-sources.lock.yaml"
 VERSIONS_LOCK = ROOT / "versions.lock.yaml"
 SCHEMA = ROOT / ".local" / "schema-cache" / "ciliumnetworkpolicy-cilium-v2.json"
-LOKI_VALUES = ROOT / "platform" / "management" / "loki" / "values.yaml"
 ALLOY_VALUES = ROOT / "observability" / "alloy" / "values.yaml"
 
 EXPECTED_SOURCE = (
@@ -98,10 +97,8 @@ class Phase6CiliumSchemaContractTests(unittest.TestCase):
             EXPECTED_OUTPUT_SHA256,
         )
 
-    def test_current_loki_and_alloy_policies_validate_strictly(self) -> None:
-        for path in (LOKI_VALUES, ALLOY_VALUES):
-            with self.subTest(path=path.relative_to(ROOT).as_posix()):
-                self.validator.validate(values_policy(path))
+    def test_current_alloy_policy_validates_strictly(self) -> None:
+        self.validator.validate(values_policy(ALLOY_VALUES))
 
     def test_current_admitted_harbor_policy_validates_strictly(self) -> None:
         self.assertIsNotNone(
@@ -120,8 +117,8 @@ class Phase6CiliumSchemaContractTests(unittest.TestCase):
         policy = cilium_policy(harbor_contract.objects(rendered.stdout), "Harbor render")
         self.validator.validate(policy)
 
-    def test_malformed_real_loki_policy_is_rejected(self) -> None:
-        malformed = copy.deepcopy(values_policy(LOKI_VALUES))
+    def test_malformed_real_alloy_policy_is_rejected(self) -> None:
+        malformed = copy.deepcopy(values_policy(ALLOY_VALUES))
         malformed["metadata"]["name"] = "malformed-real-derived-policy"
         malformed["spec"]["egress"][0]["toFQDNs"] = "not-an-array"
         with self.assertRaises(jsonschema.ValidationError):
