@@ -54,7 +54,7 @@ class Phase5RuntimeVerifierContractTests(unittest.TestCase):
         self.root = pathlib.Path(self.temporary.name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        self.host = "argocd.192-0-2-10.sslip.io"
+        self.host = "argocd.192-0-2-10.nip.io"
 
         self.kubeconfig = self.root / "kubeconfig"
         self.admin_token = self.root / "admin.token"

@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-activation_status: blocked
+activation_status: ready-for-capacity-admission
 workloads:
   loki-single-binary:
     kind: StatefulSet
@@ -16,7 +16,7 @@ workloads:
       logical_size: 5Gi
       replica_count: 3
       raw_size: 15Gi
-      purpose: wal-compactor-working-state
+      purpose: chunks-index-wal-compactor
   loki-gateway:
     kind: Deployment
     replicas: 1

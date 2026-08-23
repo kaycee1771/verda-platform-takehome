@@ -10,3 +10,4 @@ resources:
   - longhorn-prerequisites.yaml
   - longhorn-controller.yaml
   - longhorn-resources.yaml
+  - platform-services

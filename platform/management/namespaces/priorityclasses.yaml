@@ -6,7 +6,7 @@ metadata:
 value: 900000000
 globalDefault: false
 preemptionPolicy: PreemptLowerPriority
-description: Critical Stage A controllers and stateful control-plane services.
+description: Critical Platform controllers and stateful control-plane services.
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -15,7 +15,7 @@ metadata:
 value: 800000000
 globalDefault: false
 preemptionPolicy: PreemptLowerPriority
-description: Important Stage A services that may reschedule after a node loss.
+description: Important Platform services that may reschedule after a node loss.
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass

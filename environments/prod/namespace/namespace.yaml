@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/part-of: platform-demo
     platform.verda-demo.io/environment: prod
     platform.verda-demo.io/owner: platform-team
-    platform.verda-demo.io/topology: stage-a-management-cluster
+    platform.verda-demo.io/topology: platform-management-cluster
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted

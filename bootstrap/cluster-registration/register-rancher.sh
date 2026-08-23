@@ -15,7 +15,7 @@ Usage: register-rancher.sh preflight|reconcile|verify
 
 All modes require:
   KUBECONFIG                         protected direct management kubeconfig
-  RANCHER_EXPECTED_HOSTNAME          exact rancher.<IPv4-with-dashes>.sslip.io name
+  RANCHER_EXPECTED_HOSTNAME          exact rancher.<IPv4-with-dashes>.nip.io name
   RANCHER_URL                        https:// plus the exact expected hostname
 
 reconcile additionally requires:
@@ -92,8 +92,8 @@ anonymous_status() {
 validate_rancher_boundary() {
   local path status
 
-  [[ "${RANCHER_EXPECTED_HOSTNAME}" =~ ^rancher\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]] ||
-    die "RANCHER_EXPECTED_HOSTNAME must be an exact rancher sslip.io hostname"
+  [[ "${RANCHER_EXPECTED_HOSTNAME}" =~ ^rancher\.([0-9]{1,3}-){3}[0-9]{1,3}\.nip\.io$ ]] ||
+    die "RANCHER_EXPECTED_HOSTNAME must be an exact rancher nip.io hostname"
   [[ "${RANCHER_URL}" == "https://${RANCHER_EXPECTED_HOSTNAME}" ]] ||
     die "RANCHER_URL must be HTTPS and exactly match RANCHER_EXPECTED_HOSTNAME"
 

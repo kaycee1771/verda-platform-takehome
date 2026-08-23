@@ -193,7 +193,7 @@ class Phase6KyvernoContractTests(unittest.TestCase):
                 self.assertEqual(spec["failurePolicy"], "Ignore")
                 self.assertNotIn("exclude", str(spec))
 
-        workload = next(p for p in policies if p["metadata"]["name"] == "phase6-workload-baseline")
+        workload = next(p for p in policies if p["metadata"]["name"] == "workload-baseline")
         namespaces = {
             namespace
             for rule in workload["spec"]["rules"]

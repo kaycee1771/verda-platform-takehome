@@ -29,13 +29,14 @@ class Phase6LokiContractTests(unittest.TestCase):
         cls.activation = load_one(LOKI / "activation-contract.yaml")
         cls.capacity = load_one(LOKI / "capacity-input.yaml")
 
-    def test_chart_provenance_matches_lock_and_activation_is_blocked(self) -> None:
+    def test_chart_provenance_matches_lock_and_activation_waits_only_for_capacity(self) -> None:
         chart = self.versions["helm_charts"]["loki"]
         self.assertEqual(chart["version"], "7.3.0")
         self.assertEqual(chart["app_version"], "3.6.12")
         self.assertEqual(chart["archive_sha256"], self.activation["chart"]["archive_sha256"])
         self.assertIn("pending", chart["selection_status"])
-        self.assertEqual(self.activation["activation_status"], "blocked")
+        self.assertEqual(self.activation["activation_status"], "ready-for-capacity-admission")
+        self.assertEqual(self.capacity["activation_status"], "ready-for-capacity-admission")
         self.assertEqual(self.activation["target_namespace"], "loki")
         self.assertFalse(self.activation["blocking_gates"]["root_application_allowed"])
         self.assertEqual(
@@ -61,7 +62,9 @@ class Phase6LokiContractTests(unittest.TestCase):
         gates = self.activation["blocking_gates"]
         self.assertTrue(gates["immutable_image_digests_locked"])
         self.assertTrue(gates["immutable_image_provenance_recorded"])
-        self.assertFalse(gates["dedicated_s3_credential_scope_proven"])
+        self.assertTrue(gates["filesystem_storage_selected"])
+        self.assertTrue(gates["longhorn_critical_storage_selected"])
+        self.assertFalse(gates["external_credentials_required"])
         self.assertFalse(gates["capacity_admission_passed"])
 
     def test_single_binary_only_and_every_other_mode_is_zero(self) -> None:
@@ -95,25 +98,12 @@ class Phase6LokiContractTests(unittest.TestCase):
         self.assertFalse(self.values["test"]["enabled"])
         self.assertFalse(self.values["sidecar"]["rules"]["enabled"])
 
-    def test_s3_configuration_uses_only_runtime_secret_placeholders(self) -> None:
+    def test_filesystem_configuration_needs_no_runtime_secret(self) -> None:
         storage = self.values["loki"]["storage"]
-        self.assertEqual(storage["type"], "s3")
-        self.assertEqual(
-            set(storage["bucketNames"].values()),
-            {"${LOKI_CHUNKS_BUCKET}", "${LOKI_RULER_BUCKET}", "${LOKI_ADMIN_BUCKET}"},
-        )
-        self.assertEqual(storage["s3"]["endpoint"], "${LOKI_S3_ENDPOINT}")
-        self.assertEqual(storage["s3"]["region"], "${LOKI_S3_REGION}")
-        self.assertEqual(storage["s3"]["accessKeyId"], "${AWS_ACCESS_KEY_ID}")
-        self.assertEqual(storage["s3"]["secretAccessKey"], "${AWS_SECRET_ACCESS_KEY}")
-        self.assertTrue(storage["s3"]["s3ForcePathStyle"])
-        self.assertFalse(storage["s3"]["insecure"])
-        self.assertEqual(
-            self.values["singleBinary"]["extraEnvFrom"],
-            [{"secretRef": {"name": "loki-object-storage"}}],
-        )
-        self.assertIn("-config.expand-env=true", self.values["singleBinary"]["extraArgs"])
-        self.assertEqual(self.activation["object_storage"]["status"], "pending-live-proof")
+        self.assertEqual(storage, {"type": "filesystem"})
+        self.assertNotIn("extraEnvFrom", self.values["singleBinary"])
+        self.assertNotIn("extraArgs", self.values["singleBinary"])
+        self.assertEqual(self.activation["storage"]["type"], "filesystem")
 
     def test_retention_and_local_working_state_are_bounded(self) -> None:
         limits = self.values["loki"]["limits_config"]
@@ -122,11 +112,11 @@ class Phase6LokiContractTests(unittest.TestCase):
         self.assertEqual(limits["retention_period"], "72h")
         self.assertTrue(compactor["retention_enabled"])
         self.assertEqual(compactor["retention_delete_delay"], "2h")
-        self.assertEqual(compactor["delete_request_store"], "s3")
+        self.assertEqual(compactor["delete_request_store"], "filesystem")
         self.assertEqual(persistence["storageClass"], "longhorn-critical")
         self.assertEqual(persistence["size"], "5Gi")
         self.assertEqual(persistence["whenDeleted"], "Retain")
-        self.assertEqual(self.activation["object_storage"]["minimum_bucket_lifecycle_days"], 7)
+        self.assertEqual(self.activation["storage"]["storage_class"], "longhorn-critical")
 
     def test_loki_is_internal_and_capacity_input_matches_values(self) -> None:
         self.assertEqual(self.values["gateway"]["service"]["type"], "ClusterIP")
@@ -143,25 +133,7 @@ class Phase6LokiContractTests(unittest.TestCase):
                 "loki-alloy-ingress",
                 "loki-prometheus-ingress",
                 "loki-cluster-dns",
-                "loki-object-storage",
             },
-        )
-        storage = policies["loki-object-storage"]
-        self.assertEqual(storage["kind"], "CiliumNetworkPolicy")
-        egress = storage["spec"]["egress"]
-        self.assertEqual(
-            egress[0]["toFQDNs"],
-            [{"matchName": "objects.fin-03.verda.storage"}],
-        )
-        self.assertEqual(
-            egress[0]["toPorts"][0]["ports"],
-            [{"port": "443", "protocol": "TCP"}],
-        )
-        self.assertEqual(
-            storage["spec"]["endpointSelector"]["matchLabels"][
-                "app.kubernetes.io/component"
-            ],
-            "single-binary",
         )
         alloy = policies["loki-alloy-ingress"]["spec"]["ingress"][0]["from"][0]
         self.assertEqual(
@@ -202,6 +174,7 @@ class Phase6AlloyContractTests(unittest.TestCase):
         self.assertEqual(chart["archive_sha256"], self.image_lock["chart"]["archive_sha256"])
         self.assertIn("pending", chart["selection_status"])
         self.assertEqual(self.image_lock["activation_status"], "blocked")
+        self.assertTrue(self.image_lock["blocking_gates"]["loki_activation_contract_ready"])
         locked = chart["images"]["alloy"]["digest"]
         self.assertEqual(self.values["image"]["digest"], locked)
         self.assertEqual(self.image_lock["required_images"][0]["digest"], locked)

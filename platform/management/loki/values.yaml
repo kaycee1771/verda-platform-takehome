@@ -1,6 +1,6 @@
 ---
-# Loki chart 7.3.0 / Loki 3.6.12. This values file is not activation-ready:
-# activation-contract.yaml must be satisfied before an Argo Application owns it.
+# Loki chart 7.3.0 / Loki 3.6.12. The take-home deployment uses one
+# Longhorn-backed single binary and does not require external object storage.
 kubeVersionOverride: v1.35.7
 
 global:
@@ -68,7 +68,7 @@ loki:
     configs:
       - from: "2024-04-01"
         store: tsdb
-        object_store: s3
+        object_store: filesystem
         schema: v13
         index:
           prefix: loki_index_
@@ -91,23 +91,10 @@ loki:
     retention_enabled: true
     retention_delete_delay: 2h
     retention_delete_worker_count: 20
-    delete_request_store: s3
+    delete_request_store: filesystem
     working_directory: /var/loki/compactor
   storage:
-    type: s3
-    bucketNames:
-      chunks: ${LOKI_CHUNKS_BUCKET}
-      ruler: ${LOKI_RULER_BUCKET}
-      admin: ${LOKI_ADMIN_BUCKET}
-    s3:
-      endpoint: ${LOKI_S3_ENDPOINT}
-      region: ${LOKI_S3_REGION}
-      accessKeyId: ${AWS_ACCESS_KEY_ID}
-      secretAccessKey: ${AWS_SECRET_ACCESS_KEY}
-      signatureVersion: v4
-      s3ForcePathStyle: true
-      insecure: false
-      disable_dualstack: true
+    type: filesystem
   useTestSchema: false
   pattern_ingester:
     enabled: false
@@ -123,11 +110,6 @@ serviceAccount:
 singleBinary:
   replicas: 1
   priorityClassName: platform-important
-  extraArgs:
-    - -config.expand-env=true
-  extraEnvFrom:
-    - secretRef:
-        name: loki-object-storage
   resources:
     requests:
       cpu: 250m
@@ -313,22 +295,6 @@ extraObjects:
           ports:
             - {protocol: UDP, port: 53}
             - {protocol: TCP, port: 53}
-  - apiVersion: cilium.io/v2
-    kind: CiliumNetworkPolicy
-    metadata: {name: loki-object-storage, namespace: loki}
-    spec:
-      endpointSelector:
-        matchLabels:
-          app.kubernetes.io/name: loki
-          app.kubernetes.io/instance: loki
-          app.kubernetes.io/component: single-binary
-      egress:
-        - toFQDNs:
-            - matchName: objects.fin-03.verda.storage
-          toPorts:
-            - ports:
-                - {port: "443", protocol: TCP}
-
 monitoring:
   dashboards:
     enabled: false

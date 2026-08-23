@@ -433,19 +433,19 @@ def render_all(args: argparse.Namespace) -> dict[str, Any]:
         environment_out = output_dir / "environment-foundations.yaml"
         components["environment_foundations"] = component_entry(environment_out, canonical_write(environment_out, environment_docs), environment_sources, projection_semantics="exact three-environment Kustomize renders")
 
-        demo_chart = ROOT / "applications/stage-a-smoke/chart"
+        demo_chart = ROOT / "applications/platform-demo/chart"
         demo_docs: list[dict[str, Any]] = []
         demo_sources = tracked_tree(demo_chart)
         for name in ("dev", "staging", "prod"):
-            values_path = ROOT / f"applications/stage-a-smoke/values-{name}.yaml"
+            values_path = ROOT / f"applications/platform-demo/values-{name}.yaml"
             values = load_one(values_path)
             values["activation"] = {"enabled": True, "imageDigestLocked": True, "pullSecretReady": True, "serviceMonitorCRDReady": True}
             values["certificate"]["bootstrapEnabled"] = True
             values["certificate"]["stagingCertificateVerified"] = True
             values["image"]["digest"] = SYNTHETIC_DIGEST
-            rendered = helm_render(args.helm, f"stage-a-smoke-{name}", values["namespace"], demo_chart, values, temporary)
+            rendered = helm_render(args.helm, f"platform-demo-{name}", values["namespace"], demo_chart, values, temporary)
             for document in rendered:
-                projection_annotations(document, f"stage-a-smoke-{name}-latent-workload")
+                projection_annotations(document, f"platform-demo-{name}-latent-workload")
             demo_docs.extend(rendered)
             demo_sources.append(tracked_source(values_path))
         demo_out = output_dir / "platform-demo.yaml"

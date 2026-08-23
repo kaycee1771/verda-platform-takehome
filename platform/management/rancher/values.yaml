@@ -16,7 +16,7 @@ certificate:
 rancher:
   enabled: false
   fullnameOverride: rancher
-  hostname: rancher.95-133-252-214.sslip.io
+  hostname: rancher.95-133-252-214.nip.io
   replicas: 3
   priorityClassName: platform-critical
 

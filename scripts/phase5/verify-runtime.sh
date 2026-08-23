@@ -88,13 +88,13 @@ require_protected_file "${PHASE5_ARGOCD_REVIEWER_TOKEN_FILE}"
 require_protected_file "${PHASE5_EXTERNAL_ENDPOINTS_FILE}"
 
 [[ "${PHASE5_KUBE_CONTEXT}" =~ ^[A-Za-z0-9._@:/-]+$ ]] || fail 'kube-context'
-[[ "${PHASE5_PUBLIC_HOST}" =~ ^argocd\.[0-9]{1,3}(-[0-9]{1,3}){3}\.sslip\.io$ ]] || \
+[[ "${PHASE5_PUBLIC_HOST}" =~ ^argocd\.[0-9]{1,3}(-[0-9]{1,3}){3}\.nip\.io$ ]] || \
   fail 'public-hostname'
 
 if ! "${python_bin}" -c '
 import ipaddress, re, sys
 host = sys.argv[1]
-encoded = re.fullmatch(r"argocd\.([0-9]{1,3}(?:-[0-9]{1,3}){3})\.sslip\.io", host)
+encoded = re.fullmatch(r"argocd\.([0-9]{1,3}(?:-[0-9]{1,3}){3})\.nip\.io", host)
 assert encoded
 ipaddress.IPv4Address(encoded.group(1).replace("-", "."))
 ' "${PHASE5_PUBLIC_HOST}" >/dev/null 2>&1; then
@@ -285,7 +285,7 @@ path = pathlib.Path(sys.argv[1])
 rows = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 assert len(rows) == 3 and len(set(rows)) == 3
 addresses = [str(ipaddress.IPv4Address(row)) for row in rows]
-host_ip = sys.argv[2].removeprefix("argocd.").removesuffix(".sslip.io").replace("-", ".")
+host_ip = sys.argv[2].removeprefix("argocd.").removesuffix(".nip.io").replace("-", ".")
 assert str(ipaddress.IPv4Address(host_ip)) in addresses
 print("\n".join(addresses))
 ' "${PHASE5_EXTERNAL_ENDPOINTS_FILE}" "${PHASE5_PUBLIC_HOST}" 2>/dev/null

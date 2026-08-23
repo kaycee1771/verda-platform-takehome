@@ -1,6 +1,6 @@
 # Saved Phase 6 LogQL investigations
 
-`demo-dev-logs.logql` is the baseline saved query required for Stage A. It
+`demo-dev-logs.logql` is the baseline saved query required for Platform. It
 returns every application stream in `demo-dev` without introducing request ID,
 pod identity, path, or error text as an indexed label.
 

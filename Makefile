@@ -1,55 +1,84 @@
-PWSH ?= pwsh
+SHELL := /usr/bin/env bash
 
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap-tools install-hooks validate validate-negative pre-commit secret-scan ci discover \
-	phase0-validate phase0-tools phase0-preflight phase0-discover-account phase0-provider-schema \
-	infra-init infra-plan infra-apply infra-repair-node-02-plan infra-repair-node-02-apply infra-lifecycle-check inventory configure verify-hosts cluster-bootstrap verify-cluster \
-	bootstrap-gitops platform-status stage-a-verify register-clusters stage-b-verify \
-	app-test app-build supply-chain-verify promote verify fault backup restore-test \
-	cost-report collect-evidence sanitize-evidence destroy
+.PHONY: help bootstrap-tools validate test verify status secret-scan pre-commit ci \
+	collect-evidence cost-report destroy-plan infra-plan configure-hosts verify-hosts \
+	verify-cluster bootstrap-gitops deploy-platform promote
 
 help:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/make-help.ps1
+	@printf '%s\n' \
+	  'Verda platform operator commands' \
+	  '' \
+	  '  make bootstrap-tools   Prepare the pinned validation toolchain' \
+	  '  make validate          Validate repository configuration and manifests' \
+	  '  make test              Run the application and repository test suites' \
+	  '  make verify            Run read-only live platform verification' \
+	  '  make status            Show the current submission-readiness summary' \
+	  '  make collect-evidence  Collect sanitized live verification evidence' \
+	  '  make cost-report       Print the current infrastructure cost envelope' \
+	  '  make destroy-plan      Produce a reviewed destructive Terraform plan' \
+	  '' \
+	  'Optional lifecycle commands:' \
+	  '  make infra-plan' \
+	  '  make configure-hosts' \
+	  '  make verify-hosts' \
+	  '  make verify-cluster' \
+	  '  make bootstrap-gitops' \
+	  '  make deploy-platform' \
+	  '  make promote FROM=dev TO=staging DIGEST=sha256:...'
 
 bootstrap-tools:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/bootstrap-tools.ps1
-
-install-hooks:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/install-hooks.ps1
+	@pwsh -NoLogo -NoProfile -NonInteractive -File scripts/quality/bootstrap-tools.ps1
 
 validate:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/run-quality.ps1 -Target validate
+	@pwsh -NoLogo -NoProfile -NonInteractive -File scripts/quality/run-quality.ps1 -Target validate
 
-validate-negative:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/run-quality.ps1 -Target negative
+test:
+	@python3 -m unittest discover -s tests/static -p 'test_*.py'
+	@cd applications/platform-demo && go test ./...
 
-pre-commit:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/run-quality.ps1 -Target pre-commit
+verify:
+	@bash scripts/verify-platform.sh
+
+status:
+	@python3 scripts/status.py
 
 secret-scan:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/run-quality.ps1 -Target secret-scan
+	@bash scripts/quality/secret-scan.sh
+
+pre-commit:
+	@pwsh -NoLogo -NoProfile -NonInteractive -File scripts/quality/run-quality.ps1 -Target pre-commit
 
 ci:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/run-quality.ps1 -Target ci
+	@pwsh -NoLogo -NoProfile -NonInteractive -File scripts/quality/run-quality.ps1 -Target ci
 
-discover:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/phase0/discover-verda.ps1
+collect-evidence:
+	@bash scripts/collect-evidence.sh
 
-phase0-validate:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/phase0/validate.ps1
+cost-report:
+	@bash scripts/cost-report.sh
 
-phase0-tools:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/phase0/discover-tools.ps1
+destroy-plan:
+	@pwsh -NoLogo -NoProfile -NonInteractive -File scripts/infra/phase2.ps1 -Target lifecycle-check -Cluster management
 
-phase0-preflight:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/phase0/discover-verda.ps1
+infra-plan:
+	@bash scripts/provision.sh plan
 
-phase0-discover-account:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/phase0/discover-verda.ps1 -QueryAccount -ConfirmReadOnly -OutputPath evidence/phase-0/verda-discovery.local.json
+configure-hosts:
+	@bash scripts/configure.sh
 
-phase0-provider-schema:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/phase0/export-provider-schema.ps1 -AllowProviderDownload -OutputPath evidence/phase-0/provider-schema.local.json
+verify-hosts:
+	@pwsh -NoLogo -NoProfile -NonInteractive -File scripts/host/phase3.ps1 -Target verify -Cluster management
 
-infra-init infra-plan infra-apply infra-repair-node-02-plan infra-repair-node-02-apply infra-lifecycle-check inventory configure verify-hosts cluster-bootstrap verify-cluster bootstrap-gitops platform-status stage-a-verify register-clusters stage-b-verify app-test app-build supply-chain-verify promote verify fault backup restore-test cost-report collect-evidence sanitize-evidence destroy:
-	@$(PWSH) -NoLogo -NoProfile -NonInteractive -File scripts/quality/phase-gate.ps1 -Target "$@" -Arguments "CLUSTER=$(CLUSTER) FROM=$(FROM) TO=$(TO) DIGEST=$(DIGEST) TEST=$(TEST) TARGET=$(TARGET) CONFIRM=$(CONFIRM)"
+verify-cluster:
+	@bash scripts/verify-cluster.sh
+
+bootstrap-gitops:
+	@bash scripts/bootstrap-gitops.sh
+
+deploy-platform:
+	@kubectl apply -k gitops/root
+
+promote:
+	@bash scripts/promote.sh "$(FROM)" "$(TO)" "$(DIGEST)"

@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-activation_status: blocked
+activation_status: ready-for-capacity-admission
 owner: observability
 target_namespace: loki
 sync_wave: "-6"
@@ -20,29 +20,18 @@ required_images:
     tag: 1.29-alpine
     digest: sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
     digest_provenance: registry-v2-manifest-response-2026-08-20
-object_storage:
-  status: pending-live-proof
-  preexisting_secret_name: loki-object-storage
-  required_secret_keys:
-    - AWS_ACCESS_KEY_ID
-    - AWS_SECRET_ACCESS_KEY
-    - LOKI_S3_ENDPOINT
-    - LOKI_S3_REGION
-    - LOKI_CHUNKS_BUCKET
-    - LOKI_RULER_BUCKET
-    - LOKI_ADMIN_BUCKET
-  credential_scope: loki-only
-  tls_required: true
-  path_style_required: true
+storage:
+  type: filesystem
+  storage_class: longhorn-critical
+  logical_size: 5Gi
+  replica_count: 3
   retention_hours: 72
   compactor_delete_delay_hours: 2
-  minimum_bucket_lifecycle_days: 7
 blocking_gates:
   immutable_image_digests_locked: true
   immutable_image_provenance_recorded: true
-  dedicated_s3_credential_scope_proven: false
-  unique_bucket_names_proven: false
-  tls_path_style_read_write_delete_proven: false
-  lifecycle_policy_proven: false
+  filesystem_storage_selected: true
+  longhorn_critical_storage_selected: true
+  external_credentials_required: false
   capacity_admission_passed: false
   root_application_allowed: false

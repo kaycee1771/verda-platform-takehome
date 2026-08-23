@@ -1,7 +1,7 @@
 ---
 apiVersion: v1
 kind: ResourceQuota
-metadata: {name: stage-a-budget, namespace: demo-prod}
+metadata: {name: platform-budget, namespace: demo-prod}
 spec:
   hard:
     requests.cpu: "1"

@@ -16,7 +16,7 @@ import yaml
 ROOT = pathlib.Path(__file__).parents[2]
 CERT = ROOT / "platform" / "management" / "cert-manager"
 INGRESS = ROOT / "platform" / "management" / "ingress" / "argocd"
-SAFE_HOSTNAME = "argocd.192-0-2-10.sslip.io"
+SAFE_HOSTNAME = "argocd.192-0-2-10.nip.io"
 SAFE_EMAIL = "platform@example.com"
 
 
@@ -182,11 +182,11 @@ class Phase5CertIngressContractTests(unittest.TestCase):
         )
         self.assertEqual(certificate["spec"]["secretName"], "argocd-ingress-tls")
 
-    def test_invalid_or_non_sslip_hostname_is_rejected_before_render(self) -> None:
+    def test_invalid_or_non_nip_hostname_is_rejected_before_render(self) -> None:
         for hostname in (
             "argocd.example.com",
-            "argocd.999-0-2-10.sslip.io",
-            "argocd.192-0-2.sslip.io",
+            "argocd.999-0-2-10.nip.io",
+            "argocd.192-0-2.nip.io",
         ):
             with self.subTest(hostname=hostname):
                 result = helm_template(

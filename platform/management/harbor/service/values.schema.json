@@ -33,7 +33,7 @@
       "properties": {
         "enabled": {"type": "boolean"},
         "fullnameOverride": {"type": "string", "const": "harbor"},
-        "externalURL": {"type": "string", "pattern": "^https://harbor\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.sslip\\.io$"},
+        "externalURL": {"type": "string", "pattern": "^https://harbor\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.nip\\.io$"},
         "expose": {
           "type": "object",
           "properties": {
@@ -45,7 +45,7 @@
                 "hosts": {
                   "type": "object",
                   "properties": {
-                    "core": {"type": "string", "pattern": "^harbor\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.sslip\\.io$"}
+                    "core": {"type": "string", "pattern": "^harbor\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.nip\\.io$"}
                   }
                 }
               }

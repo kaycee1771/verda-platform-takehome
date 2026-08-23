@@ -23,7 +23,7 @@ CHART_CACHE = ROOT / ".local" / "chart-cache" / "rancher-2.14.3.tgz"
 EXPECTED_ARCHIVE_SHA256 = (
     "65d4505a3547e7ee5179f14345377137e826541b4daf19c6a7575517f992daf6"
 )
-SAFE_HOSTNAME = "rancher.192-0-2-10.sslip.io"
+SAFE_HOSTNAME = "rancher.192-0-2-10.nip.io"
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -255,7 +255,7 @@ class Phase6RancherContractTests(unittest.TestCase):
         self.assertNotIn("LoadBalancer", result.stdout)
         self.assertNotIn("NodePort", result.stdout)
 
-    def test_schema_is_strict_for_wrapper_values_and_rejects_non_sslip_host(
+    def test_schema_is_strict_for_wrapper_values_and_rejects_non_nip_host(
         self,
     ) -> None:
         schema = json.loads(read_text(RANCHER / "values.schema.json"))

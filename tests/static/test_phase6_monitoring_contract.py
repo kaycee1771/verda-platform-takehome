@@ -304,12 +304,12 @@ class Phase6MonitoringContractTests(unittest.TestCase):
         ]
         self.assertEqual(len(stock_dashboards), 23)
 
-        dashboard = load_yaml(MONITORING / "resources" / "grafana-dashboard-stage-a.yaml")
+        dashboard = load_yaml(MONITORING / "resources" / "grafana-dashboard-platform.yaml")
         datasource = load_yaml(MONITORING / "resources" / "grafana-datasource-loki.yaml")
         self.assertEqual(dashboard["metadata"]["labels"]["grafana_dashboard"], "1")
         self.assertEqual(datasource["metadata"]["labels"]["grafana_datasource"], "1")
-        parsed_dashboard = json.loads(dashboard["data"]["stage-a-overview.json"])
-        self.assertEqual(parsed_dashboard["uid"], "verda-stage-a")
+        parsed_dashboard = json.loads(dashboard["data"]["platform-overview.json"])
+        self.assertEqual(parsed_dashboard["uid"], "verda-platform")
         self.assertEqual(len(parsed_dashboard["panels"]), 4)
         parsed_datasource = yaml.safe_load(datasource["data"]["loki.yaml"])
         self.assertEqual(parsed_datasource["datasources"][0]["uid"], "loki")
@@ -329,7 +329,7 @@ class Phase6MonitoringContractTests(unittest.TestCase):
         self.assertFalse(self.values["prometheus"]["ingressPerReplica"]["enabled"])
         self.assertFalse(self.values["alertmanager"]["ingress"]["enabled"])
 
-    def test_prometheus_discovers_only_explicit_stage_a_monitors(self) -> None:
+    def test_prometheus_discovers_only_explicit_platform_monitors(self) -> None:
         self.assertEqual(
             self.values["commonLabels"]["platform.verda-demo.io/monitor"],
             "true",

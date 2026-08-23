@@ -24,8 +24,8 @@ case "$MODE" in
   *) die "usage: $0 [preflight|reconcile|verify]" 64 ;;
 esac
 
-[[ "$HARBOR_URL_VALUE" =~ ^https://harbor\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]] ||
-  die "HARBOR_URL must be the accepted HTTPS harbor.<IPv4-with-dashes>.sslip.io endpoint" 64
+[[ "$HARBOR_URL_VALUE" =~ ^https://harbor\.([0-9]{1,3}-){3}[0-9]{1,3}\.nip\.io$ ]] ||
+  die "HARBOR_URL must be the accepted HTTPS harbor.<IPv4-with-dashes>.nip.io endpoint" 64
 [[ "$HARBOR_PROJECT" == "platform-demo" ]] || die "HARBOR_PROJECT must remain platform-demo" 64
 [[ "$HARBOR_REVIEWER_USER_VALUE" == "verda-reviewer" ]] || die "reviewer username must remain verda-reviewer" 64
 [[ "$HARBOR_ADMIN_USER_VALUE" == "admin" ]] || die "admin username must remain admin" 64

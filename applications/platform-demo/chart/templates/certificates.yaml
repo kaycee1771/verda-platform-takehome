@@ -1,0 +1,77 @@
+{{- if .Values.certificate.bootstrapEnabled }}
+{{- $environment := include "platformDemo.assertEnvironment" . -}}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: platform-demo-letsencrypt-staging
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    verda.platform/environment-contract: {{ $environment | quote }}
+spec:
+  acme:
+    email: {{ required "certificate.acmeEmail is required" .Values.certificate.acmeEmail | quote }}
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: {name: platform-demo-staging-account-key}
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: {{ .Values.certificate.ingressClassName | quote }}
+            ingressTemplate:
+              metadata:
+                annotations:
+                  traefik.ingress.kubernetes.io/router.entrypoints: web
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: platform-demo-staging
+  namespace: {{ .Release.Namespace | quote }}
+  annotations: {argocd.argoproj.io/sync-wave: "-1"}
+spec:
+  secretName: {{ .Values.certificate.stagingSecretName | quote }}
+  revisionHistoryLimit: 3
+  privateKey: {algorithm: ECDSA, size: 256, rotationPolicy: Always}
+  dnsNames: [{{ .Values.hostname | quote }}]
+  issuerRef: {group: cert-manager.io, kind: Issuer, name: platform-demo-letsencrypt-staging}
+{{- if .Values.certificate.stagingCertificateVerified }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: platform-demo-letsencrypt-production
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    verda.platform/staging-proof: verified
+spec:
+  acme:
+    email: {{ .Values.certificate.acmeEmail | quote }}
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: {name: platform-demo-production-account-key}
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: {{ .Values.certificate.ingressClassName | quote }}
+            ingressTemplate:
+              metadata:
+                annotations:
+                  traefik.ingress.kubernetes.io/router.entrypoints: web
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: platform-demo-production
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    verda.platform/staging-proof: verified
+spec:
+  secretName: {{ .Values.certificate.productionSecretName | quote }}
+  revisionHistoryLimit: 3
+  privateKey: {algorithm: ECDSA, size: 256, rotationPolicy: Always}
+  dnsNames: [{{ .Values.hostname | quote }}]
+  issuerRef: {group: cert-manager.io, kind: Issuer, name: platform-demo-letsencrypt-production}
+{{- end }}
+{{- end }}

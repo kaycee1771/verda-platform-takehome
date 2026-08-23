@@ -15,7 +15,7 @@ required_images:
 blocking_gates:
   immutable_image_digest_locked: true
   immutable_image_provenance_recorded: true
-  loki_activation_contract_ready: false
+  loki_activation_contract_ready: true
   live_api_server_egress_destination_proven: false
   logging_namespace_default_deny_proven: false
   capacity_admission_passed: false

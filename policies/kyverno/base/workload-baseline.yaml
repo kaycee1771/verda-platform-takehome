@@ -1,0 +1,81 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: workload-baseline
+  annotations:
+    policies.kyverno.io/title: Phase 6 workload baseline
+    policies.kyverno.io/category: Platform Baseline
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    platform.verda-demo.io/owner: platform-operations
+    platform.verda-demo.io/review-by: "2026-09-03"
+spec:
+  validationFailureAction: Audit
+  background: true
+  failurePolicy: Ignore
+  emitWarning: true
+  rules:
+    - name: require-workload-identity-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - demo-dev
+                - demo-staging
+                - demo-prod
+      validate:
+        message: Workloads must declare stable name, component, and ownership labels.
+        pattern:
+          metadata:
+            labels:
+              app.kubernetes.io/name: "?*"
+              app.kubernetes.io/component: "?*"
+              platform.verda-demo.io/owner: "?*"
+
+    - name: require-container-requests
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - demo-dev
+                - demo-staging
+                - demo-prod
+      validate:
+        message: Every application container must request CPU and memory.
+        foreach:
+          - list: request.object.spec.containers
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.resources.requests.cpu || '' }}"
+                    operator: Equals
+                    value: ""
+                  - key: "{{ element.resources.requests.memory || '' }}"
+                    operator: Equals
+                    value: ""
+
+    - name: audit-immutable-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - demo-dev
+                - demo-staging
+                - demo-prod
+      validate:
+        message: Application images must use an immutable sha256 digest.
+        foreach:
+          - list: request.object.spec.containers
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.image }}"
+                    operator: NotEquals
+                    value: "*@sha256:*"

@@ -710,8 +710,8 @@ function Assert-LiveContract {
         '--agent', '--output', 'json', 'instance-types', '--cpu'
     ) -FailureMessage 'Unable to verify the live CPU catalog.'
     $selectedType = @($types | Where-Object { $_.instance_type -eq 'CPU.4V.16G' })
-    if ($selectedType.Count -ne 1 -or [double]$selectedType[0].price_per_hour -ne 0.0279) {
-        throw "The live CPU.4V.16G catalog entry or price contradicts the accepted contract."
+    if ($selectedType.Count -ne 1 -or [double]$selectedType[0].price_per_hour -ne 0.048) {
+        throw "The live CPU.4V.16G catalog entry or current replacement price contradicts the accepted contract."
     }
     $images = Invoke-JsonCommand -Command 'verda' -Arguments @(
         '--agent', '--output', 'json', 'images', '--type', 'CPU.4V.16G', '--category', 'ubuntu'

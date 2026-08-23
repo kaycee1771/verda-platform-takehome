@@ -15,7 +15,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "phase6" / "capacity-admission.py"
 RENDER_SCRIPT = ROOT / "scripts" / "phase6" / "render-capacity-inputs.py"
-CONTRACT = ROOT / "config" / "phase6-capacity-admission.yaml"
+CONTRACT = ROOT / "config" / "platform-capacity-admission.yaml"
 SPEC = importlib.util.spec_from_file_location("phase6_capacity_admission", SCRIPT)
 assert SPEC and SPEC.loader
 RUNTIME = importlib.util.module_from_spec(SPEC)

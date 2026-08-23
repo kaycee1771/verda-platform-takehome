@@ -4,7 +4,7 @@ This subtree defines the offline desired state for
 `kube-prometheus-stack` chart `88.3.0` with Prometheus Operator `v0.93.0`.
 It is not yet admitted into the Argo root.
 
-The selected lean Stage A profile retains stock dashboards and rules for the
+The selected lean Platform profile retains stock dashboards and rules for the
 enabled RKE2-compatible targets. It runs one Prometheus replica with three-day,
 six-GB retention on a 10-GiB `longhorn-critical` claim and one Alertmanager
 replica with a 2-GiB claim. This is storage replication and rescheduling, not
