@@ -79,7 +79,9 @@ The complete rendered Stage A workload does not fit the current three
 authenticated provider preflight at `2026-08-20T05:54:40Z` confirmed that
 `CPU.8V.32G` was available in `FIN-03` at `$0.0558/instance-hour`; the provider
 reported a `$99.22` balance and the unchanged `$0.23164521/hour` current burn at
-that instant. These facts are time-bound and must be refreshed before each
+that instant. On 2026-08-23 the authenticated console reconfirmed availability
+but showed `$0.012/vCPU-hour`, or `$0.096/CPU.8V.32G-hour`, and an `$80.00`
+balance. These facts are time-bound and must be refreshed before each
 replacement.
 
 Replacing the three compute instances while preserving all six volume resources

@@ -276,8 +276,8 @@ def validate_contract(contract: dict[str, Any]) -> None:
     if not isinstance(contract["freshness_seconds"], int) or not 60 <= contract["freshness_seconds"] <= 900:
         refuse("gate freshness must be between 60 and 900 seconds")
     if contract["cost"] != {
-        "target_price_per_instance_hour_usd": 0.0558,
-        "approved_seven_day_envelope_usd": 66.6747,
+        "target_price_per_instance_hour_usd": 0.096,
+        "approved_seven_day_envelope_usd": 70.46,
         "minimum_balance_with_reserve_usd": 70.46,
     }:
         refuse("cost contract differs from the reviewed CPU.8V.32G ceiling and reserve")

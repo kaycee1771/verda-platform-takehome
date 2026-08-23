@@ -14,10 +14,12 @@ resize-free Phase 6 deployment is not admissible.
 ## Candidate shape and cost
 
 The [official Verda public catalog](https://verda.com/pricing?currency=usd),
-rechecked on 2026-08-20, lists `CPU.8V.32G` with 8 vCPU, 32 GiB memory, and an
+rechecked on 2026-08-20, listed `CPU.8V.32G` with 8 vCPU, 32 GiB memory, and an
 on-demand price of `$0.0558` per instance-hour. An authenticated console and
 provider-CLI preflight at `2026-08-20T05:54:40Z` independently confirmed that
-the exact on-demand shape was available in `FIN-03` at `$0.0558/hour`. The
+historical price. A fresh authenticated console check at
+`2026-08-23T17:01:17Z` confirmed the shape remains available in `FIN-03`, but
+the current price is `$0.012/vCPU-hour`, or `$0.096/CPU.8V.32G-hour`. The
 provider API reported three current instances, six volumes, a reconciled
 `$0.23164521/hour` burn rate, and a `$99.22` balance. The ignored sanitized
 preflight records only these aggregate scalars and no resource identifiers or
@@ -40,6 +42,13 @@ approved the mandatory Phase 6 resize within a maximum seven-day envelope of
 `$70.46` and evaluator expiry `2026-08-27T21:00:00Z`. Stage B and GPU remain
 frozen. A fresh authenticated balance, price, and availability check is still
 required before each saved-plan apply.
+
+At `2026-08-23T17:01:17Z`, the authenticated balance was `$80.00` and Verda
+reported the current infrastructure rate as `$0.23/hour`. Replacing the three
+4-vCPU nodes at the current catalog rate raises the reconciled rate to about
+`$0.374/hour`. The roughly 100-hour remaining approved window costs `$37.39`;
+adding the existing `$5` allowance, 15% contingency, and a 12-hour reserve
+produces `$53.24`, below both the approved `$70.46` ceiling and current balance.
 
 ## Replacement semantics
 

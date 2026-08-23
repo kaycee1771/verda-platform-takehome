@@ -370,8 +370,8 @@ class GateTests(unittest.TestCase):
         cost = {
             "schema_version": 1, "phase": 6, "integrated_commit": COMMIT,
             "captured_at": NOW.isoformat(), "shape": "CPU.8V.32G", "location": "FIN-03",
-            "on_demand_available": True, "price_per_instance_hour_usd": 0.0558,
-            "project_balance_usd": 70.45, "seven_day_envelope_usd": 66.6747,
+            "on_demand_available": True, "price_per_instance_hour_usd": 0.096,
+            "project_balance_usd": 70.45, "seven_day_envelope_usd": 70.46,
             "raw_values_recorded": False,
         }
         with self.assertRaisesRegex(RESIZE.ResizeRefused, "price, balance"):
@@ -448,8 +448,8 @@ class AdmissionTests(unittest.TestCase):
             cost_path.write_text(json.dumps({
                 "schema_version": 1, "phase": 6, "integrated_commit": COMMIT,
                 "captured_at": NOW.isoformat(), "shape": "CPU.8V.32G", "location": "FIN-03",
-                "on_demand_available": True, "price_per_instance_hour_usd": 0.0558,
-                "project_balance_usd": 100.0, "seven_day_envelope_usd": 66.6747,
+                "on_demand_available": True, "price_per_instance_hour_usd": 0.096,
+                "project_balance_usd": 100.0, "seven_day_envelope_usd": 70.46,
                 "raw_values_recorded": False,
             }), encoding="utf-8")
             capacity_path.write_text(json.dumps({

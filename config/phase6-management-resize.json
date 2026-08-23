@@ -39,8 +39,8 @@
   },
   "freshness_seconds": 600,
   "cost": {
-    "target_price_per_instance_hour_usd": 0.0558,
-    "approved_seven_day_envelope_usd": 66.6747,
+    "target_price_per_instance_hour_usd": 0.096,
+    "approved_seven_day_envelope_usd": 70.46,
     "minimum_balance_with_reserve_usd": 70.46
   },
   "capacity": {
