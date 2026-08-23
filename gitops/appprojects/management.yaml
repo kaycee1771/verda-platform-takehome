@@ -5,7 +5,7 @@ metadata:
   name: management
   namespace: argocd
 spec:
-  description: Phase 6 Rancher management-plane trust domain
+  description: Rancher management-plane trust domain
   sourceRepos:
     - https://github.com/kaycee1771/verda-platform-takehome.git
     - https://releases.rancher.com/server-charts/stable
@@ -18,6 +18,7 @@ spec:
     - {group: admissionregistration.k8s.io, kind: ValidatingWebhookConfiguration}
     - {group: rbac.authorization.k8s.io, kind: ClusterRole}
     - {group: rbac.authorization.k8s.io, kind: ClusterRoleBinding}
+    - {group: scheduling.k8s.io, kind: PriorityClass}
   namespaceResourceWhitelist:
     - {group: "*", kind: "*"}
   orphanedResources: {warn: true}
