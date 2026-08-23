@@ -1,13 +1,33 @@
-# Demo Script
+# Ten-Minute Demo
 
-## Phase 1 repository demonstration
+## 0–1 — Architecture
 
-1. Run `make help` and show the canonical commands plus explicit future-phase guards.
-2. Run `make bootstrap-tools` from a clean clone and review the pinned-version report.
-3. Run `make validate` with the Docker network disabled.
-4. Run `make validate-negative` and show all four invalid artifacts being rejected.
-5. Run `make secret-scan` and inspect only the clean, redacted reports.
-6. Open `.github/workflows/validate.yml` and compare it with `make ci`.
+Show [architecture](architecture.md): one three-node RKE2 cluster, GitOps ownership, and the cost/time tradeoff. Mention the separate-cluster production evolution briefly.
 
-The live platform demonstration is intentionally deferred until its infrastructure and verification
-phases are complete.
+## 1–2 — Kubernetes and Rancher
+
+Show three Ready nodes and API readiness, then Rancher with the local cluster Active. Mention the protected direct kubeconfig recovery path.
+
+## 2–4 — GitOps and environments
+
+Show Argo CD, the platform root and environment applications. Show dev/staging/prod deployments and the identical image digest.
+
+## 4–5 — Harbor
+
+Open the private `platform-demo` project, the immutable artifact, and its successful Trivy report.
+
+## 5–7 — Monitoring and logging
+
+Open the platform Grafana dashboard and a `platform_demo` metric. Show the controlled alert firing/resolution evidence. Run the documented Loki query and show structured application records.
+
+## 7–8 — Security and storage
+
+Show restricted pod security/default-deny policy, Ready certificates, Longhorn nodes/volumes and dedicated disks.
+
+## 8–9 — Reproducibility
+
+Explain Terraform/Ansible/Argo ownership. Show `make validate` and the protected read-only `make verify`.
+
+## 9–10 — Cost and limitations
+
+Show the $0.231645/hour rate, review window, teardown plan, shared-cluster limitation and production evolution.

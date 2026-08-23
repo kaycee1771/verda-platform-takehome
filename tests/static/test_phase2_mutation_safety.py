@@ -219,7 +219,7 @@ function verda {{
   $global:LASTEXITCODE = 0
   if ($joined -match ' status$| status ') {{ '{{"financials":{{"balance":100}},"instances":{{"total":3}},"volumes":{{"total":6}}}}' }}
   elseif ($joined -match 'availability') {{ '{{"available":true,"spot":false}}' }}
-  elseif ($joined -match 'instance-types') {{ '[{{"instance_type":"CPU.4V.16G","price_per_hour":0.0279}}]' }}
+  elseif ($joined -match 'instance-types') {{ '[{{"instance_type":"CPU.4V.16G","price_per_hour":0.048}}]' }}
   elseif ($joined -match 'images') {{ '[{{"id":"77edfb23-bb0d-41cc-a191-dccae45d96fd","image_type":"ubuntu-24.04"}}]' }}
   else {{ exit 41 }}
 }}
@@ -389,7 +389,7 @@ function verda {{
   $global:LASTEXITCODE = 0
   if ($joined -match ' status$| status ') {{ '{{"financials":{{"balance":100}}}}' }}
   elseif ($joined -match 'availability') {{ '{{"available":true,"spot":false}}' }}
-  elseif ($joined -match 'instance-types') {{ '[{{"instance_type":"CPU.4V.16G","price_per_hour":0.0279}}]' }}
+  elseif ($joined -match 'instance-types') {{ '[{{"instance_type":"CPU.4V.16G","price_per_hour":0.048}}]' }}
   elseif ($joined -match 'images') {{ '[{{"id":"77edfb23-bb0d-41cc-a191-dccae45d96fd","image_type":"ubuntu-24.04"}}]' }}
   else {{ exit 41 }}
 }}
@@ -456,7 +456,7 @@ function verda {{
   $global:LASTEXITCODE = 0
   if ($joined -match ' status$| status ') {{ '{{"financials":{{"balance":100}}}}' }}
   elseif ($joined -match 'availability') {{ '{{"available":true,"spot":false}}' }}
-  elseif ($joined -match 'instance-types') {{ '[{{"instance_type":"CPU.4V.16G","price_per_hour":0.0279}}]' }}
+  elseif ($joined -match 'instance-types') {{ '[{{"instance_type":"CPU.4V.16G","price_per_hour":0.048}}]' }}
   elseif ($joined -match 'images') {{ '[{{"id":"77edfb23-bb0d-41cc-a191-dccae45d96fd","image_type":"ubuntu-24.04"}}]' }}
   else {{ exit 41 }}
 }}

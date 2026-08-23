@@ -1,7 +1,5 @@
 # Evidence
 
-Evidence is curated by phase and must be reproducible, minimal, timestamped, and free of secrets.
-Raw captures remain under ignored `.local/` or `evidence/**/raw/` paths until sanitization is reviewed.
+Start with the [curated final evidence index](final/00-index.md). It maps each mandatory assignment requirement to concise, sanitized live proof.
 
-Every evidence index records the command, result, relevant hashes, limitations, and a statement that
-no credential material is included.
+The older `evidence/phase-*` directories are implementation-history records retained for traceability. They are not the primary evaluator path. Raw captures, credentials, kubeconfigs, Terraform state, private endpoints and secret values remain ignored under `.local/` and are never copied into evidence.

@@ -189,7 +189,8 @@ class Phase6AlloyContractTests(unittest.TestCase):
         self.assertTrue(self.values["alloy"]["clustering"]["enabled"])
         self.assertIn('loki.source.kubernetes "pod_logs"', self.config)
         self.assertIn('loki.source.kubernetes_events "cluster_events"', self.config)
-        self.assertIn('field = "spec.nodeName=" + sys.env("HOSTNAME")', self.config)
+        self.assertNotIn('field = "spec.nodeName=" + sys.env("HOSTNAME")', self.config)
+        self.assertIn('role = "pod"', self.config)
         self.assertEqual(self.config.count("clustering {"), 2)
         self.assertEqual(self.config.count("enabled = true"), 2)
 
