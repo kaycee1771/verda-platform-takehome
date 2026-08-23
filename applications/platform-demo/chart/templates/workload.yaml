@@ -1,5 +1,5 @@
 {{- if .Values.activation.enabled }}
-{{- $admission := include "stageASmoke.assertActivation" . -}}
+{{- $admission := include "platformDemo.assertActivation" . -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -7,7 +7,7 @@ metadata:
   name: platform-demo
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    {{- include "stageASmoke.labels" . | nindent 4 }}
+    {{- include "platformDemo.labels" . | nindent 4 }}
   annotations:
     argocd.argoproj.io/sync-wave: "10"
     verda.platform/activation: {{ $admission | quote }}
@@ -26,7 +26,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "stageASmoke.labels" . | nindent 8 }}
+        {{- include "platformDemo.labels" . | nindent 8 }}
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/path: /metrics
@@ -91,7 +91,7 @@ metadata:
   name: platform-demo
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    {{- include "stageASmoke.labels" . | nindent 4 }}
+    {{- include "platformDemo.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
@@ -106,11 +106,11 @@ metadata:
   name: platform-demo
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    {{- include "stageASmoke.labels" . | nindent 4 }}
+    {{- include "platformDemo.labels" . | nindent 4 }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    verda.platform/authentication-boundary: public-smoke-no-administrative-surface
+    verda.platform/authentication-boundary: public-demo-no-administrative-surface
 spec:
   ingressClassName: traefik
   tls:
@@ -133,7 +133,7 @@ metadata:
   name: platform-demo
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    {{- include "stageASmoke.labels" . | nindent 4 }}
+    {{- include "platformDemo.labels" . | nindent 4 }}
     platform.verda-demo.io/monitor: "true"
 spec:
   selector:

@@ -13,8 +13,6 @@ resources:
   - monitoring-resources.yaml
   - loki.yaml
   - alloy.yaml
-  - velero-controller.yaml
-  - velero-resources.yaml
   - sealed-secrets-monitoring.yaml
   - kyverno-monitoring.yaml
   - kyverno-policies.yaml

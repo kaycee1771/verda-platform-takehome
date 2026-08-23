@@ -1,14 +1,14 @@
-{{- define "stageASmoke.labels" -}}
+{{- define "platformDemo.labels" -}}
 app.kubernetes.io/name: platform-demo
 app.kubernetes.io/instance: platform-demo
-app.kubernetes.io/component: acceptance-smoke
+app.kubernetes.io/component: demonstrator
 app.kubernetes.io/part-of: platform-demo
 app.kubernetes.io/managed-by: Helm
 platform.verda-demo.io/environment: {{ .Values.environment | quote }}
 platform.verda-demo.io/owner: platform-operations
 {{- end -}}
 
-{{- define "stageASmoke.assertEnvironment" -}}
+{{- define "platformDemo.assertEnvironment" -}}
 {{- $namespaces := dict "dev" "demo-dev" "staging" "demo-staging" "prod" "demo-prod" -}}
 {{- $replicas := dict "dev" 1 "staging" 1 "prod" 2 -}}
 {{- if not (hasKey $namespaces .Values.environment) -}}
@@ -23,10 +23,10 @@ platform.verda-demo.io/owner: platform-operations
 {{- if ne (int .Values.replicas) (int (index $replicas .Values.environment)) -}}
 {{- fail "replica count must be dev=1, staging=1, prod=2" -}}
 {{- end -}}
-{{- if not (regexMatch (printf "^platform-%s\\.([0-9]{1,3}-){3}[0-9]{1,3}\\.sslip\\.io$" .Values.environment) .Values.hostname) -}}
-{{- fail "hostname must be platform-<environment>.<IPv4-with-dashes>.sslip.io" -}}
+{{- if not (regexMatch (printf "^platform-%s\\.([0-9]{1,3}-){3}[0-9]{1,3}\\.nip\\.io$" .Values.environment) .Values.hostname) -}}
+{{- fail "hostname must be platform-<environment>.<IPv4-with-dashes>.nip.io" -}}
 {{- end -}}
-{{- $encoded := trimSuffix ".sslip.io" (trimPrefix (printf "platform-%s." .Values.environment) .Values.hostname) -}}
+{{- $encoded := trimSuffix ".nip.io" (trimPrefix (printf "platform-%s." .Values.environment) .Values.hostname) -}}
 {{- range $octet := splitList "-" $encoded -}}
   {{- if or (lt (atoi $octet) 0) (gt (atoi $octet) 255) -}}
   {{- fail "hostname contains an invalid IPv4 octet" -}}
@@ -35,8 +35,8 @@ platform.verda-demo.io/owner: platform-operations
 verified
 {{- end -}}
 
-{{- define "stageASmoke.assertActivation" -}}
-{{- include "stageASmoke.assertEnvironment" . -}}
+{{- define "platformDemo.assertActivation" -}}
+{{- include "platformDemo.assertEnvironment" . -}}
 {{- if not .Values.certificate.bootstrapEnabled -}}
 {{- fail "activation is blocked until the staging certificate bootstrap is enabled" -}}
 {{- end -}}

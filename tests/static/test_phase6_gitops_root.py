@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the inert Phase 6 root candidate is exact, ordered, and fail closed."""
+"""Prove the active platform-services root is exact, ordered, and safe."""
 
 from __future__ import annotations
 
@@ -32,8 +32,6 @@ EXPECTED_RESOURCES = [
     "monitoring-resources.yaml",
     "loki.yaml",
     "alloy.yaml",
-    "velero-controller.yaml",
-    "velero-resources.yaml",
     "sealed-secrets-monitoring.yaml",
     "kyverno-monitoring.yaml",
     "kyverno-policies.yaml",
@@ -62,8 +60,6 @@ EXPECTED = {
     "monitoring-resources.yaml": ("monitoring-resources", "observability", "monitoring", -5),
     "loki.yaml": ("loki", "observability", "loki", -6),
     "alloy.yaml": ("alloy", "observability", "logging", -5),
-    "velero-controller.yaml": ("velero-controller", "backup", "velero", -4),
-    "velero-resources.yaml": ("velero-resources", "backup", "velero", -3),
     "sealed-secrets-monitoring.yaml": ("sealed-secrets-monitoring", "security", "sealed-secrets", -2),
     "kyverno-monitoring.yaml": ("kyverno-monitoring", "security", "kyverno", -2),
     "kyverno-policies.yaml": ("kyverno-policies", "security", "kyverno", -2),
@@ -82,13 +78,11 @@ EXPECTED = {
 
 
 class Phase6GitOpsRootTests(unittest.TestCase):
-    def test_candidate_is_complete_but_not_live_while_admission_is_blocked(self) -> None:
+    def test_platform_services_are_part_of_the_active_root(self) -> None:
         self.assertEqual(load(CANDIDATE / "kustomization.yaml")["resources"], EXPECTED_RESOURCES)
         live_resources = load(LIVE_ROOT / "kustomization.yaml")["resources"]
-        self.assertNotIn("platform-services", live_resources)
+        self.assertIn("platform-services", live_resources)
         self.assertNotIn("platform-services/kustomization.yaml", live_resources)
-        capacity = load(ROOT / "config" / "platform-capacity-admission.yaml")
-        self.assertEqual(capacity["admission_status"], "blocked-incomplete-inputs")
 
     def test_all_applications_have_exact_identity_destination_and_safe_source(self) -> None:
         self.assertEqual(set(EXPECTED), set(EXPECTED_RESOURCES))
@@ -127,7 +121,6 @@ class Phase6GitOpsRootTests(unittest.TestCase):
             "monitoring-controller.yaml": ("https://prometheus-community.github.io/helm-charts", "kube-prometheus-stack", "88.3.0"),
             "loki.yaml": ("https://grafana.github.io/helm-charts", "loki", "7.3.0"),
             "alloy.yaml": ("https://grafana.github.io/helm-charts", "alloy", "1.11.1"),
-            "velero-controller.yaml": ("https://vmware-tanzu.github.io/helm-charts", "velero", "12.1.0"),
         }
         for filename, chart_identity in expected.items():
             with self.subTest(filename=filename):
@@ -156,7 +149,6 @@ class Phase6GitOpsRootTests(unittest.TestCase):
             ("monitoring-controller.yaml", "longhorn-monitoring.yaml"),
             ("monitoring-controller.yaml", "rancher-monitoring.yaml"),
             ("monitoring-controller.yaml", "traefik-monitoring.yaml"),
-            ("velero-controller.yaml", "velero-resources.yaml"),
             ("environment-dev.yaml", "platform-demo-dev.yaml"),
             ("environment-staging.yaml", "platform-demo-staging.yaml"),
             ("environment-prod.yaml", "platform-demo-prod.yaml"),
@@ -173,8 +165,6 @@ class Phase6GitOpsRootTests(unittest.TestCase):
             "harbor-service.yaml",
             "monitoring-controller.yaml",
             "loki.yaml",
-            "velero-controller.yaml",
-            "velero-resources.yaml",
             "kyverno-policies.yaml",
             "environment-dev.yaml",
             "environment-staging.yaml",

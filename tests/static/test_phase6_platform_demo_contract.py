@@ -177,7 +177,7 @@ class Phase6StageASmokeContractTests(unittest.TestCase):
                 result = helm_template(environment)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(objects(result.stdout), [])
-        self.assertEqual(digests, {"sha256:REQUIRED_STAGE_A_SMOKE_IMAGE_DIGEST"})
+        self.assertEqual(digests, {"sha256:REQUIRED_PLATFORM_DEMO_IMAGE_DIGEST"})
 
     def test_certificate_bootstrap_is_separate_from_workload_activation(self) -> None:
         result = helm_template("dev", "certificate.bootstrapEnabled=true")
@@ -188,7 +188,7 @@ class Phase6StageASmokeContractTests(unittest.TestCase):
         certificate = next(item for item in rendered if item["kind"] == "Certificate")
         self.assertEqual(
             certificate["spec"]["dnsNames"],
-            ["platform-dev.95-133-252-214.sslip.io"],
+            ["platform-dev.95-133-252-214.nip.io"],
         )
         self.assertEqual(certificate["spec"]["secretName"], "platform-demo-staging-tls")
 
@@ -313,7 +313,7 @@ class Phase6StageASmokeContractTests(unittest.TestCase):
         self.assertFalse(schema["properties"]["activation"]["additionalProperties"])
         self.assertFalse(schema["properties"]["certificate"]["additionalProperties"])
         invalid = helm_template(
-            "dev", *admitted_settings(), "hostname=platform-prod.192-0-2-10.sslip.io"
+            "dev", *admitted_settings(), "hostname=platform-prod.192-0-2-10.nip.io"
         )
         self.assertNotEqual(invalid.returncode, 0)
 

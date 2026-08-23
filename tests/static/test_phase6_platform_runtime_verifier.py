@@ -87,9 +87,9 @@ class Phase6StageARuntimeVerifierTests(unittest.TestCase):
         self.rancher_endpoint = self.root / "rancher.endpoint"
         self.harbor_endpoint = self.root / "harbor.endpoint"
         self.grafana_endpoint = self.root / "grafana.endpoint"
-        write_file(self.rancher_endpoint, "https://rancher.192-0-2-10.sslip.io\n")
-        write_file(self.harbor_endpoint, "https://harbor.192-0-2-10.sslip.io\n")
-        write_file(self.grafana_endpoint, "https://grafana.192-0-2-10.sslip.io\n")
+        write_file(self.rancher_endpoint, "https://rancher.192-0-2-10.nip.io\n")
+        write_file(self.harbor_endpoint, "https://harbor.192-0-2-10.nip.io\n")
+        write_file(self.grafana_endpoint, "https://grafana.192-0-2-10.nip.io\n")
 
         self.rancher_token = self.root / "rancher.header"
         self.harbor_token = self.root / "harbor.header"
@@ -112,7 +112,7 @@ class Phase6StageARuntimeVerifierTests(unittest.TestCase):
             self.application_endpoints,
             json.dumps(
                 {
-                    environment: f"https://demo-{environment}.192-0-2-10.sslip.io"
+                    environment: f"https://demo-{environment}.192-0-2-10.nip.io"
                     for environment in ("dev", "staging", "prod")
                 }
             ),
@@ -308,15 +308,15 @@ class Phase6StageARuntimeVerifierTests(unittest.TestCase):
             if args[:2] == ["get", "deployment"]:
                 environment = environment_name(namespace)
                 replicas = {"dev":1,"staging":1,"prod":2}[environment]
-                image = "harbor.192-0-2-10.sslip.io/platform-demo/platform-demo@" + os.environ["MOCK_IMAGE_DIGEST"]
+                image = "harbor.192-0-2-10.nip.io/platform-demo/platform-demo@" + os.environ["MOCK_IMAGE_DIGEST"]
                 emit({"metadata":{"name":"platform-demo","generation":4},"spec":{"replicas":replicas,"template":{"spec":{"serviceAccountName":"platform-demo","containers":[{"name":"platform-demo","image":image}]}}},"status":ready_status(replicas)}); raise SystemExit
             if args[:2] == ["get", "ingress"]:
                 environment = environment_name(namespace)
-                host = f"demo-{environment}.192-0-2-10.sslip.io"
+                host = f"demo-{environment}.192-0-2-10.nip.io"
                 emit({"items":[{"metadata":{"name":"platform-demo","labels":{"app.kubernetes.io/name":"platform-demo"}},"spec":{"ingressClassName":"traefik","rules":[{"host":host}],"tls":[{"hosts":[host],"secretName":"platform-demo-tls"}]}}]}); raise SystemExit
             if args[:2] == ["get", "certificate"]:
                 environment = environment_name(namespace)
-                host = f"demo-{environment}.192-0-2-10.sslip.io"
+                host = f"demo-{environment}.192-0-2-10.nip.io"
                 emit({"items":[{"metadata":{"name":"platform-demo-production"},"spec":{"secretName":"platform-demo-tls","dnsNames":[host]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}); raise SystemExit
             if args[:2] == ["get", "service"] and namespace == "monitoring":
                 emit({"items":[{"metadata":{"name":"monitoring-prometheus","labels":{"app.kubernetes.io/name":"prometheus"}},"spec":{"ports":[{"name":"http-web","port":9090}]}}]}); raise SystemExit
@@ -402,7 +402,7 @@ class Phase6StageARuntimeVerifierTests(unittest.TestCase):
         forbidden = (
             "192-0-2-10",
             "192.0.2.20",
-            "sslip.io",
+            "nip.io",
             "token-reviewer",
             "YWRtaW46",
             "grafana-reviewer",

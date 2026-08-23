@@ -2,7 +2,7 @@
 environment: dev
 namespace: demo-dev
 replicas: 1
-hostname: platform-dev.95-133-252-214.sslip.io
+hostname: platform-dev.95-133-252-214.nip.io
 priorityClassName: platform-workload
 serviceAccountName: platform-demo
 imagePullSecretName: platform-demo-registry
@@ -15,8 +15,8 @@ certificate:
   stagingSecretName: platform-demo-staging-tls
   productionSecretName: platform-demo-tls
 image:
-  repository: harbor.95-133-252-214.sslip.io/platform-demo/platform-demo
-  digest: sha256:REQUIRED_STAGE_A_SMOKE_IMAGE_DIGEST
+  repository: harbor.95-133-252-214.nip.io/platform-demo/platform-demo
+  digest: sha256:REQUIRED_PLATFORM_DEMO_IMAGE_DIGEST
   pullPolicy: IfNotPresent
 resources:
   requests: {cpu: 10m, memory: 16Mi}

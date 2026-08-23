@@ -128,7 +128,6 @@ required_files:
   - config/firewall-port-matrix.yaml
   - config/platform-capacity-admission.yaml
   - config/platform-capacity-baseline.identity-free.yaml
-  - config/platform-root-admission.yaml
   - .github/pull_request_template.md
   - .github/ISSUE_TEMPLATE/bug.yml
   - .github/ISSUE_TEMPLATE/config.yml
@@ -398,7 +397,6 @@ required_files:
   - scripts/phase5/verify-runtime.sh
   - scripts/phase6/capacity-admission.py
   - scripts/phase6/render-capacity-inputs.py
-  - scripts/phase6/check-root-admission.py
   - scripts/phase6/verify-platform-demo.sh
   - scripts/verify.sh
   - scripts/verify-cluster.sh

@@ -15,7 +15,7 @@ as an immutable digest. `scratch` is Docker's empty reserved base and has no mut
 1. Verify the locked builder digest, build without network-dependent modules, test, scan, push
    once to Harbor, and record the resulting application digest.
 2. Set `certificate.bootstrapEnabled=true` for one environment and verify the staging
-   Certificate for its exact `sslip.io` hostname.
+   Certificate for its exact `nip.io` hostname.
 3. Confirm the namespace-owned `platform-demo-registry` SealedSecret and Prometheus Operator CRD.
 4. Replace the application digest sentinel, set every gate and `activation.enabled=true`, and
    reconcile that environment. Repeat without rebuilding for staging and production.

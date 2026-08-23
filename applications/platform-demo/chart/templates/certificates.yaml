@@ -1,5 +1,5 @@
 {{- if .Values.certificate.bootstrapEnabled }}
-{{- $environment := include "stageASmoke.assertEnvironment" . -}}
+{{- $environment := include "platformDemo.assertEnvironment" . -}}
 ---
 apiVersion: cert-manager.io/v1
 kind: Issuer
