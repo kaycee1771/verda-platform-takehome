@@ -54,7 +54,6 @@ class Phase6EnvironmentFoundationTests(unittest.TestCase):
                 "monitoring",
                 "loki",
                 "logging",
-                "velero",
             },
         )
         for item in namespaces:

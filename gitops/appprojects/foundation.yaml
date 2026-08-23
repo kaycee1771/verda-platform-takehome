@@ -5,7 +5,7 @@ metadata:
   name: foundation
   namespace: argocd
 spec:
-  description: Phase 6 namespace, priority, quota, and baseline isolation ownership
+  description: Namespace, priority, quota, and baseline isolation ownership
   sourceRepos:
     - https://github.com/kaycee1771/verda-platform-takehome.git
   destinations:
@@ -13,6 +13,13 @@ spec:
     - {namespace: demo-dev, server: https://kubernetes.default.svc}
     - {namespace: demo-staging, server: https://kubernetes.default.svc}
     - {namespace: demo-prod, server: https://kubernetes.default.svc}
+    - {namespace: sealed-secrets, server: https://kubernetes.default.svc}
+    - {namespace: kyverno, server: https://kubernetes.default.svc}
+    - {namespace: cattle-system, server: https://kubernetes.default.svc}
+    - {namespace: harbor, server: https://kubernetes.default.svc}
+    - {namespace: monitoring, server: https://kubernetes.default.svc}
+    - {namespace: loki, server: https://kubernetes.default.svc}
+    - {namespace: logging, server: https://kubernetes.default.svc}
   clusterResourceWhitelist:
     - {group: "", kind: Namespace}
     - {group: scheduling.k8s.io, kind: PriorityClass}

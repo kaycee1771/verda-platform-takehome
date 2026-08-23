@@ -43,7 +43,19 @@ class Phase6AppProjectTests(unittest.TestCase):
         expected = {
             "foundation.yaml": (
                 {GIT},
-                {"argocd", "demo-dev", "demo-staging", "demo-prod"},
+                {
+                    "argocd",
+                    "demo-dev",
+                    "demo-staging",
+                    "demo-prod",
+                    "sealed-secrets",
+                    "kyverno",
+                    "cattle-system",
+                    "harbor",
+                    "monitoring",
+                    "loki",
+                    "logging",
+                },
             ),
             "security.yaml": (
                 {
