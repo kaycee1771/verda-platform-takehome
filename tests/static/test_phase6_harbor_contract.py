@@ -329,7 +329,18 @@ class Phase6HarborContractTests(unittest.TestCase):
         admitted = helm_template(SECRETS, *settings)
         self.assertEqual(admitted.returncode, 0, admitted.stderr)
         rendered = objects(admitted.stdout)
-        self.assertEqual(len(rendered), 7)
+        self.assertEqual(
+            {item["metadata"]["name"] for item in rendered},
+            {
+                "harbor-admin",
+                "harbor-core-secrets",
+                "harbor-token-signing",
+                "harbor-jobservice",
+                "harbor-registry",
+                "harbor-registry-credentials",
+                "harbor-database-credentials",
+            },
+        )
         self.assertEqual({item["kind"] for item in rendered}, {"SealedSecret"})
         self.assertNotIn("kind: Secret", admitted.stdout)
         self.assertNotIn("stringData:", admitted.stdout)
