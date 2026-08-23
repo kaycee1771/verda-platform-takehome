@@ -4,6 +4,11 @@ ROOT=pathlib.Path(__file__).parents[2]
 def load(name,path):
  s=importlib.util.spec_from_file_location(name,path); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
 P=load("pure_protocol",ROOT/"scripts/phase6/transaction-broker.py")
+_intent=P.TransactionProtocol.canonical_intent; _outcome=P.TransactionProtocol.canonical_outcome
+P.TransactionProtocol.canonical_intent=staticmethod(lambda trusted_transition_time="2026-08-21T12:00:00Z",**kw:
+ _intent(trusted_transition_time=trusted_transition_time,**kw))
+P.TransactionProtocol.canonical_outcome=staticmethod(lambda trusted_transition_time="2026-08-21T12:00:01Z",**kw:
+ _outcome(trusted_transition_time=trusted_transition_time,**kw))
 F=load("protocol_fixtures",ROOT/"tests/static/test_phase6_transaction_broker_spec.py")
 S=load("protocol_store",ROOT/"scripts/phase6/transaction-broker-store.py")
 PATH=ROOT/"scripts/phase6/transaction-broker.py"
@@ -14,6 +19,7 @@ def receipt(j,action,classification,evidence):
  serial=j["state_serial_before"]
  if action=="apply" and classification=="COMPLETE": serial+=1
  elif action in {"recover","postflight","rollback"} and j.get("state_serial_after") is not None: serial=j["state_serial_after"]
+ if action=="rollback" and classification=="COMPLETE": serial=j["state_serial_before"]
  return {"schema_version":1,"operation_id":j["operation_id"],"action":action,"intent_entry_sha256":j["history"][-1]["entry_sha256"],"authorization_sha256":j["authorization_sha256"],"authorization_history_sha256":j["authorization_history_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"],"fencing_token":j["pending_fencing_token"],"observed_at":"2026-08-21T12:00:01Z","probe_fresh":True,"probe_outcome":classification,"state_lineage_sha256":j["state_lineage_sha256"],"state_serial":serial,"gate_sha256":j["latest_gate_sha256"],"evidence_sha256":P.digest(evidence),"classification":classification,"event_evidence":evidence,"mode":"LIVE","raw_values_recorded":False}
 class CanonicalProtocolTests(unittest.TestCase):
  def _store(self,root):
@@ -217,6 +223,19 @@ class CanonicalProtocolTests(unittest.TestCase):
     store.cas(f.session.journal,expected_generation=prior["generation"],expected_lease_epoch=prior["lease_epoch"],
      expected_cas_nonce=h("bad-nonce"),expected_head_sha256=prior["history"][-1]["entry_sha256"])
    self.assertEqual((store.load()["generation"],store.load()["history"][-1]["entry_sha256"]),head)
+ def test_trusted_transition_clock_rejects_unchanged_stale_evidence(self):
+  f=F.BrokerFixture(); old=f.session.journal
+  with self.assertRaisesRegex(P.ProtocolRefused,"stale"):
+   P.TransactionProtocol.canonical_intent(journal=old,action="prepare",admission=admission(old),
+    evidence=f.fake.gate("pre_prepare"),trusted_transition_time="2026-08-21T13:00:00Z")
+  intent=P.TransactionProtocol.canonical_intent(journal=old,action="prepare",admission=admission(old),
+   evidence=f.fake.gate("pre_prepare")); f.go(intent); pending=f.session.journal
+  evidence={"prepare_receipt_sha256":h("prepared")}; r=receipt(pending,"prepare","COMPLETE",evidence)
+  with self.assertRaisesRegex(P.ProtocolRefused,"stale"):
+   P.TransactionProtocol.canonical_outcome(journal=pending,receipt=r,trusted_transition_time="2026-08-21T13:00:00Z")
+  event=P.TransactionProtocol.canonical_outcome(journal=pending,receipt=r)
+  with self.assertRaisesRegex(F.MODEL.BrokerRefused,"stale"):
+   f.go(event,dt.datetime(2026,8,21,13,0,tzinfo=dt.timezone.utc))
  def test_rollback_not_started_restores_each_durable_origin(self):
   for origin in ("APPLIED","RECOVERING","RECOVERED","POSTFLIGHT","ROLLBACK_REQUIRED"):
    with self.subTest(origin=origin), tempfile.TemporaryDirectory() as d:

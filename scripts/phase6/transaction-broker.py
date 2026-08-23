@@ -32,7 +32,7 @@ def timestamp(value: Any) -> dt.datetime:
 class TransactionProtocol:
  @staticmethod
  def canonical_intent(*, journal: dict[str,Any], action: str, admission: dict[str,Any],
-                      evidence: dict[str, Any]) -> dict[str, Any]:
+                      evidence: dict[str, Any], trusted_transition_time: str) -> dict[str, Any]:
   names={"prepare":"BEGIN_PREPARE","apply":"BEGIN_APPLY","recover":"BEGIN_RECOVERY",
          "postflight":"BEGIN_POSTFLIGHT","rollback":"BEGIN_ROLLBACK"}
   allowed=INTENT_STATES.get(action)
@@ -45,17 +45,17 @@ class TransactionProtocol:
   for key in ("operation_id","authorization_sha256","authorization_history_sha256","verifier_receipt_sha256",
               "broker_sha256","policy_sha256","rollback_policy_sha256","lease_id","fencing_token"):
    if not isinstance(admission[key],str) or not HEX64.fullmatch(admission[key]): refuse("admission digest differs")
-  verified=timestamp(admission["verified_at"]); updated=timestamp(journal["updated_at"])
-  if verified < updated or (verified-updated).total_seconds()>30: refuse("admission verification is stale or future-dated")
+  verified=timestamp(admission["verified_at"]); trusted=timestamp(trusted_transition_time)
+  if verified > trusted or (trusted-verified).total_seconds()>30: refuse("admission verification is stale or future-dated")
   expected_fence=digest({"intent_entry_sha256":journal["history"][-1]["entry_sha256"],
                          "lease_id":journal["lease_id"],"lease_epoch":journal["lease_epoch"]})
   if admission["fencing_token"]!=expected_fence: refuse("admission fencing token differs")
   if "event" in evidence: refuse("caller evidence cannot select event")
-  return {**evidence,"fencing_token":admission["fencing_token"],
+  return {**evidence,"fencing_token":admission["fencing_token"],"pending_admission_verified_at":admission["verified_at"],
           "admission_sha256":digest(admission),"event":names[action]}
 
  @staticmethod
- def canonical_outcome(*, journal: dict[str,Any], receipt: dict[str,Any]) -> dict[str, Any]:
+ def canonical_outcome(*, journal: dict[str,Any], receipt: dict[str,Any], trusted_transition_time: str) -> dict[str, Any]:
   complete={"prepare":"PREPARE_SUCCEEDED","apply":"APPLY_SUCCEEDED","recover":"RECOVERY_SUCCEEDED",
             "postflight":"POSTFLIGHT_SUCCEEDED","rollback":"ROLLBACK_SUCCEEDED"}
   if not isinstance(receipt,dict) or set(receipt)!=RECEIPT_KEYS or receipt.get("schema_version")!=1 \
@@ -75,7 +75,8 @@ class TransactionProtocol:
               "state_lineage_sha256","gate_sha256","evidence_sha256"):
    if not isinstance(receipt[key],str) or not HEX64.fullmatch(receipt[key]): refuse("outcome digest differs")
   observed=timestamp(receipt["observed_at"]); intent_time=timestamp(journal["history"][-1]["captured_at"])
-  if observed < intent_time or (observed-intent_time).total_seconds()>30:
+  trusted=timestamp(trusted_transition_time)
+  if observed < intent_time or observed > trusted or (trusted-observed).total_seconds()>30:
    refuse("outcome receipt is stale")
   if receipt["evidence_sha256"]!=digest(evidence): refuse("outcome evidence digest differs")
   if receipt["gate_sha256"]!=journal["latest_gate_sha256"] or type(receipt["state_serial"]) is not int \
@@ -86,16 +87,24 @@ class TransactionProtocol:
   if action in {"prepare","recover","postflight"} and serial != (journal.get("state_serial_after") or before):
    refuse("outcome serial changed outside provider apply")
   if action=="apply" and outcome=="COMPLETE" and serial != before+1: refuse("apply complete serial differs")
+  if action=="apply" and outcome=="COMPLETE" and evidence.get("state_serial_after") != serial:
+   refuse("apply receipt/evidence serial differs")
   if action=="apply" and outcome=="NOT_STARTED" and serial != before: refuse("apply no-effect serial differs")
+  if action=="apply" and outcome in {"PARTIAL","UNKNOWN"} and evidence.get("current_state_serial") != serial:
+   refuse("apply uncertain current-state serial differs")
   if action=="rollback" and outcome=="NOT_STARTED" and serial != journal["state_serial_after"]:
    refuse("rollback no-effect serial differs")
+  if action=="rollback" and outcome=="COMPLETE":
+   backup=evidence.get("post_rollback_backup_sha256")
+   if not isinstance(backup,dict) or backup.get("state_serial")!=serial or serial!=before:
+    refuse("rollback restored-state serial differs")
   if outcome=="COMPLETE" and action in {"postflight","rollback"} and evidence.get("zero_drift") is not True:
    refuse("terminal complete requires zero drift")
   if receipt["mode"] not in {"LIVE","ADOPTION"}: refuse("outcome receipt mode differs")
   if outcome != "COMPLETE" and receipt["mode"] != "ADOPTION":
    refuse("non-complete classification requires adoption mode")
   if action=="apply" and receipt["mode"]=="ADOPTION":
-   return {**evidence,"outcome":outcome,"fencing_token":journal["pending_fencing_token"],
+   return {**evidence,"outcome":outcome,"receipt_observed_at":receipt["observed_at"],"fencing_token":journal["pending_fencing_token"],
            "admission_sha256":journal["pending_admission_sha256"],"event":"ADOPT_APPLY"}
   stem="RECOVERY" if action=="recover" else action.upper()
   if outcome=="COMPLETE" and receipt["mode"]=="LIVE": name=complete[action]
@@ -103,7 +112,7 @@ class TransactionProtocol:
   elif outcome=="NOT_STARTED": name=f"ADOPT_{stem}_NOT_STARTED"
   elif outcome in {"PARTIAL","UNKNOWN"}: name=f"ADOPT_{stem}_{outcome}"
   else: refuse("canonical outcome requires a fresh supported adoption transition")
-  return {**evidence,"fencing_token":journal["pending_fencing_token"],
+  return {**evidence,"receipt_observed_at":receipt["observed_at"],"fencing_token":journal["pending_fencing_token"],
           "admission_sha256":journal["pending_admission_sha256"],"event":name}
 
 def main() -> int:
