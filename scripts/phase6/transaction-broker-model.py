@@ -56,7 +56,8 @@ JOURNAL_KEYS = {
     "rollback_policy_sha256", "integrated_commit", "node", "direction", "plan_sha256",
     "plan_semantic_sha256", "state_lineage_sha256", "state_serial_before", "state_serial_after",
     "generation", "cas_nonce", "lease_id", "lease_epoch", "pending_fencing_token", "pending_admission_sha256",
-    "state", "recovery_milestone", "rollback_origin_state",
+    "state", "recovery_milestone", "rollback_origin_state", "rollback_origin_fencing_token",
+    "rollback_origin_admission_sha256",
     "rollback_milestone", "prepare_receipt_sha256", "apply_receipt_sha256",
     "state_backup_sha256", "recovery_receipt_sha256", "postflight_sha256",
     "rollback_receipt_sha256", "latest_gate_sha256", "failure_class", "rollback_required",
@@ -104,12 +105,14 @@ EVENT_SPEC: dict[str, dict[str, Any]] = {
         "FAIL_RECOVERY_UNSAFE": {"failure_class", "rollback_required"},
         "FAIL_POSTFLIGHT_UNSAFE": {"failure_class", "rollback_required"},
         "BEGIN_ROLLBACK": {"latest_gate_sha256", "pending_fencing_token", "pending_admission_sha256",
-                           "rollback_milestone", "rollback_origin_state", "rollback_plan_sha256",
+                           "rollback_milestone", "rollback_origin_state", "rollback_origin_fencing_token",
+                           "rollback_origin_admission_sha256", "rollback_plan_sha256",
                            "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
                            "pre_rollback_backup_sha256"},
         "ROLLBACK_SUCCEEDED": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
         "ADOPT_ROLLBACK_COMPLETE": {"rollback_receipt_sha256", "post_rollback_backup_sha256", "rollback_required"},
-        "ADOPT_ROLLBACK_NOT_STARTED": {"rollback_milestone", "rollback_origin_state", "rollback_plan_sha256",
+        "ADOPT_ROLLBACK_NOT_STARTED": {"rollback_milestone", "rollback_origin_state", "rollback_origin_fencing_token",
+                                        "rollback_origin_admission_sha256", "rollback_plan_sha256",
                                         "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
                                         "pre_rollback_backup_sha256"},
         "ADOPT_ROLLBACK_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
@@ -135,6 +138,7 @@ EVENT_CONSTANT_UPDATES = {
     "FAIL_POSTFLIGHT_UNSAFE": {"failure_class": "POSTFLIGHT_UNSAFE", "rollback_required": True},
     "BEGIN_ROLLBACK": {"rollback_milestone": "ROLLBACK_ADMITTED"},
     "ADOPT_ROLLBACK_NOT_STARTED": {"rollback_milestone": "NONE", "rollback_origin_state": None,
+                                     "rollback_origin_fencing_token": None, "rollback_origin_admission_sha256": None,
                                      "rollback_plan_sha256": None, "rollback_plan_semantic_sha256": None,
                                      "rollback_current_state_receipt_sha256": None,
                                      "pre_rollback_backup_sha256": None},
@@ -216,9 +220,11 @@ def _allowed_event_fields(event: str, from_state: str | None, to_state: str) -> 
 def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payload: dict[str, Any]) -> None:
     if value is None and payload.get("rollback_milestone") == "NONE" and key in {
             "rollback_origin_state", "rollback_plan_sha256", "rollback_plan_semantic_sha256",
-            "rollback_current_state_receipt_sha256", "pre_rollback_backup_sha256"}:
+            "rollback_current_state_receipt_sha256", "pre_rollback_backup_sha256",
+            "rollback_origin_fencing_token", "rollback_origin_admission_sha256"}:
         return
-    if key in {"pending_fencing_token", "pending_admission_sha256"}:
+    if key in {"pending_fencing_token", "pending_admission_sha256", "rollback_origin_fencing_token",
+               "rollback_origin_admission_sha256"}:
         if value is not None: _digest(value, f"event.{key}")
     elif key in BACKUP_FIELDS:
         receipt = exact_keys(value, BACKUP_KEYS, f"event.{key}")
@@ -608,7 +614,8 @@ def validate_journal(journal: dict[str, Any]) -> None:
                 "verifier_receipt_sha256", "broker_sha256", "policy_sha256", "rollback_policy_sha256", "plan_sha256",
                 "plan_semantic_sha256", "state_lineage_sha256", "cas_nonce", "lease_id"):
         _digest(journal[key], f"journal.{key}")
-    for key in ("pending_fencing_token", "pending_admission_sha256"):
+    for key in ("pending_fencing_token", "pending_admission_sha256", "rollback_origin_fencing_token",
+                "rollback_origin_admission_sha256"):
         if journal[key] is not None: _digest(journal[key], f"journal.{key}")
     pending = journal["state"] in {"PREPARING", "APPLYING", "RECOVERING", "POSTFLIGHT", "ROLLING_BACK"}
     if pending != (journal["pending_fencing_token"] is not None and journal["pending_admission_sha256"] is not None):
@@ -637,6 +644,10 @@ def validate_journal(journal: dict[str, Any]) -> None:
         refuse("transaction journal retains rollback origin outside rollback provenance")
     if journal["state"] == "ROLLED_BACK" and journal["rollback_origin_state"] not in origins:
         refuse("rolled-back journal lacks exact rollback origin")
+    origin_pending = journal["rollback_origin_state"] in {"RECOVERING", "POSTFLIGHT"}
+    if origin_pending != (journal["rollback_origin_fencing_token"] is not None
+                          and journal["rollback_origin_admission_sha256"] is not None):
+        refuse("rollback pending-origin fence/admission relation differs")
     nullable = ("prepare_receipt_sha256", "apply_receipt_sha256",
                 "recovery_receipt_sha256", "postflight_sha256", "rollback_receipt_sha256",
                 "latest_gate_sha256",
@@ -886,7 +897,7 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
         "state_serial_before": authorization["state_serial_before"], "state_serial_after": None,
         "generation": 1, "cas_nonce": nonce, "lease_id": lease.lease_id, "lease_epoch": lease.epoch,
         "pending_fencing_token": None, "pending_admission_sha256": None,
-        "state": "AUTHORIZED",
+        "state": "AUTHORIZED", "rollback_origin_fencing_token": None, "rollback_origin_admission_sha256": None,
         "recovery_milestone": "NONE", "rollback_milestone": "NONE", "rollback_origin_state": None,
         "prepare_receipt_sha256": None, "apply_receipt_sha256": None, "state_backup_sha256": None,
         "pre_apply_backup_sha256": None, "post_apply_backup_sha256": None,
@@ -1029,9 +1040,11 @@ class BrokerModelSession:
             refuse("transaction journal target state differs")
         candidate = copy.deepcopy(self.journal)
         previous = candidate["state"]
-        updates = dict(updates or {})
+        supplied_updates = dict(updates or {})
+        updates: dict[str, Any] = {}
         if previous in {"PREPARING", "APPLYING", "RECOVERING", "POSTFLIGHT", "ROLLING_BACK"} and to_state != previous:
             updates.update({"pending_fencing_token": None, "pending_admission_sha256": None})
+        updates.update(supplied_updates)
         if updates:
             candidate.update(updates)
         candidate["state"] = to_state
@@ -1088,7 +1101,7 @@ class BrokerModelSession:
         # remains journal-only and does not depend on a caller receipt.
         pending_states = {"PREPARING", "APPLYING", "RECOVERING", "POSTFLIGHT", "ROLLING_BACK"}
         milestone_inputs = {"RECOVERY_MILESTONE", "ROLLBACK_MILESTONE"}
-        if state in pending_states and name not in milestone_inputs and name not in {"ADOPT_LEASE"}:
+        if state in pending_states and name not in milestone_inputs and name not in {"ADOPT_LEASE", "BEGIN_ROLLBACK"}:
             if (event.get("fencing_token") != self.journal["pending_fencing_token"]
                     or event.get("admission_sha256") != self.journal["pending_admission_sha256"]):
                 refuse("outcome pending fence/admission differs")
@@ -1375,6 +1388,8 @@ class BrokerModelSession:
                                           "pending_admission_sha256": _digest(event["admission_sha256"], "intent admission"),
                                           "rollback_milestone": "ROLLBACK_ADMITTED",
                                           "rollback_origin_state": state,
+                                          "rollback_origin_fencing_token": self.journal["pending_fencing_token"] if state in {"RECOVERING", "POSTFLIGHT"} else None,
+                                          "rollback_origin_admission_sha256": self.journal["pending_admission_sha256"] if state in {"RECOVERING", "POSTFLIGHT"} else None,
                                           "rollback_plan_sha256": event["rollback_plan_sha256"],
                                           "rollback_plan_semantic_sha256": event["rollback_plan_semantic_sha256"],
                                           "rollback_current_state_receipt_sha256": event["current_state_receipt_sha256"],
@@ -1382,6 +1397,8 @@ class BrokerModelSession:
         if name == "ADOPT_ROLLBACK_NOT_STARTED" and state == "ROLLING_BACK":
             exact_keys(event, common | {"probe_sha256", "exact_no_effect"}, name)
             origin=self.journal["rollback_origin_state"]
+            origin_fence=self.journal["rollback_origin_fencing_token"]
+            origin_admission=self.journal["rollback_origin_admission_sha256"]
             if (event["exact_no_effect"] is not True or self.journal["rollback_milestone"] != "ROLLBACK_ADMITTED"
                     or origin not in {"APPLIED", "RECOVERING", "RECOVERED", "POSTFLIGHT", "ROLLBACK_REQUIRED"}):
                 refuse("rollback NOT_STARTED lacks exact admitted no-effect origin proof")
@@ -1389,6 +1406,9 @@ class BrokerModelSession:
                                  event_name=name, to_state=origin, now=now,
                                  receipt=_digest(event["probe_sha256"], "rollback no-effect probe"),
                                  updates={"rollback_milestone":"NONE", "rollback_origin_state":None,
+                                          "pending_fencing_token":origin_fence if origin in {"RECOVERING", "POSTFLIGHT"} else None,
+                                          "pending_admission_sha256":origin_admission if origin in {"RECOVERING", "POSTFLIGHT"} else None,
+                                          "rollback_origin_fencing_token":None,"rollback_origin_admission_sha256":None,
                                           "rollback_plan_sha256":None,"rollback_plan_semantic_sha256":None,
                                           "rollback_current_state_receipt_sha256":None,
                                           "pre_rollback_backup_sha256":None})
