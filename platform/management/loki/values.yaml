@@ -136,6 +136,20 @@ gateway:
   replicas: 1
   priorityClassName: platform-important
   verboseLogging: false
+  podSecurityContext:
+    fsGroup: 101
+    runAsGroup: 101
+    runAsNonRoot: true
+    runAsUser: 101
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
   image:
     registry: docker.io
     repository: nginxinc/nginx-unprivileged

@@ -7,7 +7,7 @@
     "environment": {"type": "string", "enum": ["dev", "staging", "prod"]},
     "namespace": {"type": "string", "enum": ["demo-dev", "demo-staging", "demo-prod"]},
     "replicas": {"type": "integer", "minimum": 1, "maximum": 2},
-    "hostname": {"type": "string", "pattern": "^platform-(dev|staging|prod)\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.sslip\\.io$"},
+    "hostname": {"type": "string", "pattern": "^platform-(dev|staging|prod)\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.nip\\.io$"},
     "priorityClassName": {"const": "platform-workload"},
     "serviceAccountName": {"const": "platform-demo"},
     "imagePullSecretName": {"const": "platform-demo-registry"},
@@ -40,7 +40,7 @@
       "additionalProperties": false,
       "required": ["repository", "digest", "pullPolicy"],
       "properties": {
-        "repository": {"type": "string", "pattern": "^harbor\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.sslip\\.io/platform-demo/platform-demo$"},
+        "repository": {"type": "string", "pattern": "^harbor\\.(?:[0-9]{1,3}-){3}[0-9]{1,3}\\.nip\\.io/platform-demo/platform-demo$"},
         "digest": {"type": "string"},
         "pullPolicy": {"const": "IfNotPresent"}
       }
