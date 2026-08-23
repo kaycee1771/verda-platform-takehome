@@ -79,7 +79,7 @@ class Phase6AppProjectTests(unittest.TestCase):
                     "https://prometheus-community.github.io/helm-charts",
                     "https://grafana.github.io/helm-charts",
                 },
-                {"monitoring", "loki", "logging", "kube-system"},
+                {"monitoring", "loki", "logging", "kube-system", "default"},
             ),
             "backup.yaml": (
                 {GIT, "https://vmware-tanzu.github.io/helm-charts"},
