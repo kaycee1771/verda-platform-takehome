@@ -97,10 +97,11 @@ class TransactionProtocol:
   if action=="apply" and receipt["mode"]=="ADOPTION":
    return {**evidence,"outcome":outcome,"fencing_token":journal["pending_fencing_token"],
            "admission_sha256":journal["pending_admission_sha256"],"event":"ADOPT_APPLY"}
+  stem="RECOVERY" if action=="recover" else action.upper()
   if outcome=="COMPLETE" and receipt["mode"]=="LIVE": name=complete[action]
-  elif outcome=="COMPLETE": name=f"ADOPT_{action.upper()}_COMPLETE"
-  elif outcome=="NOT_STARTED": name=f"ADOPT_{action.upper()}_NOT_STARTED"
-  elif outcome in {"PARTIAL","UNKNOWN"}: name=f"ADOPT_{action.upper()}_{outcome}"
+  elif outcome=="COMPLETE": name=f"ADOPT_{stem}_COMPLETE"
+  elif outcome=="NOT_STARTED": name=f"ADOPT_{stem}_NOT_STARTED"
+  elif outcome in {"PARTIAL","UNKNOWN"}: name=f"ADOPT_{stem}_{outcome}"
   else: refuse("canonical outcome requires a fresh supported adoption transition")
   return {**evidence,"fencing_token":journal["pending_fencing_token"],
           "admission_sha256":journal["pending_admission_sha256"],"event":name}

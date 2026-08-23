@@ -16,6 +16,12 @@ def receipt(j,action,classification,evidence):
  elif action in {"recover","postflight","rollback"} and j.get("state_serial_after") is not None: serial=j["state_serial_after"]
  return {"schema_version":1,"operation_id":j["operation_id"],"action":action,"intent_entry_sha256":j["history"][-1]["entry_sha256"],"authorization_sha256":j["authorization_sha256"],"authorization_history_sha256":j["authorization_history_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"],"fencing_token":j["pending_fencing_token"],"observed_at":"2026-08-21T12:00:01Z","probe_fresh":True,"probe_outcome":classification,"state_lineage_sha256":j["state_lineage_sha256"],"state_serial":serial,"gate_sha256":j["latest_gate_sha256"],"evidence_sha256":P.digest(evidence),"classification":classification,"event_evidence":evidence,"mode":"LIVE","raw_values_recorded":False}
 class CanonicalProtocolTests(unittest.TestCase):
+ def _store(self,root):
+  def probe(p): st=p.lstat(); return {"reparse":False,"nlink":st.st_nlink,"device":st.st_dev,"identity":st.st_ino,"owner_only":True}
+  return S.DurableBrokerStore(operation_id=F.OPERATION,base=root,clock=lambda:F.NOW,security_probe=probe,allow_test_security_probe=True)
+ def _cas(self,store,old,new):
+  store.cas(new,expected_generation=old["generation"],expected_lease_epoch=old["lease_epoch"],
+            expected_cas_nonce=old["cas_nonce"],expected_head_sha256=old["history"][-1]["entry_sha256"])
  def test_no_effect_surface(self):
   self.assertEqual(subprocess.run([sys.executable,str(PATH)],capture_output=True).returncode,64)
   src=PATH.read_text()
@@ -88,4 +94,40 @@ class CanonicalProtocolTests(unittest.TestCase):
   restored=q.go({"event":"ADOPT_ROLLBACK_NOT_STARTED","probe_sha256":h("rollback-none"),"exact_no_effect":True})
   self.assertEqual((restored["state"],restored["rollback_origin_state"],restored["rollback_milestone"]),
                    ("APPLIED",None,"NONE"))
+ def test_real_store_recovery_adoption_classification_matrix(self):
+  expected={"COMPLETE":"RECOVERED","NOT_STARTED":"APPLIED","PARTIAL":"FAILED_SAFE","UNKNOWN":"FAILED_SAFE"}
+  for classification in expected:
+   with self.subTest(classification=classification), tempfile.TemporaryDirectory() as d:
+    f=F.BrokerFixture(); store=self._store(pathlib.Path(d))
+    store.cas(f.session.journal,expected_generation=0,expected_lease_epoch=0,
+              expected_cas_nonce=None,expected_head_sha256=None)
+    for event in ({"event":"BEGIN_PREPARE",**f.fake.gate("pre_prepare")},
+                  {"event":"PREPARE_SUCCEEDED","prepare_receipt_sha256":h("prepare")},
+                  {"event":"BEGIN_APPLY",**f.fake.gate("pre_apply_two_survivor")},
+                  {"event":"APPLY_SUCCEEDED","phase2_receipt_sha256":h("phase2"),
+                   "state_backup_sha256":F.backup("state",12),"pre_apply_backup_sha256":F.backup("pre",12),
+                   "post_apply_backup_sha256":F.backup("post",13),"state_lineage_sha256":f.authorization["state_lineage_sha256"],
+                   "state_serial_before":12,"state_serial_after":13}):
+     prior=f.session.journal; f.go(event); self._cas(store,prior,f.session.journal)
+    old=f.session.journal
+    intent=P.TransactionProtocol.canonical_intent(journal=old,action="recover",admission=admission(old),
+      evidence={**f.fake.gate("pre_recovery_two_survivor"),"inventory_sha256":h("inventory"),
+       "known_hosts_sha256":h("hosts"),"applied_state_receipt_sha256":old["apply_receipt_sha256"]})
+    f.go(intent); pending=f.session.journal; self._cas(store,old,pending)
+    if classification=="COMPLETE":
+     for milestone in S.MODEL.RECOVERY_MILESTONES[1:]:
+      prior=f.session.journal
+      f.go({"event":"RECOVERY_MILESTONE","milestone":milestone,"receipt_sha256":h("r-"+milestone),
+            "effect_probe_sha256":h("p-"+milestone),"exact_effect_verified":True})
+      self._cas(store,prior,f.session.journal)
+     pending=f.session.journal
+     evidence={"recovery_receipt_sha256":h("recovered"),"exact_effects_verified":True}
+    elif classification=="NOT_STARTED": evidence={"probe_sha256":h("none"),"exact_no_effect":True}
+    else: evidence={"probe_sha256":h("probe"),"current_state_receipt_sha256":h("current")}
+    r=receipt(pending,"recover",classification,evidence); r["mode"]="ADOPTION"
+    event=P.TransactionProtocol.canonical_outcome(journal=pending,receipt=r)
+    prior=f.session.journal; f.go(event); self._cas(store,prior,f.session.journal)
+    loaded=store.load(); S.MODEL.validate_journal(loaded)
+    self.assertEqual(loaded["state"],expected[classification])
+    self.assertIsNone(loaded["pending_fencing_token"])
 if __name__=="__main__": unittest.main()
