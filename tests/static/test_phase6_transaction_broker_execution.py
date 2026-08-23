@@ -11,7 +11,7 @@ def h(x): return hashlib.sha256(x.encode()).hexdigest()
 def admission(j):
  return {k:j[k] for k in ("operation_id","authorization_sha256","authorization_history_sha256","verifier_receipt_sha256","broker_sha256","policy_sha256","rollback_policy_sha256","lease_id","lease_epoch")}|{"fencing_token":h("fence"),"verified_at":"2026-08-21T12:00:00Z","raw_values_recorded":False}
 def receipt(j,action,classification,evidence):
- return {"schema_version":1,"operation_id":j["operation_id"],"action":action,"intent_entry_sha256":j["history"][-1]["entry_sha256"],"authorization_sha256":j["authorization_sha256"],"authorization_history_sha256":j["authorization_history_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"],"fencing_token":h("fence"),"observed_at":"2026-08-21T12:00:01Z","probe_fresh":True,"probe_outcome":classification,"state_lineage_sha256":j["state_lineage_sha256"],"state_serial":j["state_serial_before"],"gate_sha256":j["latest_gate_sha256"],"evidence_sha256":h("evidence"),"classification":classification,"event_evidence":evidence,"raw_values_recorded":False}
+ return {"schema_version":1,"operation_id":j["operation_id"],"action":action,"intent_entry_sha256":j["history"][-1]["entry_sha256"],"authorization_sha256":j["authorization_sha256"],"authorization_history_sha256":j["authorization_history_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"],"fencing_token":P.digest({"intent_entry_sha256":j["history"][-1]["entry_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"]}),"observed_at":"2026-08-21T12:00:01Z","probe_fresh":True,"probe_outcome":classification,"state_lineage_sha256":j["state_lineage_sha256"],"state_serial":j["state_serial_before"],"gate_sha256":j["latest_gate_sha256"],"evidence_sha256":P.digest(evidence),"classification":classification,"event_evidence":evidence,"mode":"LIVE","raw_values_recorded":False}
 class CanonicalProtocolTests(unittest.TestCase):
  def test_no_effect_surface(self):
   self.assertEqual(subprocess.run([sys.executable,str(PATH)],capture_output=True).returncode,64)
@@ -33,6 +33,13 @@ class CanonicalProtocolTests(unittest.TestCase):
    self.assertEqual(store.load()["state"],"PREPARED")
    r["lease_epoch"]-=1
    with self.assertRaises(P.ProtocolRefused): P.TransactionProtocol.canonical_outcome(journal=intent,receipt=r)
+   evil=admission(old)
+   with self.assertRaisesRegex(P.ProtocolRefused,"select event"):
+    P.TransactionProtocol.canonical_intent(journal=old,action="prepare",admission=evil,
+      evidence={**f.fake.gate("pre_prepare"),"event":"APPLY_SUCCEEDED"})
+   replay=receipt(intent,"prepare","COMPLETE",evidence); replay["intent_entry_sha256"]=old["history"][-1]["entry_sha256"]
+   with self.assertRaisesRegex(P.ProtocolRefused,"cross-intent"):
+    P.TransactionProtocol.canonical_outcome(journal=intent,receipt=replay)
  def test_absence_never_not_started_and_zero_drift(self):
   f=F.BrokerFixture(); f.prepare(); f.apply(); f.begin_recovery(); f.recovery_milestones()
   f.go({"event":"RECOVERY_SUCCEEDED","recovery_receipt_sha256":F.digest("recovered"),"exact_effects_verified":True})

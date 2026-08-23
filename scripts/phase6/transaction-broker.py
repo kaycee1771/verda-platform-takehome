@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Dormant pure Phase 6 two-CAS protocol. No effect implementation lives here."""
 from __future__ import annotations
-import hashlib, json, sys
+import datetime as dt, hashlib, json, re, sys
 from typing import Any
 
 ACTIONS = {"prepare", "apply", "recover", "postflight", "rollback"}
@@ -16,12 +16,18 @@ ADMISSION_KEYS={"operation_id","authorization_sha256","authorization_history_sha
 RECEIPT_KEYS={"schema_version","operation_id","action","intent_entry_sha256","authorization_sha256",
  "authorization_history_sha256","lease_id","lease_epoch","fencing_token","observed_at","probe_fresh",
  "probe_outcome","state_lineage_sha256","state_serial","gate_sha256","evidence_sha256","classification",
- "event_evidence","raw_values_recorded"}
+ "event_evidence","mode","raw_values_recorded"}
 
 class ProtocolRefused(ValueError): pass
 def refuse(message: str) -> None: raise ProtocolRefused(message)
 def canonical(value: Any) -> bytes: return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 def digest(value: Any) -> str: return hashlib.sha256(canonical(value)).hexdigest()
+HEX64=re.compile(r"^[0-9a-f]{64}$")
+def timestamp(value: Any) -> dt.datetime:
+ try:
+  if not isinstance(value,str) or not value.endswith("Z"): raise ValueError
+  return dt.datetime.fromisoformat(value[:-1]+"+00:00")
+ except (ValueError,TypeError): refuse("receipt timestamp differs")
 
 class TransactionProtocol:
  @staticmethod
@@ -36,30 +42,47 @@ class TransactionProtocol:
   for key in ("operation_id","authorization_sha256","authorization_history_sha256","verifier_receipt_sha256",
               "broker_sha256","policy_sha256","rollback_policy_sha256","lease_id","lease_epoch"):
    if admission[key]!=journal[key]: refuse("admission journal/fence differs")
-  return {"event":names[action], **evidence}
+  if "event" in evidence: refuse("caller evidence cannot select event")
+  return {**evidence,"event":names[action]}
 
  @staticmethod
  def canonical_outcome(*, journal: dict[str,Any], receipt: dict[str,Any]) -> dict[str, Any]:
   complete={"prepare":"PREPARE_SUCCEEDED","apply":"APPLY_SUCCEEDED","recover":"RECOVERY_SUCCEEDED",
             "postflight":"POSTFLIGHT_SUCCEEDED","rollback":"ROLLBACK_SUCCEEDED"}
-  if set(receipt)!=RECEIPT_KEYS or receipt.get("raw_values_recorded") is not False: refuse("outcome receipt schema differs")
+  if not isinstance(receipt,dict) or set(receipt)!=RECEIPT_KEYS or receipt.get("schema_version")!=1 \
+     or receipt.get("raw_values_recorded") is not False: refuse("outcome receipt schema differs")
   action=receipt.get("action"); outcome=receipt.get("classification"); evidence=receipt.get("event_evidence")
   if action not in complete or outcome not in ADOPTION or not isinstance(evidence,dict) \
      or journal.get("state")!=PENDING_STATES[action]: refuse("canonical outcome state differs")
+  if "event" in evidence: refuse("caller evidence cannot select event")
   for key in ("operation_id","authorization_sha256","authorization_history_sha256","lease_id","lease_epoch",
               "state_lineage_sha256"):
    expected=journal["state_lineage_sha256"] if key=="state_lineage_sha256" else journal[key]
    if receipt[key]!=expected: refuse("outcome receipt journal/fence differs")
-  if not receipt["probe_fresh"] or receipt["probe_outcome"]!=outcome or not receipt["observed_at"].endswith("Z"):
+  if receipt["intent_entry_sha256"]!=journal["history"][-1]["entry_sha256"]: refuse("cross-intent receipt replay differs")
+  expected_fence=digest({"intent_entry_sha256":receipt["intent_entry_sha256"],"lease_id":journal["lease_id"],
+                         "lease_epoch":journal["lease_epoch"]})
+  if receipt["fencing_token"]!=expected_fence: refuse("outcome fencing token differs")
+  for key in ("intent_entry_sha256","authorization_sha256","authorization_history_sha256","fencing_token",
+              "state_lineage_sha256","gate_sha256","evidence_sha256"):
+   if not isinstance(receipt[key],str) or not HEX64.fullmatch(receipt[key]): refuse("outcome digest differs")
+  if abs((timestamp(receipt["observed_at"])-timestamp(journal["updated_at"])).total_seconds())>30:
+   refuse("outcome receipt is stale")
+  if receipt["evidence_sha256"]!=digest(evidence): refuse("outcome evidence digest differs")
+  if receipt["gate_sha256"]!=journal["latest_gate_sha256"] or type(receipt["state_serial"]) is not int \
+     or receipt["state_serial"]<journal["state_serial_before"]: refuse("outcome state/gate relation differs")
+  if not receipt["probe_fresh"] or receipt["probe_outcome"]!=outcome:
    refuse("outcome requires fresh exact probe")
   if outcome=="COMPLETE" and action in {"postflight","rollback"} and evidence.get("zero_drift") is not True:
    refuse("terminal complete requires zero drift")
-  if outcome=="COMPLETE": name=complete[action]
+  if receipt["mode"] not in {"LIVE","ADOPTION"}: refuse("outcome receipt mode differs")
+  if outcome=="COMPLETE" and receipt["mode"]=="LIVE": name=complete[action]
+  elif outcome=="COMPLETE": name=f"ADOPT_{action.upper()}_COMPLETE"
   elif outcome=="NOT_STARTED": name=f"ADOPT_{action.upper()}_NOT_STARTED"
   elif outcome in {"PARTIAL","UNKNOWN"} and action in {"prepare","apply"}:
    name=f"ADOPT_{action.upper()}_{outcome}"
   else: refuse("canonical outcome requires a fresh supported adoption transition")
-  return {"event":name, **evidence}
+  return {**evidence,"event":name}
 
 def main() -> int:
  print("REFUSED: dormant Phase 6 protocol contains no effect adapter", file=sys.stderr); return 64
