@@ -51,7 +51,8 @@ class TransactionProtocol:
                          "lease_id":journal["lease_id"],"lease_epoch":journal["lease_epoch"]})
   if admission["fencing_token"]!=expected_fence: refuse("admission fencing token differs")
   if "event" in evidence: refuse("caller evidence cannot select event")
-  return {**evidence,"event":names[action]}
+  return {**evidence,"fencing_token":admission["fencing_token"],
+          "admission_sha256":digest(admission),"event":names[action]}
 
  @staticmethod
  def canonical_outcome(*, journal: dict[str,Any], receipt: dict[str,Any]) -> dict[str, Any]:
@@ -68,9 +69,8 @@ class TransactionProtocol:
    expected=journal["state_lineage_sha256"] if key=="state_lineage_sha256" else journal[key]
    if receipt[key]!=expected: refuse("outcome receipt journal/fence differs")
   if receipt["intent_entry_sha256"]!=journal["history"][-1]["entry_sha256"]: refuse("cross-intent receipt replay differs")
-  expected_fence=digest({"intent_entry_sha256":receipt["intent_entry_sha256"],"lease_id":journal["lease_id"],
-                         "lease_epoch":journal["lease_epoch"]})
-  if receipt["fencing_token"]!=expected_fence: refuse("outcome fencing token differs")
+  if (receipt["fencing_token"] != journal.get("pending_fencing_token")
+      or journal.get("pending_admission_sha256") is None): refuse("outcome persisted admission fence differs")
   for key in ("intent_entry_sha256","authorization_sha256","authorization_history_sha256","fencing_token",
               "state_lineage_sha256","gate_sha256","evidence_sha256"):
    if not isinstance(receipt[key],str) or not HEX64.fullmatch(receipt[key]): refuse("outcome digest differs")
@@ -95,13 +95,15 @@ class TransactionProtocol:
   if outcome != "COMPLETE" and receipt["mode"] != "ADOPTION":
    refuse("non-complete classification requires adoption mode")
   if action=="apply" and receipt["mode"]=="ADOPTION":
-   return {**evidence,"outcome":outcome,"event":"ADOPT_APPLY"}
+   return {**evidence,"outcome":outcome,"fencing_token":journal["pending_fencing_token"],
+           "admission_sha256":journal["pending_admission_sha256"],"event":"ADOPT_APPLY"}
   if outcome=="COMPLETE" and receipt["mode"]=="LIVE": name=complete[action]
   elif outcome=="COMPLETE": name=f"ADOPT_{action.upper()}_COMPLETE"
   elif outcome=="NOT_STARTED": name=f"ADOPT_{action.upper()}_NOT_STARTED"
   elif outcome in {"PARTIAL","UNKNOWN"}: name=f"ADOPT_{action.upper()}_{outcome}"
   else: refuse("canonical outcome requires a fresh supported adoption transition")
-  return {**evidence,"event":name}
+  return {**evidence,"fencing_token":journal["pending_fencing_token"],
+          "admission_sha256":journal["pending_admission_sha256"],"event":name}
 
 def main() -> int:
  print("REFUSED: dormant Phase 6 protocol contains no effect adapter", file=sys.stderr); return 64

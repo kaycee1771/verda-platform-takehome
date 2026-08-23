@@ -14,7 +14,7 @@ def receipt(j,action,classification,evidence):
  serial=j["state_serial_before"]
  if action=="apply" and classification=="COMPLETE": serial+=1
  elif action in {"recover","postflight","rollback"} and j.get("state_serial_after") is not None: serial=j["state_serial_after"]
- return {"schema_version":1,"operation_id":j["operation_id"],"action":action,"intent_entry_sha256":j["history"][-1]["entry_sha256"],"authorization_sha256":j["authorization_sha256"],"authorization_history_sha256":j["authorization_history_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"],"fencing_token":P.digest({"intent_entry_sha256":j["history"][-1]["entry_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"]}),"observed_at":"2026-08-21T12:00:01Z","probe_fresh":True,"probe_outcome":classification,"state_lineage_sha256":j["state_lineage_sha256"],"state_serial":serial,"gate_sha256":j["latest_gate_sha256"],"evidence_sha256":P.digest(evidence),"classification":classification,"event_evidence":evidence,"mode":"LIVE","raw_values_recorded":False}
+ return {"schema_version":1,"operation_id":j["operation_id"],"action":action,"intent_entry_sha256":j["history"][-1]["entry_sha256"],"authorization_sha256":j["authorization_sha256"],"authorization_history_sha256":j["authorization_history_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"],"fencing_token":j["pending_fencing_token"],"observed_at":"2026-08-21T12:00:01Z","probe_fresh":True,"probe_outcome":classification,"state_lineage_sha256":j["state_lineage_sha256"],"state_serial":serial,"gate_sha256":j["latest_gate_sha256"],"evidence_sha256":P.digest(evidence),"classification":classification,"event_evidence":evidence,"mode":"LIVE","raw_values_recorded":False}
 class CanonicalProtocolTests(unittest.TestCase):
  def test_no_effect_surface(self):
   self.assertEqual(subprocess.run([sys.executable,str(PATH)],capture_output=True).returncode,64)
@@ -30,10 +30,14 @@ class CanonicalProtocolTests(unittest.TestCase):
    event=P.TransactionProtocol.canonical_intent(journal=old,action="prepare",admission=admission(old),evidence=f.fake.gate("pre_prepare"))
    f.go(event); intent=f.session.journal; S.MODEL.validate_journal(intent)
    store.cas(intent,expected_generation=old["generation"],expected_lease_epoch=old["lease_epoch"],expected_cas_nonce=old["cas_nonce"],expected_head_sha256=old["history"][-1]["entry_sha256"])
+   persisted=store.load()
+   self.assertEqual((persisted["pending_fencing_token"],persisted["pending_admission_sha256"]),
+                    (admission(old)["fencing_token"],P.digest(admission(old))))
    evidence={"prepare_receipt_sha256":f.fake.receipt("prepare")}; r=receipt(intent,"prepare","COMPLETE",evidence)
    event=P.TransactionProtocol.canonical_outcome(journal=intent,receipt=r); f.go(event); outcome=f.session.journal
    store.cas(outcome,expected_generation=intent["generation"],expected_lease_epoch=intent["lease_epoch"],expected_cas_nonce=intent["cas_nonce"],expected_head_sha256=intent["history"][-1]["entry_sha256"])
    self.assertEqual(store.load()["state"],"PREPARED")
+   self.assertIsNone(store.load()["pending_fencing_token"])
    r["lease_epoch"]-=1
    with self.assertRaises(P.ProtocolRefused): P.TransactionProtocol.canonical_outcome(journal=intent,receipt=r)
    evil=admission(old)
