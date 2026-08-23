@@ -40,7 +40,7 @@ def objects(output: str) -> list[dict]:
 
 
 def helm_template(
-    chart: pathlib.Path, *settings: str
+    chart: pathlib.Path, *settings: str, values_override: dict | None = None
 ) -> subprocess.CompletedProcess[str]:
     helm = shutil.which("helm")
     if helm is None:
@@ -73,6 +73,12 @@ def helm_template(
             "--kube-version",
             "1.35.7",
         ]
+        if values_override is not None:
+            override = pathlib.Path(directory) / "override.yaml"
+            override.write_text(
+                yaml.safe_dump(values_override, sort_keys=True), encoding="utf-8"
+            )
+            command.extend(("--values", str(override)))
         for setting in settings:
             if "tag=" in setting or "Ciphertext=" in setting or "hostname=" in setting:
                 command.extend(("--set-string", setting))
@@ -317,16 +323,17 @@ class Phase6HarborContractTests(unittest.TestCase):
         )
 
         fake = "Ag" + "A" * 90
-        settings = ["enabled=true", "gates.ciphertextsLocked=true"]
-        for name in load_yaml(SECRETS / "values.yaml")["ciphertexts"]:
-            settings.append(f"ciphertexts.{name}Ciphertext={fake}")
-        # The helper above deliberately recognizes any setting containing
-        # Ciphertext as a string. Correct the actual value key names here.
-        settings = ["enabled=true", "gates.ciphertextsLocked=true"] + [
-            f"ciphertexts.{name}={fake}"
-            for name in load_yaml(SECRETS / "values.yaml")["ciphertexts"]
-        ]
-        admitted = helm_template(SECRETS, *settings)
+        admitted = helm_template(
+            SECRETS,
+            values_override={
+                "enabled": True,
+                "gates": {"ciphertextsLocked": True},
+                "ciphertexts": {
+                    name: fake
+                    for name in load_yaml(SECRETS / "values.yaml")["ciphertexts"]
+                },
+            },
+        )
         self.assertEqual(admitted.returncode, 0, admitted.stderr)
         rendered = objects(admitted.stdout)
         self.assertEqual(
