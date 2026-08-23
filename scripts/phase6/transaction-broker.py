@@ -81,14 +81,16 @@ class TransactionProtocol:
   if receipt["evidence_sha256"]!=digest(evidence): refuse("outcome evidence digest differs")
   if receipt["gate_sha256"]!=journal["latest_gate_sha256"] or type(receipt["state_serial"]) is not int \
      or receipt["state_serial"]<journal["state_serial_before"]: refuse("outcome state/gate relation differs")
-  if not receipt["probe_fresh"] or receipt["probe_outcome"]!=outcome:
+  if type(receipt["probe_fresh"]) is not bool or receipt["probe_fresh"] is not True or receipt["probe_outcome"]!=outcome:
    refuse("outcome requires fresh exact probe")
   before=journal["state_serial_before"]; serial=receipt["state_serial"]
   if action in {"prepare","recover","postflight"} and serial != (journal.get("state_serial_after") or before):
    refuse("outcome serial changed outside provider apply")
-  if action=="apply" and outcome=="COMPLETE" and serial != before+1: refuse("apply complete serial differs")
-  if action=="apply" and outcome=="COMPLETE" and evidence.get("state_serial_after") != serial:
+  if action=="apply" and outcome=="COMPLETE" and (serial <= before or evidence.get("state_serial_after") != serial):
    refuse("apply receipt/evidence serial differs")
+  if action=="apply" and outcome=="COMPLETE":
+   post=evidence.get("post_apply_backup_sha256")
+   if not isinstance(post,dict) or post.get("state_serial")!=serial: refuse("apply post-backup serial differs")
   if action=="apply" and outcome=="NOT_STARTED" and serial != before: refuse("apply no-effect serial differs")
   if action=="apply" and outcome in {"PARTIAL","UNKNOWN"} and evidence.get("current_state_serial") != serial:
    refuse("apply uncertain current-state serial differs")
@@ -98,6 +100,8 @@ class TransactionProtocol:
    backup=evidence.get("post_rollback_backup_sha256")
    if not isinstance(backup,dict) or backup.get("state_serial")!=serial or serial!=before:
     refuse("rollback restored-state serial differs")
+  if action=="rollback" and outcome in {"PARTIAL","UNKNOWN"} and evidence.get("current_state_serial") != serial:
+   refuse("rollback uncertain current-state serial differs")
   if outcome=="COMPLETE" and action in {"postflight","rollback"} and evidence.get("zero_drift") is not True:
    refuse("terminal complete requires zero drift")
   if receipt["mode"] not in {"LIVE","ADOPTION"}: refuse("outcome receipt mode differs")

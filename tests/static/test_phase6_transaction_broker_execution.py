@@ -187,9 +187,11 @@ class CanonicalProtocolTests(unittest.TestCase):
       "milestone":milestone,"receipt_sha256":h("rr-"+milestone),"effect_probe_sha256":h("rp-"+milestone),
       "exact_effect_verified":True})
      pending=f.session.journal; evidence={"rollback_receipt_sha256":h("rolled"),
-      "post_rollback_backup_sha256":F.backup("rb-post",12),"exact_effects_verified":True,"zero_drift":True}
+     "post_rollback_backup_sha256":F.backup("rb-post",12),"exact_effects_verified":True,"zero_drift":True}
     elif classification=="NOT_STARTED": evidence={"probe_sha256":h("none"),"exact_no_effect":True}
-    else: evidence={"probe_sha256":h("probe"),"current_state_receipt_sha256":h("current")}
+    else: evidence={"probe_sha256":h("probe"),"current_state_receipt_sha256":h("current"),
+                    "current_state_lineage_sha256":pending["state_lineage_sha256"],"current_state_serial":13,
+                    "reconciled_rollback_state_backup":F.backup("rb-reconciled-"+classification,13)}
     r=receipt(pending,"rollback",classification,evidence); r["mode"]=mode
     self._event(store,f,P.TransactionProtocol.canonical_outcome(journal=pending,receipt=r))
     loaded=store.load(); S.MODEL.validate_journal(loaded); self.assertEqual(loaded["state"],target)
@@ -212,6 +214,7 @@ class CanonicalProtocolTests(unittest.TestCase):
     "intent":lambda r:r.__setitem__("intent_entry_sha256",h("bad-intent")),
     "illegal_mode":lambda r:r.__setitem__("mode","SIDELOAD"),
     "illegal_class":lambda r:r.__setitem__("classification","SKIPPED"),
+    "non_bool_fresh":lambda r:r.__setitem__("probe_fresh",1),
    }
    for label,mutate in mutations.items():
     with self.subTest(label=label):

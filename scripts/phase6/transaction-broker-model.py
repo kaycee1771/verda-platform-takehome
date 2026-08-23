@@ -66,6 +66,8 @@ JOURNAL_KEYS = {
     "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
     "pre_rollback_backup_sha256", "post_rollback_backup_sha256",
     "reconciled_state_serial", "reconciled_state_backup", "reconciled_current_state_receipt_sha256",
+    "reconciled_rollback_state_serial", "reconciled_rollback_state_backup",
+    "reconciled_rollback_current_state_receipt_sha256",
     "start_by", "complete_by", "resource_expiry_utc", "minimum_recovery_margin_seconds",
     "started_at", "updated_at", "history", "manual_intervention_required", "raw_values_recorded",
 }
@@ -73,7 +75,8 @@ HISTORY_KEYS = {"generation", "from_state", "to_state", "event", "receipt_sha256
                 "lease_epoch", "event_payload", "previous_entry_sha256", "projection", "projection_sha256", "entry_sha256"}
 BACKUP_KEYS = {"receipt_sha256", "backup_identity_sha256", "state_lineage_sha256", "state_serial", "verified_at"}
 BACKUP_FIELDS = {"state_backup_sha256", "pre_apply_backup_sha256", "post_apply_backup_sha256",
-                 "pre_rollback_backup_sha256", "post_rollback_backup_sha256", "reconciled_state_backup"}
+                 "pre_rollback_backup_sha256", "post_rollback_backup_sha256", "reconciled_state_backup",
+                 "reconciled_rollback_state_backup"}
 EFFECT_RECEIPT_KEYS = {"operation_id", "lease_id", "lease_epoch", "action", "observed_at",
                        "gate_kind", "gate_sha256", "gate_fresh", "exact_effect_verified",
                        "probe_outcome", "zero_drift", "capacity_verified", "state_lineage_sha256",
@@ -116,8 +119,12 @@ EVENT_SPEC: dict[str, dict[str, Any]] = {
                                         "rollback_origin_admission_sha256", "rollback_origin_admission_verified_at", "rollback_plan_sha256",
                                         "rollback_plan_semantic_sha256", "rollback_current_state_receipt_sha256",
                                         "pre_rollback_backup_sha256"},
-        "ADOPT_ROLLBACK_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required"},
-        "ADOPT_ROLLBACK_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required"},
+        "ADOPT_ROLLBACK_PARTIAL": {"failure_class", "rollback_required", "manual_intervention_required",
+                                    "reconciled_rollback_state_serial", "reconciled_rollback_state_backup",
+                                    "reconciled_rollback_current_state_receipt_sha256"},
+        "ADOPT_ROLLBACK_UNKNOWN": {"failure_class", "rollback_required", "manual_intervention_required",
+                                    "reconciled_rollback_state_serial", "reconciled_rollback_state_backup",
+                                    "reconciled_rollback_current_state_receipt_sha256"},
         "FAIL_ROLLBACK_UNSAFE": {"failure_class", "rollback_required", "manual_intervention_required"},
         "DEADLINE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
         "RESOURCE_EXPIRED": {"failure_class", "rollback_required", "manual_intervention_required"},
@@ -241,6 +248,7 @@ def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payl
             "pre_rollback_backup_sha256": projection.get("state_serial_after"),
             "post_rollback_backup_sha256": projection["state_serial_before"],
             "reconciled_state_backup": payload.get("reconciled_state_serial"),
+            "reconciled_rollback_state_backup": payload.get("reconciled_rollback_state_serial"),
         }[key]
         if receipt["state_serial"] != expected_serial:
             refuse(f"event.{key} serial relation differs")
@@ -253,7 +261,7 @@ def _validate_event_field(key: str, value: Any, projection: dict[str, Any], payl
     elif key == "state_serial_after":
         if type(value) is not int or value <= projection["state_serial_before"]:
             refuse("event state serial did not advance")
-    elif key == "reconciled_state_serial":
+    elif key in {"reconciled_state_serial", "reconciled_rollback_state_serial"}:
         if type(value) is not int or value < projection["state_serial_before"]:
             refuse("event reconciled state serial differs")
     elif key == "failure_class" and value not in {"APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_PARTIAL",
@@ -658,7 +666,8 @@ def validate_journal(journal: dict[str, Any]) -> None:
                 "recovery_receipt_sha256", "postflight_sha256", "rollback_receipt_sha256",
                 "latest_gate_sha256",
                 "rollback_plan_sha256", "rollback_plan_semantic_sha256",
-                "rollback_current_state_receipt_sha256", "reconciled_current_state_receipt_sha256")
+                "rollback_current_state_receipt_sha256", "reconciled_current_state_receipt_sha256",
+                "reconciled_rollback_current_state_receipt_sha256")
     for key in nullable:
         if journal[key] is not None:
             _digest(journal[key], f"journal.{key}")
@@ -678,6 +687,7 @@ def validate_journal(journal: dict[str, Any]) -> None:
         "pre_rollback_backup_sha256": after,
         "post_rollback_backup_sha256": journal["state_serial_before"],
         "reconciled_state_backup": journal["reconciled_state_serial"],
+        "reconciled_rollback_state_backup": journal["reconciled_rollback_state_serial"],
     }
     identities: list[str] = []
     for key, expected_serial in expected_backup_serials.items():
@@ -692,6 +702,9 @@ def validate_journal(journal: dict[str, Any]) -> None:
     if reconciled_serial is not None and (type(reconciled_serial) is not int
                                            or reconciled_serial < journal["state_serial_before"]):
         refuse("transaction journal reconciled state serial differs")
+    rollback_reconciled_serial = journal["reconciled_rollback_state_serial"]
+    if rollback_reconciled_serial is not None and (type(rollback_reconciled_serial) is not int or rollback_reconciled_serial < 0):
+        refuse("transaction journal reconciled rollback serial differs")
     if journal["failure_class"] not in {None, "APPLY_PARTIAL", "APPLY_UNKNOWN", "RECOVERY_PARTIAL",
                                          "RECOVERY_UNKNOWN", "POSTFLIGHT_PARTIAL", "POSTFLIGHT_UNKNOWN",
                                          "ROLLBACK_PARTIAL", "ROLLBACK_UNKNOWN", "RECOVERY_UNSAFE",
@@ -815,6 +828,10 @@ def validate_journal(journal: dict[str, Any]) -> None:
             refuse("uncertain apply FAILED_SAFE journal lacks exact reconciled serial/backup/current-state receipt")
         if journal["failure_class"] == "ROLLBACK_UNSAFE" and journal["rollback_milestone"] == "NONE":
             refuse("unsafe rollback FAILED_SAFE journal lacks rollback progress")
+        if journal["failure_class"] in {"ROLLBACK_PARTIAL", "ROLLBACK_UNKNOWN"} and (
+                rollback_reconciled_serial is None or journal["reconciled_rollback_state_backup"] is None
+                or journal["reconciled_rollback_current_state_receipt_sha256"] is None):
+            refuse("uncertain rollback FAILED_SAFE lacks reconciled serial/backup/current-state receipt")
     if journal["state"] not in {"RECOVERING", "RECOVERED", "POSTFLIGHT", "COMPLETED",
                                  "ROLLBACK_REQUIRED", "ROLLING_BACK", "ROLLED_BACK", "FAILED_SAFE"} \
             and journal["recovery_milestone"] != "NONE":
@@ -914,6 +931,8 @@ def start_spec_journal(*, policy: dict[str, Any], rollback_policy: dict[str, Any
         "post_rollback_backup_sha256": None,
         "reconciled_state_serial": None, "reconciled_state_backup": None,
         "reconciled_current_state_receipt_sha256": None,
+        "reconciled_rollback_state_serial": None, "reconciled_rollback_state_backup": None,
+        "reconciled_rollback_current_state_receipt_sha256": None,
         "recovery_receipt_sha256": None, "postflight_sha256": None,
         "rollback_receipt_sha256": None, "latest_gate_sha256": None, "failure_class": None,
         "rollback_required": False, "start_by": authorization["start_by"],
@@ -1468,14 +1487,25 @@ class BrokerModelSession:
                                           "post_rollback_backup_sha256": post_backup,
                                           "rollback_required": False})
         if name in {"ADOPT_ROLLBACK_PARTIAL", "ADOPT_ROLLBACK_UNKNOWN"} and state == "ROLLING_BACK":
-            exact_keys(event, common | {"probe_sha256", "current_state_receipt_sha256"}, name)
+            exact_keys(event, common | {"probe_sha256", "current_state_receipt_sha256", "current_state_lineage_sha256",
+                                        "current_state_serial", "reconciled_rollback_state_backup"}, name)
             outcome=name.rsplit("_",1)[1]
+            if event["current_state_lineage_sha256"] != self.journal["state_lineage_sha256"] or type(event["current_state_serial"]) is not int:
+                refuse("uncertain rollback current-state lineage/serial differs")
+            backup=_backup(event["reconciled_rollback_state_backup"], "reconciled rollback state backup",
+                           lineage=self.journal["state_lineage_sha256"], serial=event["current_state_serial"], now=now)
+            if backup["backup_identity_sha256"] in {self.journal["state_backup_sha256"]["backup_identity_sha256"],
+                                                     self.journal["pre_rollback_backup_sha256"]["backup_identity_sha256"]}:
+                refuse("reconciled rollback backup identity is not distinct")
             receipt=canonical_digest({"probe":_digest(event["probe_sha256"], "rollback uncertain probe"),
                                       "current":_digest(event["current_state_receipt_sha256"], "rollback current state")})
             return self._advance(expected_generation=expected_generation, expected_nonce=expected_nonce,
                                  event_name=name, to_state="FAILED_SAFE", now=now, receipt=receipt,
                                  updates={"failure_class":f"ROLLBACK_{outcome}","rollback_required":False,
-                                          "manual_intervention_required":True})
+                                          "manual_intervention_required":True,
+                                          "reconciled_rollback_state_serial":event["current_state_serial"],
+                                          "reconciled_rollback_state_backup":backup,
+                                          "reconciled_rollback_current_state_receipt_sha256":event["current_state_receipt_sha256"]})
         if name == "FAIL_ROLLBACK_UNSAFE" and state == "ROLLING_BACK":
             exact_keys(event, common | {"failure_receipt_sha256"}, name)
             receipt = _digest(event["failure_receipt_sha256"], "unsafe rollback receipt")
