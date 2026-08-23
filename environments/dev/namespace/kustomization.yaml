@@ -7,4 +7,3 @@ resources:
   - limitrange.yaml
   - network-policies.yaml
   - access.yaml
-  - registry-credentials.yaml

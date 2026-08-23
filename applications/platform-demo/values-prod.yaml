@@ -6,17 +6,17 @@ hostname: platform-prod.95-133-252-214.nip.io
 priorityClassName: platform-workload
 serviceAccountName: platform-demo
 imagePullSecretName: platform-demo-registry
-activation: {enabled: false, imageDigestLocked: false, pullSecretReady: false, serviceMonitorCRDReady: false}
+activation: {enabled: true, imageDigestLocked: true, pullSecretReady: true, serviceMonitorCRDReady: true}
 certificate:
   bootstrapEnabled: true
-  stagingCertificateVerified: false
+  stagingCertificateVerified: true
   acmeEmail: kelechi.okpala13@yahoo.com
   ingressClassName: traefik
   stagingSecretName: platform-demo-staging-tls
   productionSecretName: platform-demo-tls
 image:
   repository: harbor.95-133-252-214.nip.io/platform-demo/platform-demo
-  digest: sha256:REQUIRED_PLATFORM_DEMO_IMAGE_DIGEST
+  digest: sha256:1d48d05c8d4945fd891b07a865fcbdc7af459fa77adb75f9a88fd8ee0bfb289d
   pullPolicy: IfNotPresent
 resources:
   requests: {cpu: 10m, memory: 16Mi}
