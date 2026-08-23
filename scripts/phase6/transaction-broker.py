@@ -42,6 +42,14 @@ class TransactionProtocol:
   for key in ("operation_id","authorization_sha256","authorization_history_sha256","verifier_receipt_sha256",
               "broker_sha256","policy_sha256","rollback_policy_sha256","lease_id","lease_epoch"):
    if admission[key]!=journal[key]: refuse("admission journal/fence differs")
+  for key in ("operation_id","authorization_sha256","authorization_history_sha256","verifier_receipt_sha256",
+              "broker_sha256","policy_sha256","rollback_policy_sha256","lease_id","fencing_token"):
+   if not isinstance(admission[key],str) or not HEX64.fullmatch(admission[key]): refuse("admission digest differs")
+  verified=timestamp(admission["verified_at"]); updated=timestamp(journal["updated_at"])
+  if verified < updated or (verified-updated).total_seconds()>30: refuse("admission verification is stale or future-dated")
+  expected_fence=digest({"intent_entry_sha256":journal["history"][-1]["entry_sha256"],
+                         "lease_id":journal["lease_id"],"lease_epoch":journal["lease_epoch"]})
+  if admission["fencing_token"]!=expected_fence: refuse("admission fencing token differs")
   if "event" in evidence: refuse("caller evidence cannot select event")
   return {**evidence,"event":names[action]}
 
@@ -66,23 +74,32 @@ class TransactionProtocol:
   for key in ("intent_entry_sha256","authorization_sha256","authorization_history_sha256","fencing_token",
               "state_lineage_sha256","gate_sha256","evidence_sha256"):
    if not isinstance(receipt[key],str) or not HEX64.fullmatch(receipt[key]): refuse("outcome digest differs")
-  if abs((timestamp(receipt["observed_at"])-timestamp(journal["updated_at"])).total_seconds())>30:
+  observed=timestamp(receipt["observed_at"]); intent_time=timestamp(journal["history"][-1]["captured_at"])
+  if observed < intent_time or (observed-intent_time).total_seconds()>30:
    refuse("outcome receipt is stale")
   if receipt["evidence_sha256"]!=digest(evidence): refuse("outcome evidence digest differs")
   if receipt["gate_sha256"]!=journal["latest_gate_sha256"] or type(receipt["state_serial"]) is not int \
      or receipt["state_serial"]<journal["state_serial_before"]: refuse("outcome state/gate relation differs")
   if not receipt["probe_fresh"] or receipt["probe_outcome"]!=outcome:
    refuse("outcome requires fresh exact probe")
+  before=journal["state_serial_before"]; serial=receipt["state_serial"]
+  if action in {"prepare","recover","postflight"} and serial != (journal.get("state_serial_after") or before):
+   refuse("outcome serial changed outside provider apply")
+  if action=="apply" and outcome=="COMPLETE" and serial != before+1: refuse("apply complete serial differs")
+  if action=="apply" and outcome=="NOT_STARTED" and serial != before: refuse("apply no-effect serial differs")
+  if action=="rollback" and outcome=="NOT_STARTED" and serial != journal["state_serial_after"]:
+   refuse("rollback no-effect serial differs")
   if outcome=="COMPLETE" and action in {"postflight","rollback"} and evidence.get("zero_drift") is not True:
    refuse("terminal complete requires zero drift")
   if receipt["mode"] not in {"LIVE","ADOPTION"}: refuse("outcome receipt mode differs")
   if outcome != "COMPLETE" and receipt["mode"] != "ADOPTION":
    refuse("non-complete classification requires adoption mode")
+  if action=="apply" and receipt["mode"]=="ADOPTION":
+   return {**evidence,"outcome":outcome,"event":"ADOPT_APPLY"}
   if outcome=="COMPLETE" and receipt["mode"]=="LIVE": name=complete[action]
   elif outcome=="COMPLETE": name=f"ADOPT_{action.upper()}_COMPLETE"
   elif outcome=="NOT_STARTED": name=f"ADOPT_{action.upper()}_NOT_STARTED"
-  elif outcome in {"PARTIAL","UNKNOWN"}:
-   name=f"ADOPT_{action.upper()}_{outcome}"
+  elif outcome in {"PARTIAL","UNKNOWN"}: name=f"ADOPT_{action.upper()}_{outcome}"
   else: refuse("canonical outcome requires a fresh supported adoption transition")
   return {**evidence,"event":name}
 

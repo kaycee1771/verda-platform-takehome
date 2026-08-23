@@ -9,9 +9,12 @@ S=load("protocol_store",ROOT/"scripts/phase6/transaction-broker-store.py")
 PATH=ROOT/"scripts/phase6/transaction-broker.py"
 def h(x): return hashlib.sha256(x.encode()).hexdigest()
 def admission(j):
- return {k:j[k] for k in ("operation_id","authorization_sha256","authorization_history_sha256","verifier_receipt_sha256","broker_sha256","policy_sha256","rollback_policy_sha256","lease_id","lease_epoch")}|{"fencing_token":h("fence"),"verified_at":"2026-08-21T12:00:00Z","raw_values_recorded":False}
+ return {k:j[k] for k in ("operation_id","authorization_sha256","authorization_history_sha256","verifier_receipt_sha256","broker_sha256","policy_sha256","rollback_policy_sha256","lease_id","lease_epoch")}|{"fencing_token":P.digest({"intent_entry_sha256":j["history"][-1]["entry_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"]}),"verified_at":j["updated_at"],"raw_values_recorded":False}
 def receipt(j,action,classification,evidence):
- return {"schema_version":1,"operation_id":j["operation_id"],"action":action,"intent_entry_sha256":j["history"][-1]["entry_sha256"],"authorization_sha256":j["authorization_sha256"],"authorization_history_sha256":j["authorization_history_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"],"fencing_token":P.digest({"intent_entry_sha256":j["history"][-1]["entry_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"]}),"observed_at":"2026-08-21T12:00:01Z","probe_fresh":True,"probe_outcome":classification,"state_lineage_sha256":j["state_lineage_sha256"],"state_serial":j["state_serial_before"],"gate_sha256":j["latest_gate_sha256"],"evidence_sha256":P.digest(evidence),"classification":classification,"event_evidence":evidence,"mode":"LIVE","raw_values_recorded":False}
+ serial=j["state_serial_before"]
+ if action=="apply" and classification=="COMPLETE": serial+=1
+ elif action in {"recover","postflight","rollback"} and j.get("state_serial_after") is not None: serial=j["state_serial_after"]
+ return {"schema_version":1,"operation_id":j["operation_id"],"action":action,"intent_entry_sha256":j["history"][-1]["entry_sha256"],"authorization_sha256":j["authorization_sha256"],"authorization_history_sha256":j["authorization_history_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"],"fencing_token":P.digest({"intent_entry_sha256":j["history"][-1]["entry_sha256"],"lease_id":j["lease_id"],"lease_epoch":j["lease_epoch"]}),"observed_at":"2026-08-21T12:00:01Z","probe_fresh":True,"probe_outcome":classification,"state_lineage_sha256":j["state_lineage_sha256"],"state_serial":serial,"gate_sha256":j["latest_gate_sha256"],"evidence_sha256":P.digest(evidence),"classification":classification,"event_evidence":evidence,"mode":"LIVE","raw_values_recorded":False}
 class CanonicalProtocolTests(unittest.TestCase):
  def test_no_effect_surface(self):
   self.assertEqual(subprocess.run([sys.executable,str(PATH)],capture_output=True).returncode,64)
@@ -47,6 +50,21 @@ class CanonicalProtocolTests(unittest.TestCase):
   with self.assertRaises(P.ProtocolRefused): P.TransactionProtocol.canonical_outcome(journal=f.session.journal,receipt={})
   r=receipt(f.session.journal,"postflight","COMPLETE",{"postflight_sha256":h("p"),"rollback_required":False,"zero_drift":False})
   with self.assertRaisesRegex(P.ProtocolRefused,"zero drift"): P.TransactionProtocol.canonical_outcome(journal=f.session.journal,receipt=r)
+ def test_apply_adoption_emits_reducer_input_and_replays(self):
+  f=F.BrokerFixture(); f.prepare()
+  old=f.session.journal
+  intent=P.TransactionProtocol.canonical_intent(journal=old,action="apply",admission=admission(old),
+                                                 evidence=f.fake.gate("pre_apply_two_survivor"))
+  f.go(intent); pending=f.session.journal
+  evidence={"probe_sha256":h("apply-none"),"state_backup_sha256":F.backup("adopt-original",12),
+            "exact_target_state":False,"zero_drift":False,"state_lineage_sha256":pending["state_lineage_sha256"],
+            "state_serial_after":None}
+  r=receipt(pending,"apply","NOT_STARTED",evidence); r["mode"]="ADOPTION"
+  event=P.TransactionProtocol.canonical_outcome(journal=pending,receipt=r)
+  self.assertEqual((event["event"],event["outcome"]),("ADOPT_APPLY","NOT_STARTED"))
+  restored=f.go(event)
+  self.assertEqual(restored["state"],"PREPARED")
+  S.MODEL.validate_journal(restored)
  def test_canonical_uncertain_adoptions_terminalize_and_no_effect_reverts(self):
   f=F.BrokerFixture(); f.prepare(); f.apply(); f.begin_recovery()
   reverted=f.go({"event":"ADOPT_RECOVERY_NOT_STARTED","probe_sha256":h("probe"),"exact_no_effect":True})
