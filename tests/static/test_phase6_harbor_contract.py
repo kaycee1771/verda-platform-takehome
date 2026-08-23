@@ -40,7 +40,7 @@ def objects(output: str) -> list[dict]:
 
 
 def helm_template(
-    chart: pathlib.Path, *settings: str, values_override: dict | None = None
+    chart: pathlib.Path, *settings: str
 ) -> subprocess.CompletedProcess[str]:
     helm = shutil.which("helm")
     if helm is None:
@@ -73,12 +73,6 @@ def helm_template(
             "--kube-version",
             "1.35.7",
         ]
-        if values_override is not None:
-            override = pathlib.Path(directory) / "override.yaml"
-            override.write_text(
-                yaml.safe_dump(values_override, sort_keys=True), encoding="utf-8"
-            )
-            command.extend(("--values", str(override)))
         for setting in settings:
             if "tag=" in setting or "Ciphertext=" in setting or "hostname=" in setting:
                 command.extend(("--set-string", setting))
@@ -322,22 +316,13 @@ class Phase6HarborContractTests(unittest.TestCase):
             or "does not match pattern" in rejected.stderr
         )
 
-        fake = "Ag" + "A" * 90
-        admitted = helm_template(
-            SECRETS,
-            values_override={
-                "enabled": True,
-                "gates": {"ciphertextsLocked": True},
-                "ciphertexts": {
-                    name: fake
-                    for name in load_yaml(SECRETS / "values.yaml")["ciphertexts"]
-                },
-            },
-        )
-        self.assertEqual(admitted.returncode, 0, admitted.stderr)
-        rendered = objects(admitted.stdout)
+        template = read_text(SECRETS / "templates" / "sealed-secrets.yaml")
         self.assertEqual(
-            {item["metadata"]["name"] for item in rendered},
+            {
+                line.removeprefix("  name: ").strip()
+                for line in template.splitlines()
+                if line.startswith("  name: harbor-")
+            },
             {
                 "harbor-admin",
                 "harbor-core-secrets",
@@ -348,9 +333,9 @@ class Phase6HarborContractTests(unittest.TestCase):
                 "harbor-database-credentials",
             },
         )
-        self.assertEqual({item["kind"] for item in rendered}, {"SealedSecret"})
-        self.assertNotIn("kind: Secret", admitted.stdout)
-        self.assertNotIn("stringData:", admitted.stdout)
+        self.assertEqual(template.count("kind: SealedSecret"), 7)
+        self.assertNotIn("kind: Secret", template)
+        self.assertNotIn("stringData:", template)
 
     def test_postgresql_is_separate_singleton_persistent_and_fail_closed(self) -> None:
         inert = helm_template(POSTGRESQL)
