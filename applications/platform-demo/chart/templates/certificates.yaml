@@ -7,7 +7,6 @@ metadata:
   name: platform-demo-letsencrypt-staging
   namespace: {{ .Release.Namespace | quote }}
   annotations:
-    argocd.argoproj.io/sync-wave: "-2"
     verda.platform/environment-contract: {{ $environment | quote }}
 spec:
   acme:
@@ -28,7 +27,6 @@ kind: Certificate
 metadata:
   name: platform-demo-staging
   namespace: {{ .Release.Namespace | quote }}
-  annotations: {argocd.argoproj.io/sync-wave: "-1"}
 spec:
   secretName: {{ .Values.certificate.stagingSecretName | quote }}
   revisionHistoryLimit: 3
@@ -43,7 +41,6 @@ metadata:
   name: platform-demo-letsencrypt-production
   namespace: {{ .Release.Namespace | quote }}
   annotations:
-    argocd.argoproj.io/sync-wave: "0"
     verda.platform/staging-proof: verified
 spec:
   acme:
@@ -65,7 +62,6 @@ metadata:
   name: platform-demo-production
   namespace: {{ .Release.Namespace | quote }}
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
     verda.platform/staging-proof: verified
 spec:
   secretName: {{ .Values.certificate.productionSecretName | quote }}
