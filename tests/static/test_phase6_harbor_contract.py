@@ -127,6 +127,12 @@ class Phase6HarborContractTests(unittest.TestCase):
     def test_initial_service_render_is_staging_certificate_only(self) -> None:
         result = helm_template(
             SERVICE,
+            "harbor.enabled=false",
+            "gates.stagingCertificateVerified=false",
+            "gates.sealedSecretsReady=false",
+            "gates.postgresqlReady=false",
+            "gates.capacityAdmitted=false",
+            "gates.imageDigestsLocked=false",
             f"harbor.expose.ingress.hosts.core={SAFE_HOSTNAME}",
             f"harbor.externalURL=https://{SAFE_HOSTNAME}",
         )
@@ -141,7 +147,11 @@ class Phase6HarborContractTests(unittest.TestCase):
     def test_service_admission_rejects_missing_proof_placeholders_and_zero_digest(
         self,
     ) -> None:
-        no_proof = helm_template(SERVICE, "harbor.enabled=true")
+        no_proof = helm_template(
+            SERVICE,
+            "harbor.enabled=true",
+            "gates.stagingCertificateVerified=false",
+        )
         self.assertNotEqual(no_proof.returncode, 0)
         self.assertIn("stagingCertificateVerified=true", no_proof.stderr)
 
@@ -338,7 +348,12 @@ class Phase6HarborContractTests(unittest.TestCase):
         self.assertNotIn("stringData:", template)
 
     def test_postgresql_is_separate_singleton_persistent_and_fail_closed(self) -> None:
-        inert = helm_template(POSTGRESQL)
+        inert = helm_template(
+            POSTGRESQL,
+            "enabled=false",
+            "gates.sealedCredentialsReady=false",
+            "gates.imageDigestLocked=false",
+        )
         self.assertEqual(inert.returncode, 0, inert.stderr)
         self.assertEqual(objects(inert.stdout), [])
 

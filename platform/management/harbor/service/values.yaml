@@ -3,11 +3,11 @@
 # Harbor remains disabled until the exact certificate, SealedSecrets, PostgreSQL,
 # capacity envelope, and all eight runtime image digests are independently proven.
 gates:
-  stagingCertificateVerified: false
-  sealedSecretsReady: false
+  stagingCertificateVerified: true
+  sealedSecretsReady: true
   postgresqlReady: false
-  capacityAdmitted: false
-  imageDigestsLocked: false
+  capacityAdmitted: true
+  imageDigestsLocked: true
 
 certificate:
   acmeEmail: kelechi.okpala13@yahoo.com
