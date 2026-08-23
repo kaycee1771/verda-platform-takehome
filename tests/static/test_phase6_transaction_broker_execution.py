@@ -1,77 +1,34 @@
 #!/usr/bin/env python3
-from __future__ import annotations
+import hashlib, importlib.util, pathlib, subprocess, sys, unittest
+ROOT=pathlib.Path(__file__).parents[2]; PATH=ROOT/"scripts/phase6/transaction-broker.py"
+SPEC=importlib.util.spec_from_file_location("phase6_pure_protocol", PATH); P=importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(P)
+OP="a"*64
+def h(x): return hashlib.sha256(x.encode()).hexdigest()
 
-import contextlib
-import datetime as dt
-import hashlib
-import importlib.util
-import pathlib
-import subprocess
-import sys
-import unittest
-
-
-ROOT = pathlib.Path(__file__).parents[2]
-PATH = ROOT / "scripts/phase6/transaction-broker.py"
-SPEC = importlib.util.spec_from_file_location("phase6_execution_boundary", PATH)
-assert SPEC and SPEC.loader
-BROKER = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(BROKER)
-OPERATION = "a" * 64
-
-
-class FakeStore:
-    operation_id = OPERATION
-    def __init__(self): self.events = []
-    @contextlib.contextmanager
-    def locked(self):
-        self.events.append("lock"); yield; self.events.append("unlock")
-    def verify_admission(self, **_): self.events.append("verify"); return {"operation_id": OPERATION}
-    def cas(self, journal, **_): self.events.append(("cas", journal["action"]))
-
-
-class FakeChild(BROKER._PrivatePhase2Child):
-    def __init__(self, events): self.events = events
-    def _invoke(self, capability, action, request):
-        super_call = capability is BROKER._PRIVATE_CAPABILITY
-        if not super_call: raise AssertionError("capability")
-        self.events.append(("effect", action))
-        return {"schema_version": 1, "operation_id": OPERATION, "action": action,
-                "journal_sha256": request["journal_sha256"], "effect_sha256": hashlib.sha256(action.encode()).hexdigest(),
-                "state_lineage_sha256": "b" * 64, "state_serial": 12,
-                "started_at": "2026-08-21T12:00:00Z", "ended_at": "2026-08-21T12:00:01Z",
-                "raw_values_recorded": False}
-
-
-class BrokerExecutionBoundaryTests(unittest.TestCase):
-    def test_entrypoint_and_production_factory_refuse(self):
-        result = subprocess.run([sys.executable, str(PATH)], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 64)
-        with self.assertRaisesRegex(BROKER.BrokerRefused, "inert"):
-            BROKER.ProtectedTransactionBroker.from_checked_in_contract(contract=BROKER.INERT_CONTRACT)
-
-    def test_private_lifecycle_is_lock_verify_cas_effect_ordered(self):
-        store = FakeStore(); child = FakeChild(store.events)
-        broker = BROKER.ProtectedTransactionBroker._for_tests(
-            store=store, verifier=object(), child=child,
-            reducer=lambda journal, action: {**journal, "action": action})
-        journal = {"generation": 1}
-        for action in ("prepare", "apply", "recover", "postflight", "rollback"):
-            receipt = broker.transact(action=action, authorization_path=pathlib.Path("unused"), artifacts={},
-                journal=journal, expected_generation=1, expected_lease_epoch=1,
-                expected_cas_nonce="c" * 64, expected_head_sha256="d" * 64)
-            self.assertFalse(receipt["raw_values_recorded"])
-        for index in range(0, len(store.events), 5):
-            self.assertEqual(store.events[index:index + 5],
-                ["lock", "verify", ("cas", ("prepare", "apply", "recover", "postflight", "rollback")[index // 5]),
-                 ("effect", ("prepare", "apply", "recover", "postflight", "rollback")[index // 5]), "unlock"])
-
-    def test_private_capability_and_receipt_shape_refuse(self):
-        child = FakeChild([])
-        with self.assertRaisesRegex(BROKER.BrokerRefused, "capability"):
-            BROKER._PrivatePhase2Child()._invoke(object(), "apply", {})
-        source = PATH.read_text(encoding="utf-8")
-        for forbidden in ("subprocess", "terraform apply", "ansible-playbook", "kubectl apply"):
-            self.assertNotIn(forbidden, source)
-
-
-if __name__ == "__main__": unittest.main()
+class PureProtocolTests(unittest.TestCase):
+ def setUp(self):
+  self.j={"operation_id":OP,"generation":1,"lease_epoch":7,"cas_nonce":h("old"),"pending_action":None,"protocol_events":[]}
+  self.a={"operation_id":OP,"authorization_sha256":h("auth"),"binding_sha256":h("binding"),"verified_at":"2026-08-21T12:00:00Z","raw_values_recorded":False}
+ def intent(self, action="apply"):
+  return P.TransactionProtocol.intent(journal=self.j,action=action,admission=self.a,lease_id=h("lease"),lease_epoch=7,fencing_token=h("fence"),cas_nonce=h("intent"))
+ def receipt(self,i,a):
+  r={"schema_version":1,"operation_id":OP,"action":a,"intent_sha256":P.digest(i),"authorization_sha256":h("auth"),"lease_id":h("lease"),"lease_epoch":7,"fencing_token":h("fence"),"started_at":"2026-08-21T12:00:00Z","ended_at":"2026-08-21T12:00:01Z","state_lineage_sha256":h("lineage"),"state_serial":12,"gate_sha256":h("gate"),"evidence_sha256":h("evidence"),"outcome":"COMPLETE","raw_values_recorded":False}
+  for k in P.EVIDENCE[a]: r[k]=False if k=="zero_drift" else ("M1" if k.endswith("milestone") else h(k))
+  return r
+ def test_direct_import_has_no_effect_capability(self):
+  self.assertEqual(subprocess.run([sys.executable,str(PATH)],capture_output=True).returncode,64)
+  source=PATH.read_text()
+  for word in ("_for_tests","test_only","_invoke","transact(","subprocess","terraform","ansible","kubectl","open("):
+   self.assertNotIn(word,source)
+ def test_two_cas_candidates_all_actions(self):
+  for a in P.ACTIONS:
+   i=self.intent(a); self.assertEqual((i["generation"],i["protocol_events"][-1]["kind"]),(2,"INTENT"))
+   o=P.TransactionProtocol.outcome(intent=i,receipt=self.receipt(i,a),cas_nonce=h("out"))
+   self.assertEqual((o["generation"],o["protocol_events"][-1]["kind"]),(3,"OUTCOME"))
+ def test_stale_tamper_crash_adoption(self):
+  with self.assertRaises(P.ProtocolRefused): P.TransactionProtocol.intent(journal=self.j,action="apply",admission=self.a,lease_id=h("l"),lease_epoch=8,fencing_token=h("f"),cas_nonce=h("n"))
+  i=self.intent(); r=self.receipt(i,"apply"); r["fencing_token"]=h("stale")
+  with self.assertRaises(P.ProtocolRefused): P.TransactionProtocol.outcome(intent=i,receipt=r,cas_nonce=h("o"))
+  self.assertEqual(P.TransactionProtocol.adoption(None),"NOT_STARTED")
+  for value in P.ADOPTION: self.assertEqual(P.TransactionProtocol.adoption({"outcome":value}),value)
+if __name__=="__main__": unittest.main()

@@ -1,103 +1,62 @@
 #!/usr/bin/env python3
-"""Dormant protected Phase 6 transaction broker execution boundary.
-
-No public effect command exists in this module.  The checked-in contract is
-inert; only the explicit test factory can install a fake private child.
-"""
-
+"""Dormant pure Phase 6 two-CAS protocol. No effect implementation lives here."""
 from __future__ import annotations
+import hashlib, json, sys
+from typing import Any
 
-import contextlib
-import hashlib
-import importlib.util
-import json
-import pathlib
-import sys
-from typing import Any, Callable
+ACTIONS = {"prepare", "apply", "recover", "postflight", "rollback"}
+ADOPTION = {"NOT_STARTED", "COMPLETE", "PARTIAL", "UNKNOWN"}
+EVIDENCE = {
+ "prepare": {"pre_backup_sha256", "prepare_receipt_sha256"},
+ "apply": {"plan_sha256", "plan_semantic_sha256", "pre_backup_sha256", "post_backup_sha256"},
+ "recover": {"recovery_milestone", "recovery_receipt_sha256", "post_backup_sha256"},
+ "postflight": {"postflight_receipt_sha256", "zero_drift"},
+ "rollback": {"rollback_plan_sha256", "rollback_milestone", "pre_backup_sha256", "post_backup_sha256", "zero_drift"}}
+COMMON = {"schema_version", "operation_id", "action", "intent_sha256", "authorization_sha256",
+ "lease_id", "lease_epoch", "fencing_token", "started_at", "ended_at", "state_lineage_sha256",
+ "state_serial", "gate_sha256", "evidence_sha256", "outcome", "raw_values_recorded"}
 
+class ProtocolRefused(ValueError): pass
+def refuse(message: str) -> None: raise ProtocolRefused(message)
+def canonical(value: Any) -> bytes: return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+def digest(value: Any) -> str: return hashlib.sha256(canonical(value)).hexdigest()
 
-HERE = pathlib.Path(__file__).resolve().parent
-STORE_SPEC = importlib.util.spec_from_file_location("phase6_broker_store", HERE / "transaction-broker-store.py")
-assert STORE_SPEC and STORE_SPEC.loader
-STORE = importlib.util.module_from_spec(STORE_SPEC); STORE_SPEC.loader.exec_module(STORE)
+class TransactionProtocol:
+ @staticmethod
+ def intent(*, journal: dict[str, Any], action: str, admission: dict[str, Any], lease_id: str,
+            lease_epoch: int, fencing_token: str, cas_nonce: str) -> dict[str, Any]:
+  if action not in ACTIONS: refuse("action differs")
+  if set(admission) != {"operation_id", "authorization_sha256", "binding_sha256", "verified_at", "raw_values_recorded"} \
+     or admission["raw_values_recorded"] is not False: refuse("admission differs")
+  if journal.get("operation_id") != admission["operation_id"] or journal.get("lease_epoch") != lease_epoch \
+     or journal.get("pending_action") is not None: refuse("journal fence differs")
+  event = {"kind":"INTENT", "action":action, "authorization_sha256":admission["authorization_sha256"],
+   "binding_sha256":admission["binding_sha256"], "lease_id":lease_id, "lease_epoch":lease_epoch,
+   "fencing_token":fencing_token, "raw_values_recorded":False}
+  return {**journal, "generation":journal["generation"]+1, "cas_nonce":cas_nonce,
+   "pending_action":action, "protocol_events":[*journal.get("protocol_events", []), event]}
 
-INERT_CONTRACT = {"schema_version": 1, "phase": 6, "status": "DORMANT",
-                  "execution_enabled": False, "production_adapter_present": False,
-                  "public_execution_route_present": False, "raw_values_recorded": False}
-RECEIPT_KEYS = {"schema_version", "operation_id", "action", "journal_sha256", "effect_sha256",
-                "state_lineage_sha256", "state_serial", "started_at", "ended_at", "raw_values_recorded"}
-_PRIVATE_CAPABILITY = object()
+ @staticmethod
+ def outcome(*, intent: dict[str, Any], receipt: dict[str, Any], cas_nonce: str) -> dict[str, Any]:
+  action = intent.get("pending_action"); prior = intent.get("protocol_events", [{}])[-1]
+  if action not in ACTIONS or set(receipt) != COMMON | EVIDENCE[action] or receipt.get("schema_version") != 1 \
+     or receipt.get("operation_id") != intent.get("operation_id") or receipt.get("action") != action \
+     or receipt.get("intent_sha256") != digest(intent) or receipt.get("lease_epoch") != intent.get("lease_epoch") \
+     or receipt.get("lease_id") != prior.get("lease_id") or receipt.get("fencing_token") != prior.get("fencing_token") \
+     or receipt.get("authorization_sha256") != prior.get("authorization_sha256") \
+     or receipt.get("outcome") not in ADOPTION or receipt.get("raw_values_recorded") is not False:
+   refuse("effect receipt differs")
+  event={"kind":"OUTCOME", "action":action, "outcome":receipt["outcome"],
+         "receipt_sha256":digest(receipt), "raw_values_recorded":False}
+  return {**intent, "generation":intent["generation"]+1, "cas_nonce":cas_nonce, "pending_action":None,
+          "protocol_events":[*intent["protocol_events"], event]}
 
-
-class BrokerRefused(RuntimeError):
-    pass
-
-
-def refuse(message: str) -> None:
-    raise BrokerRefused(message)
-
-
-def canonical_bytes(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-
-
-class _PrivatePhase2Child:
-    """Non-exported in-process channel; subclasses are accepted only in tests."""
-    def _invoke(self, capability: object, action: str, request: dict[str, Any]) -> dict[str, Any]:
-        if capability is not _PRIVATE_CAPABILITY:
-            refuse("private Phase 2 child capability differs")
-        raise NotImplementedError
-
-
-class ProtectedTransactionBroker:
-    def __init__(self, *, store: Any, verifier: Any, child: _PrivatePhase2Child,
-                 reducer: Callable[[dict[str, Any], str], dict[str, Any]], test_only: bool = False) -> None:
-        if not test_only:
-            refuse("checked-in Phase 6 execution contract is inert")
-        self.store, self.verifier, self.child, self.reducer = store, verifier, child, reducer
-
-    @classmethod
-    def _for_tests(cls, **kwargs: Any) -> "ProtectedTransactionBroker":
-        return cls(test_only=True, **kwargs)
-
-    @classmethod
-    def from_checked_in_contract(cls, *, contract: dict[str, Any], **_: Any) -> "ProtectedTransactionBroker":
-        if contract != INERT_CONTRACT or contract["execution_enabled"] is not True:
-            refuse("checked-in Phase 6 execution contract is inert")
-        refuse("production Phase 6 effect adapter is absent")
-
-    def transact(self, *, action: str, authorization_path: pathlib.Path,
-                 artifacts: dict[str, pathlib.Path], journal: dict[str, Any],
-                 expected_generation: int, expected_lease_epoch: int,
-                 expected_cas_nonce: str | None, expected_head_sha256: str | None) -> dict[str, Any]:
-        if action not in {"prepare", "apply", "recover", "postflight", "rollback"}:
-            refuse("private transaction action differs")
-        with self.store.locked():
-            admission = self.store.verify_admission(authorization_path=authorization_path, artifacts=artifacts)
-            if admission.get("operation_id") != self.store.operation_id:
-                refuse("transaction authorization operation differs")
-            candidate = self.reducer(journal, action)
-            self.store.cas(candidate, expected_generation=expected_generation,
-                           expected_lease_epoch=expected_lease_epoch,
-                           expected_cas_nonce=expected_cas_nonce,
-                           expected_head_sha256=expected_head_sha256)
-            request = {"operation_id": self.store.operation_id, "action": action,
-                       "journal_sha256": hashlib.sha256(canonical_bytes(candidate)).hexdigest(),
-                       "authorization_receipt_sha256": hashlib.sha256(canonical_bytes(admission)).hexdigest(),
-                       "raw_values_recorded": False}
-            receipt = self.child._invoke(_PRIVATE_CAPABILITY, action, request)
-            if (not isinstance(receipt, dict) or set(receipt) != RECEIPT_KEYS
-                    or receipt.get("operation_id") != self.store.operation_id
-                    or receipt.get("action") != action or receipt.get("journal_sha256") != request["journal_sha256"]
-                    or receipt.get("raw_values_recorded") is not False):
-                refuse("private Phase 2 child receipt differs")
-            return receipt
-
+ @staticmethod
+ def adoption(receipt: dict[str, Any] | None) -> str:
+  if receipt is None: return "NOT_STARTED"
+  if receipt.get("outcome") not in ADOPTION: refuse("adoption differs")
+  return receipt["outcome"]
 
 def main() -> int:
-    print("REFUSED: checked-in Phase 6 transaction execution contract is inert", file=sys.stderr)
-    return 64
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+ print("REFUSED: dormant Phase 6 protocol contains no effect adapter", file=sys.stderr); return 64
+if __name__ == "__main__": raise SystemExit(main())
