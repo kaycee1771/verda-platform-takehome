@@ -8,7 +8,7 @@ The submission is one three-node RKE2 cluster. Each Verda VM is both an RKE2 ser
 flowchart TB
   User -->|TLS 443| Ingress[Traefik on three public nodes]
   Git --> Argo[Argo CD]
-  CI[Tests/build/scan] --> Harbor[Harbor + Trivy]
+  Release[Controlled build + Trivy scan] --> Harbor[Harbor + Trivy]
   Harbor --> Apps[platform-demo: dev/staging/prod]
   Argo --> Rancher
   Argo --> Harbor

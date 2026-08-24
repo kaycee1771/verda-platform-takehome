@@ -16,7 +16,7 @@ are under active development.
 - Definitive live Phase 5 proof for idempotent bootstrap, 9/9 Healthy/Synced Applications, six ready
   cert-manager replicas, three-address TLS, least-privilege Argo access, critical-volume reschedule,
   post-install capacity, and the exact external port boundary.
-- Sanitized Phase 5 closeout evidence with local CI PASS and an explicit hosted CI placeholder; no raw live
+- Sanitized Phase 5 closeout evidence with local and hosted CI PASS; no raw live
   payload, address, credential, kubeconfig, certificate, checksum, or storage identity is tracked.
 - Phase 4 management-RKE2 role and guarded orchestrator with exact artifact verification,
   preparation/start separation, external DPAPI token recovery, parity-controlled configuration,

@@ -1,6 +1,6 @@
 # Verda Cloud Kubernetes Platform
 
-This repository implements a reproducible three-node RKE2 platform on Verda Cloud. Terraform owns the cloud resources, Ansible owns host configuration, and Argo CD owns Kubernetes desired state. Rancher provides cluster management, Harbor and Trivy provide private image storage and scanning, kube-prometheus-stack provides metrics and alerts, and Loki with Grafana Alloy provides centralized logs. One immutable `platform-demo` image is deployed through Git to isolated dev, staging, and production namespaces.
+I built this as a reproducible three-node RKE2 platform on Verda Cloud. Terraform provisions the infrastructure, Ansible configures and hardens the hosts, and Argo CD reconciles the Kubernetes configuration from Git. Rancher is used for cluster management, Harbor and Trivy handle the private image and its vulnerability scan, and Prometheus, Grafana, Loki and Alloy cover metrics, alerts and logs. The same immutable `platform-demo` image runs in isolated dev, staging and production namespaces.
 
 ## What is running
 
@@ -34,7 +34,7 @@ flowchart LR
   Harbor --> Prod
 ```
 
-Delivery is: source -> tests -> build once -> Trivy scan -> Harbor digest -> reviewed Git change -> Argo CD -> dev/staging/prod -> Prometheus metrics and Loki logs.
+For this submission, I tested and built the demo image once, scanned it with Trivy, pushed it to Harbor and recorded the resulting immutable digest. The same digest is referenced in the dev, staging and production definitions. Promotion is made through reviewed Git changes, and Argo CD reconciles those changes to the cluster. GitHub Actions separately validates the repository, manifests and tests without receiving cloud or cluster credentials.
 
 ## Evaluator path
 
@@ -46,7 +46,7 @@ Delivery is: source -> tests -> build once -> Trivy scan -> Harbor digest -> rev
 
 ## Repository map
 
-- `infra/`: Terraform and Ansible infrastructure/host ownership.
+- `infra/`: Terraform infrastructure and Ansible host configuration.
 - `gitops/`: Argo CD root and Application definitions.
 - `platform/`: management services, policies, storage, and observability.
 - `applications/platform-demo/`: the Go application and Helm chart.
@@ -56,6 +56,6 @@ Delivery is: source -> tests -> build once -> Trivy scan -> Harbor digest -> rev
 
 ## Tradeoffs
 
-The take-home uses one shared cluster to stay within the credit and review window. Control-plane and application workloads therefore share failure domains, namespace isolation is weaker than separate clusters, Harbor uses its bundled database rather than an external HA service, and public services depend on address-derived `nip.io` names rather than a managed load balancer. A production evolution would separate management and workload clusters, externalize stateful services, use durable DNS and a health-aware ingress/API endpoint, and adopt an enterprise secret platform.
+I used one shared cluster to stay within the credit and review window. Control-plane and application workloads share failure domains, and namespace isolation is weaker than separate clusters. Harbor uses its bundled database, and public services depend on address-derived `nip.io` names rather than a managed load balancer. For a larger platform, I would separate management and workloads, externalize stateful services, use durable DNS with health-aware ingress and API endpoints, and adopt an enterprise secret platform.
 
 See [known limitations](docs/known-limitations.md), [cost](docs/cost.md), and [operations](docs/operations-model.md).
