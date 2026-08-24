@@ -1,4 +1,4 @@
 # Applications
 
-This boundary owns product workloads and their canonical packaging. Phase 1 reserved the
-`platform-demo` module and Helm path; application implementation begins in Phase 9.
+The `platform-demo` service, container build and Helm chart live here. One immutable image digest
+is deployed to the isolated dev, staging and production namespaces.

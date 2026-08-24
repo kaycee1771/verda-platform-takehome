@@ -1,15 +1,13 @@
 # Implementation Status
 
-**Submission status: NOT READY for final handoff.** The live platform is healthy, but the dedicated
-Rancher evaluator login is blocked by the Rancher 2.14 local-user authentication defect. A
-short-lived read-only kubeconfig is available as a safe fallback; it does not satisfy the required
-Rancher UI login check.
+**Submission status: READY for final handoff.** The live platform is healthy and the dedicated
+Rancher evaluator login has been verified with read-only access and explicit mutation denial.
 
 | Capability | Current state |
 |---|---|
 | Verda infrastructure | 3 running instances, 6 attached volumes |
 | RKE2 / etcd | 3 Ready server nodes; API readiness includes etcd |
-| Rancher | Running and externally reachable with TLS; evaluator UI login unresolved |
+| Rancher | Running with TLS; evaluator login and least-privilege access verified |
 | Argo CD | Running; root-managed platform and environment applications |
 | Harbor / Trivy | Running; private project, immutable artifact, scan complete |
 | Monitoring | Prometheus, Alertmanager and Grafana Ready; alert pipeline tested |

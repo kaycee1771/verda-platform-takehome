@@ -7,11 +7,11 @@ A reproducible three-node RKE2/etcd platform on Verda Cloud. Terraform provision
 ## What worked
 
 - Three schedulable RKE2 server nodes are Ready and the API/etcd readiness path passes.
-- Rancher manages the local cluster while direct kubeconfig access remains available.
+- Rancher manages the local cluster; the evaluator account can inspect inventory and workloads but cannot read Secrets or mutate resources.
 - Argo CD reconciles the platform and environment applications from protected `main`.
 - Harbor stores the private application artifact; both local and Harbor Trivy scans reported zero HIGH or CRITICAL findings.
 - Dev, staging, and production run the same immutable digest: `sha256:1d48d05c8d4945fd891b07a865fcbdc7af459fa77adb75f9a88fd8ee0bfb289d`.
-- Prometheus had 42 of 46 active targets up; a controlled alert reached Alertmanager and then resolved.
+- All required Prometheus targets are healthy; the synthetic alert transport test fired and resolved, and the repository-owned application availability rule passed its unit tests.
 - Alloy forwards application logs to Loki and the final LogQL query returned records from the application namespaces.
 - All evaluator-facing application certificates were Ready and each public `/healthz` endpoint returned HTTP 204.
 

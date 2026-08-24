@@ -303,15 +303,14 @@ class Phase6RancherContractTests(unittest.TestCase):
         for required in (
             "set +x",
             "umask 077",
-            "RANCHER_ACCOUNT_MUTATION_APPROVED",
-            "RANCHER_ACCOUNT_MUTATION_SCOPE",
-            "cattle-local-user-passwords",
-            "pbkdf2sha3512",
-            "globalRoleName: admin",
-            "globalRoleName: user",
-            "roleTemplateName: read-only",
-            "/v3/clusters",
-            "/v3/users",
+            "RANCHER_REVIEWER_CREDENTIAL_FILE",
+            "/v1-public/login",
+            "management.cattle.io.nodes",
+            "apps.deployments",
+            "auth can-i",
+            "get secrets",
+            "create pods/exec",
+            "impersonate users",
             "--kubeconfig",
             "get --raw=/readyz",
         ):
@@ -319,6 +318,9 @@ class Phase6RancherContractTests(unittest.TestCase):
         for forbidden in (
             "RANCHER_API_TOKEN",
             "VERDA_CLIENT_SECRET",
+            "password-hash",
+            "kind: Secret",
+            "globalRoleName: admin",
             "--insecure",
             "curl -k",
             "set -x",
@@ -342,7 +344,7 @@ class Phase6RancherContractTests(unittest.TestCase):
             if name.startswith("RANCHER_") or name == "KUBECONFIG":
                 env.pop(name)
         no_authority = subprocess.run(
-            [bash, str(ACCOUNT_SCRIPT), "reconcile"],
+            [bash, str(ACCOUNT_SCRIPT), "verify"],
             check=False,
             capture_output=True,
             text=True,

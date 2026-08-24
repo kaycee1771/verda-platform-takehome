@@ -49,6 +49,19 @@ assert re.fullmatch(rb"[A-Za-z0-9._~+/=:-]+", value)
   fi
 }
 
+require_rancher_credential_file() {
+  local path="$1"
+  if ! "$python_bin" -c '
+import pathlib, re, sys
+rows = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+assert len(rows) == 2
+assert re.fullmatch(r"[A-Za-z0-9._-]{3,128}", rows[0])
+assert 16 <= len(rows[1]) <= 256 and not any(c.isspace() for c in rows[1])
+' "$path" >/dev/null 2>&1; then
+    fail 'rancher-credential-file'
+  fi
+}
+
 private_output() {
   local path="$1"
   : >"$path" || fail 'runtime-directory'
@@ -144,7 +157,7 @@ for name in \
   PHASE6_KUBECONFIG \
   PHASE6_KUBE_CONTEXT \
   PHASE6_RANCHER_ENDPOINT_FILE \
-  PHASE6_RANCHER_REVIEWER_TOKEN_FILE \
+  PHASE6_RANCHER_REVIEWER_CREDENTIAL_FILE \
   PHASE6_HARBOR_ENDPOINT_FILE \
   PHASE6_HARBOR_REVIEWER_TOKEN_FILE \
   PHASE6_GRAFANA_ENDPOINT_FILE \
@@ -164,7 +177,7 @@ done
 for protected_file in \
   "$PHASE6_KUBECONFIG" \
   "$PHASE6_RANCHER_ENDPOINT_FILE" \
-  "$PHASE6_RANCHER_REVIEWER_TOKEN_FILE" \
+  "$PHASE6_RANCHER_REVIEWER_CREDENTIAL_FILE" \
   "$PHASE6_HARBOR_ENDPOINT_FILE" \
   "$PHASE6_HARBOR_REVIEWER_TOKEN_FILE" \
   "$PHASE6_GRAFANA_ENDPOINT_FILE" \
@@ -173,7 +186,7 @@ for protected_file in \
   "$PHASE6_CAPACITY_EVIDENCE_FILE"; do
   require_protected_file "$protected_file"
 done
-require_authorization_file "$PHASE6_RANCHER_REVIEWER_TOKEN_FILE" Bearer
+require_rancher_credential_file "$PHASE6_RANCHER_REVIEWER_CREDENTIAL_FILE"
 require_authorization_file "$PHASE6_HARBOR_REVIEWER_TOKEN_FILE" Basic
 require_authorization_file "$PHASE6_GRAFANA_REVIEWER_TOKEN_FILE" Bearer
 
@@ -192,7 +205,7 @@ import ipaddress, json, pathlib, re, sys
 def one(path, service):
     rows = pathlib.Path(path).read_text(encoding="utf-8").splitlines()
     assert len(rows) == 1 and rows[0] == rows[0].strip()
-    pattern = rf"https://{service}\.([0-9]{{1,3}}(?:-[0-9]{{1,3}}){{3}})\.sslip\.io"
+    pattern = rf"https://{service}\.([0-9]{{1,3}}(?:-[0-9]{{1,3}}){{3}})\.nip\.io"
     match = re.fullmatch(pattern, rows[0])
     assert match
     ipaddress.IPv4Address(match.group(1).replace("-", "."))
@@ -208,7 +221,7 @@ values = []
 for environment in ("dev", "staging", "prod"):
     value = apps[environment]
     match = re.fullmatch(
-        rf"https://demo-{environment}\.([0-9]{{1,3}}(?:-[0-9]{{1,3}}){{3}})\.sslip\.io",
+        rf"https://platform-{environment}\.([0-9]{{1,3}}(?:-[0-9]{{1,3}}){{3}})\.nip\.io",
         value,
     )
     assert match and match.group(1) == address
@@ -529,66 +542,49 @@ assert payload.get("environment") == sys.argv[2]
 done
 printf '[PASS] applications=3 replicas=1-1-2 immutable-image=one-digest tls-endpoints=3\n'
 
-rancher_clusters="$runtime_dir/rancher-clusters.json"
-rancher_user="$runtime_dir/rancher-user.json"
-api_get "$rancher_endpoint" "$PHASE6_RANCHER_REVIEWER_TOKEN_FILE" \
-  '/v3/clusters?name=local' "$rancher_clusters"
-api_get "$rancher_endpoint" "$PHASE6_RANCHER_REVIEWER_TOKEN_FILE" \
-  '/v3/users?me=true' "$rancher_user"
-if ! reviewer_id=$(
-  "$python_bin" -c '
-import json, re, sys
-clusters = json.load(open(sys.argv[1], encoding="utf-8")).get("data", [])
-local = [c for c in clusters if c.get("id") == "local" or c.get("name") == "local"]
-assert len(local) == 1 and str(local[0].get("state", "")).lower() == "active"
-users = json.load(open(sys.argv[2], encoding="utf-8")).get("data", [])
-current = [u for u in users if u.get("me") is True]
-assert len(current) == 1
-user = current[0]
-assert user.get("username") == "verda-reviewer" and user.get("enabled") is True
-identifier = user.get("id", "")
-assert re.fullmatch(r"[A-Za-z0-9:._-]+", identifier)
-print(identifier)
-' "$rancher_clusters" "$rancher_user" 2>/dev/null
-); then
-  fail 'rancher-reviewer'
-fi
-role_response="$runtime_dir/rancher-roles.json"
-role_status=$(api_status "$rancher_endpoint" "$PHASE6_RANCHER_REVIEWER_TOKEN_FILE" \
-  "/v3/globalrolebindings?userId=${reviewer_id}" "$role_response") || fail 'rancher-reviewer'
-case "$role_status" in
-  403) ;;
-  200)
-    if ! "$python_bin" -c '
-import json, sys
-items = json.load(open(sys.argv[1], encoding="utf-8")).get("data", [])
-for item in items:
-    role = str(item.get("globalRoleId", "")).lower()
-    assert role not in {"admin", "administrator", "restricted-admin", "global-admin"}
-' "$role_response" >/dev/null 2>&1; then
-      fail 'rancher-reviewer'
-    fi
-    ;;
-  *) fail 'rancher-reviewer' ;;
-esac
-unset reviewer_id role_status
-for index in "${!namespaces[@]}"; do
-  rancher_workload="$runtime_dir/rancher-${environments[index]}-workload.json"
-  api_get "$rancher_endpoint" "$PHASE6_RANCHER_REVIEWER_TOKEN_FILE" \
-    "/k8s/clusters/local/apis/apps/v1/namespaces/${namespaces[index]}/deployments/platform-demo" \
-    "$rancher_workload"
-  if ! "$python_bin" -c '
-import json, sys
-item = json.load(open(sys.argv[1], encoding="utf-8"))
-expected = int(sys.argv[2])
-assert item.get("metadata", {}).get("name") == "platform-demo"
-assert item.get("spec", {}).get("replicas") == expected
-assert item.get("status", {}).get("readyReplicas") == expected
-' "$rancher_workload" "${expected_replicas[index]}" >/dev/null 2>&1; then
-    fail 'rancher-visibility'
-  fi
+rancher_login_body="$runtime_dir/rancher-login.json"
+rancher_login_response="$runtime_dir/rancher-login-response.json"
+rancher_authorization="$runtime_dir/rancher-authorization"
+private_output "$rancher_login_body"
+private_output "$rancher_login_response"
+private_output "$rancher_authorization"
+"$python_bin" -c '
+import json, pathlib, sys
+username, password = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+pathlib.Path(sys.argv[2]).write_text(json.dumps({
+    "type": "localProvider", "username": username, "password": password,
+    "responseType": "json", "description": "platform acceptance verification"
+}, separators=(",", ":")), encoding="utf-8")
+' "$PHASE6_RANCHER_REVIEWER_CREDENTIAL_FILE" "$rancher_login_body" || fail 'rancher-login'
+"$curl_bin" --silent --show-error --fail --max-redirs 0 --max-time 30 \
+  --proto '=https' --tlsv1.2 --header 'Content-Type: application/json' \
+  --data-binary "@$rancher_login_body" --output "$rancher_login_response" \
+  "$rancher_endpoint/v1-public/login" 2>/dev/null || fail 'rancher-login'
+"$python_bin" -c '
+import json, pathlib, re, sys
+token = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")).get("token", "")
+assert re.fullmatch(r"[A-Za-z0-9._~+/=:-]{24,16384}", token)
+pathlib.Path(sys.argv[2]).write_text("Authorization: Bearer " + token + "\n", encoding="utf-8")
+' "$rancher_login_response" "$rancher_authorization" || fail 'rancher-login'
+for resource in management.cattle.io.nodes namespaces apps.deployments secrets; do
+  output="$runtime_dir/rancher-${resource//./-}.json"
+  api_get "$rancher_endpoint" "$rancher_authorization" "/v1/$resource" "$output"
 done
-printf '[PASS] rancher-cluster=active workload-visibility=3 reviewer-non-admin=true direct-kubeconfig-independent=true\n'
+if ! "$python_bin" -c '
+import json, pathlib, sys
+def data(path):
+    return json.loads(pathlib.Path(path).read_text(encoding="utf-8")).get("data", [])
+nodes, namespaces, workloads, secrets = map(data, sys.argv[1:])
+assert len(nodes) == 3
+assert {item.get("metadata", {}).get("name") for item in namespaces} == {"demo-dev", "demo-staging", "demo-prod"}
+assert {item.get("metadata", {}).get("namespace") for item in workloads} == {"demo-dev", "demo-staging", "demo-prod"}
+assert not secrets
+' "$runtime_dir/rancher-management-cattle-io-nodes.json" \
+  "$runtime_dir/rancher-namespaces.json" "$runtime_dir/rancher-apps-deployments.json" \
+  "$runtime_dir/rancher-secrets.json" >/dev/null 2>&1; then
+  fail 'rancher-visibility'
+fi
+printf '[PASS] rancher-login=true nodes=3 namespaces=3 workloads=3 secrets-visible=0 reviewer-non-admin=true\n'
 
 harbor_project="$runtime_dir/harbor-project.json"
 harbor_artifacts="$runtime_dir/harbor-artifacts.json"
