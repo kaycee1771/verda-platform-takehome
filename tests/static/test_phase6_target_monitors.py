@@ -39,7 +39,7 @@ EXPECTED = {
         "monitor": "rancher",
         "port": "http",
         "policy": "rancher-prometheus-ingress",
-        "policy_ports": {80},
+        "policy_ports": {80, 443},
     },
     "traefik": {
         "namespace": "kube-system",

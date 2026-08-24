@@ -37,3 +37,6 @@ spec:
             matchLabels: {app.kubernetes.io/name: prometheus}
       ports:
         - {protocol: TCP, port: 80}
+        # Rancher redirects the metrics request to its HTTPS listener. Keep
+        # the redirect destination restricted to the same Prometheus source.
+        - {protocol: TCP, port: 443}
