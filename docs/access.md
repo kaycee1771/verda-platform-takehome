@@ -4,7 +4,9 @@ Public URLs and roles are listed in [../ACCESS.md](../ACCESS.md). Secret values 
 
 ## Expected checks
 
-- Rancher: authenticate as reviewer; local cluster is Active; do not edit resources.
+- Rancher: the service and local cluster are healthy, but dedicated reviewer login is blocked by the
+  pinned release's local-user authentication defect. Use the separately delivered short-lived
+  read-only kubeconfig for cluster inspection; do not edit resources.
 - Argo CD: authenticate read-only; inspect revisions, sync and health; do not press Sync.
 - Harbor: authenticate project-viewer; inspect `platform-demo/platform-demo`, immutable digest and Trivy report.
 - Grafana: use a protected port-forward and viewer account; open the platform overview dashboard.
