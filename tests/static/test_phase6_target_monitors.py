@@ -38,8 +38,11 @@ EXPECTED = {
         "namespace": "cattle-system",
         "monitor": "rancher",
         "port": "http",
+        "scheme": "https",
+        "address": "rancher.95-133-252-214.nip.io:443",
+        "server_name": "rancher.95-133-252-214.nip.io",
         "policy": "rancher-prometheus-ingress",
-        "policy_ports": {80, 443},
+        "policy_ports": {80},
     },
     "traefik": {
         "namespace": "kube-system",
@@ -91,7 +94,16 @@ class Phase6TargetMonitorTests(unittest.TestCase):
                 endpoint = monitor["spec"]["endpoints"][0]
                 self.assertEqual(endpoint["port"], expected["port"])
                 self.assertEqual(endpoint["path"], "/metrics")
-                self.assertEqual(endpoint["scheme"], "http")
+                self.assertEqual(endpoint["scheme"], expected.get("scheme", "http"))
+                if "address" in expected:
+                    self.assertEqual(endpoint["relabelings"], [{
+                        "targetLabel": "__address__",
+                        "replacement": expected["address"],
+                    }])
+                    self.assertEqual(endpoint["tlsConfig"], {
+                        "serverName": expected["server_name"]
+                    })
+                    self.assertNotIn("insecureSkipVerify", endpoint["tlsConfig"])
                 self.assertEqual(policy["metadata"]["name"], expected["policy"])
                 self.assertEqual(policy["metadata"]["namespace"], expected["namespace"])
                 self.assertEqual(policy["spec"]["policyTypes"], ["Ingress"])
