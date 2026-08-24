@@ -3,8 +3,11 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: demo-prod
+  annotations:
+    field.cattle.io/projectId: local:p-xqfb9
   labels:
     app.kubernetes.io/part-of: platform-demo
+    field.cattle.io/projectId: p-xqfb9
     platform.verda-demo.io/environment: prod
     platform.verda-demo.io/owner: platform-team
     platform.verda-demo.io/topology: platform-management-cluster

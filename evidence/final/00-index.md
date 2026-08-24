@@ -1,6 +1,6 @@
 # Final Evidence Index
 
-Collected 2026-08-23 UTC from the protected live platform. Outputs are aggregate or identity-free; no credentials, keys, kubeconfigs, provider IDs or raw secrets are included.
+Collected 2026-08-23 UTC from the protected live platform; Rancher evaluator access was reconfirmed 2026-08-24 UTC. Outputs are aggregate or identity-free; no credentials, keys, kubeconfigs, provider IDs or raw secrets are included.
 
 | Requirement | Decisive evidence |
 |---|---|

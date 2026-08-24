@@ -5,9 +5,10 @@
 - TLS certificates `rancher-staging` and `rancher-production`: Ready.
 - External URL: `https://rancher.95-133-252-214.nip.io`.
 - `/ping` returns successfully and the local cluster remains healthy.
-- Dedicated evaluator local-user login is currently blocked by the upstream Rancher 2.14
-  authentication defect. No password-hash, role or TLS workaround is accepted.
-- The separately delivered short-lived read-only kubeconfig remains the bounded evaluator and
-  recovery fallback.
+- Clean-session evaluator login succeeds through Rancher's supported local-provider API.
+- The evaluator can read the local cluster, three nodes, three application namespaces and their
+  workloads. Secrets, create, update, patch, delete, exec and impersonation are denied.
+- The old broken evaluator identity was removed only after the replacement passed these checks.
+- The separately delivered short-lived read-only kubeconfig remains an optional verification path.
 
 Background Fleet operation jobs are transient and are not Rancher service replicas.

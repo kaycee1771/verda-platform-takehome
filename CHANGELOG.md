@@ -9,5 +9,5 @@ This file records evaluator-relevant releases. The detailed implementation histo
   logging and isolated application environments.
 - Verified immutable application delivery, TLS, storage, security controls, alerting, logging,
   hosted repository validation and evaluator read-only access paths.
-- Recorded the unresolved Rancher 2.14 local-user evaluator-login exception without weakening RBAC
-  or substituting administrator credentials.
+- Replaced the stale Rancher evaluator credential through the supported server API and verified a
+  dedicated read-only login without weakening RBAC or substituting administrator credentials.

@@ -19,4 +19,4 @@ Contents API requests, and is never persisted in the image, cache, reports, or c
 The local validator build disables BuildKit's default timestamped provenance attachment so identical
 inputs produce one stable image digest. Repository locks, upstream checksums, the verified Aqua
 registry commit, and the tool-image report are its provenance record. Signed image provenance and
-SBOMs remain a Phase 6 requirement for application artifacts.
+The application release evidence records the tested image, Trivy result and immutable digest.

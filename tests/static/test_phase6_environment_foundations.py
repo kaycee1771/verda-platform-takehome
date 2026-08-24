@@ -194,6 +194,11 @@ class Phase6EnvironmentFoundationTests(unittest.TestCase):
                 service_account["imagePullSecrets"], [{"name": "platform-demo-registry"}]
             )
             self.assertEqual(role_bindings["verda-reviewers-view"]["roleRef"]["name"], "view")
+            evaluator = role_bindings["rancher-evaluator-view"]
+            self.assertEqual(evaluator["roleRef"]["name"], "view")
+            self.assertEqual(evaluator["subjects"], [{
+                "kind": "User", "apiGroup": "rbac.authorization.k8s.io", "name": "u-924mt"
+            }])
             backup_binding = role_bindings["velero-backup-reader"]
             self.assertEqual(
                 backup_binding["roleRef"]["name"],

@@ -14,6 +14,13 @@ roleRef: {kind: ClusterRole, apiGroup: rbac.authorization.k8s.io, name: view}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
+metadata: {name: rancher-evaluator-view, namespace: demo-dev}
+subjects:
+  - {kind: User, apiGroup: rbac.authorization.k8s.io, name: u-924mt}
+roleRef: {kind: ClusterRole, apiGroup: rbac.authorization.k8s.io, name: view}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
 metadata: {name: velero-backup-reader, namespace: demo-dev}
 subjects:
   - {kind: ServiceAccount, name: velero, namespace: velero}
