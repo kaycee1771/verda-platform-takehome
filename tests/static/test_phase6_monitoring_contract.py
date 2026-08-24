@@ -345,6 +345,34 @@ class Phase6MonitoringContractTests(unittest.TestCase):
         self.assertTrue(prometheus["ignoreNamespaceSelectors"])
         self.assertFalse(self.values["alertmanager"]["ingressPerReplica"]["enabled"])
 
+    def test_rke2_coredns_metrics_ingress_is_exact(self) -> None:
+        policies = [
+            item
+            for item in self.values["extraManifests"]
+            if item.get("kind") == "NetworkPolicy"
+        ]
+        self.assertEqual(len(policies), 1)
+        policy = policies[0]
+        self.assertEqual(policy["metadata"], {
+            "name": "monitoring-coredns-prometheus-ingress",
+            "namespace": "kube-system",
+        })
+        self.assertEqual(policy["spec"]["podSelector"], {
+            "matchLabels": {"k8s-app": "kube-dns"}
+        })
+        self.assertEqual(policy["spec"]["policyTypes"], ["Ingress"])
+        self.assertEqual(policy["spec"]["ingress"], [{
+            "from": [{
+                "namespaceSelector": {"matchLabels": {
+                    "kubernetes.io/metadata.name": "monitoring"
+                }},
+                "podSelector": {"matchLabels": {
+                    "app.kubernetes.io/name": "prometheus"
+                }},
+            }],
+            "ports": [{"protocol": "TCP", "port": 9153}],
+        }])
+
 
 if __name__ == "__main__":
     unittest.main()

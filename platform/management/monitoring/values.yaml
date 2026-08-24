@@ -51,6 +51,31 @@ kubeEtcd:
 coreDns:
   enabled: true
 
+# RKE2 installs a namespace-wide kube-system ingress policy that otherwise
+# admits CoreDNS only from kube-system. Permit only Prometheus to the existing
+# CoreDNS metrics listener; DNS traffic and every other port remain unchanged.
+extraManifests:
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: monitoring-coredns-prometheus-ingress
+      namespace: kube-system
+    spec:
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: monitoring
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: prometheus
+          ports:
+            - {protocol: TCP, port: 9153}
+
 alertmanager:
   enabled: true
   ingress:
