@@ -37,12 +37,13 @@ EXPECTED = {
     "rancher": {
         "namespace": "cattle-system",
         "monitor": "rancher",
-        "port": "http",
+        "port": "https-internal",
         "scheme": "https",
-        "address": "rancher.95-133-252-214.nip.io:443",
-        "server_name": "rancher.95-133-252-214.nip.io",
+        "address": "rancher-internal.cattle-system.svc:443",
+        "server_name": "10.43.24.242",
+        "ca_secret": "tls-rancher-internal-ca",
         "policy": "rancher-prometheus-ingress",
-        "policy_ports": {80},
+        "policy_ports": {444},
     },
     "traefik": {
         "namespace": "kube-system",
@@ -101,7 +102,13 @@ class Phase6TargetMonitorTests(unittest.TestCase):
                         "replacement": expected["address"],
                     }])
                     self.assertEqual(endpoint["tlsConfig"], {
-                        "serverName": expected["server_name"]
+                        "ca": {
+                            "secret": {
+                                "name": expected["ca_secret"],
+                                "key": "tls.crt",
+                            }
+                        },
+                        "serverName": expected["server_name"],
                     })
                     self.assertNotIn("insecureSkipVerify", endpoint["tlsConfig"])
                 self.assertEqual(policy["metadata"]["name"], expected["policy"])
