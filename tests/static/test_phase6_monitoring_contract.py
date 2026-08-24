@@ -295,7 +295,7 @@ class Phase6MonitoringContractTests(unittest.TestCase):
         self.assertTrue(self.values["defaultRules"]["create"])
         self.assertTrue(self.values["grafana"]["defaultDashboardsEnabled"])
         self.assertFalse(self.values["grafana"]["defaultDashboardsEditable"])
-        self.assertEqual(len(object_of_kind(self.documents, "PrometheusRule")), 30)
+        self.assertEqual(len(object_of_kind(self.documents, "PrometheusRule")), 31)
         stock_dashboards = [
             item
             for item in object_of_kind(self.documents, "ConfigMap")
@@ -344,6 +344,24 @@ class Phase6MonitoringContractTests(unittest.TestCase):
         self.assertEqual(prometheus["podMonitorNamespaceSelector"], {})
         self.assertTrue(prometheus["ignoreNamespaceSelectors"])
         self.assertFalse(self.values["alertmanager"]["ingressPerReplica"]["enabled"])
+
+    def test_platform_demo_alert_is_single_bounded_and_promtool_source_matches(self) -> None:
+        rule_map = self.values["additionalPrometheusRulesMap"]
+        self.assertEqual(set(rule_map), {"platform-demo-availability"})
+        groups = rule_map["platform-demo-availability"]["groups"]
+        source = load_yaml(ROOT / "observability" / "rules" / "application-slo.yaml")
+        self.assertEqual(groups, source["groups"])
+        rules = [rule for group in groups for rule in group["rules"]]
+        self.assertEqual([rule["alert"] for rule in rules], ["PlatformDemoUnavailable"])
+        rule = rules[0]
+        self.assertEqual(rule["for"], "2m")
+        self.assertIn('namespace=~"demo-(dev|staging|prod)"', rule["expr"])
+        self.assertIn('job="platform-demo"', rule["expr"])
+        self.assertIn('service="platform-demo"', rule["expr"])
+        self.assertIn('endpoint="http"', rule["expr"])
+        self.assertEqual(rule["labels"]["severity"], "critical")
+        self.assertEqual(rule["labels"]["service"], "platform-demo")
+        self.assertEqual(rule["labels"]["environment"], "{{ $labels.namespace }}")
 
     def test_rke2_coredns_metrics_ingress_is_exact(self) -> None:
         policies = [
