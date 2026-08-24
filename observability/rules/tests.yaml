@@ -4,4 +4,40 @@ rule_files:
   - platform-health.yaml
   - delivery-health.yaml
 evaluation_interval: 1m
-tests: []
+tests:
+  - name: platform-demo healthy, pending, firing and recovery
+    interval: 1m
+    input_series:
+      - series: 'up{endpoint="http",job="platform-demo",namespace="demo-dev",service="platform-demo"}'
+        values: '1 0 0 0 1'
+      - series: 'up{endpoint="http",job="platform-demo",namespace="demo-staging",service="platform-demo"}'
+        values: '1 1 1 1 1'
+      - series: 'up{endpoint="http",job="platform-demo",namespace="demo-prod",service="platform-demo"}'
+        values: '1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: PlatformDemoUnavailable
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: PlatformDemoUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: PlatformDemoUnavailable
+        exp_alerts:
+          - exp_labels:
+              alertname: PlatformDemoUnavailable
+              endpoint: http
+              environment: demo-dev
+              job: platform-demo
+              namespace: demo-dev
+              service: platform-demo
+              severity: critical
+            exp_annotations:
+              summary: platform-demo is unavailable in demo-dev
+              operator_action: >-
+                Check the platform-demo Service endpoints, pod readiness and
+                Prometheus NetworkPolicy path; restore Git desired state through Argo CD.
+              runbook_url: docs/runbooks/platform-demo-unavailable.md
+      - eval_time: 4m
+        alertname: PlatformDemoUnavailable
+        exp_alerts: []

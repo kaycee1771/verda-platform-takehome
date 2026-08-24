@@ -36,6 +36,33 @@ defaultRules:
     prometheus: true
     prometheusOperator: true
 
+additionalPrometheusRulesMap:
+  platform-demo-availability:
+    groups:
+      - name: platform-demo.availability
+        rules:
+          - alert: PlatformDemoUnavailable
+            expr: |
+              max by (namespace, job, service, endpoint) (
+                up{
+                  endpoint="http",
+                  job="platform-demo",
+                  namespace=~"demo-(dev|staging|prod)",
+                  service="platform-demo"
+                }
+              ) == 0
+            for: 2m
+            labels:
+              severity: critical
+              service: platform-demo
+              environment: '{{ $labels.namespace }}'
+            annotations:
+              summary: 'platform-demo is unavailable in {{ $labels.namespace }}'
+              operator_action: >-
+                Check the platform-demo Service endpoints, pod readiness and
+                Prometheus NetworkPolicy path; restore Git desired state through Argo CD.
+              runbook_url: docs/runbooks/platform-demo-unavailable.md
+
 kubeApiServer:
   enabled: true
 kubelet:
